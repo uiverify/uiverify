@@ -1,0 +1,65 @@
+{
+  "name": "@uiverify/playwright",
+  "version": "0.2.2",
+  "description": "Playwright capture SDK for UI Verify (uiverify.ai): swap @playwright/test for this and each test archives its final UI state (serialized DOM + resource bytes) to be replayed + visually diffed by UI Verify. Produces an archive the uiverify CLI uploads; talks to nothing at runtime.",
+  "keywords": [
+    "visual-testing",
+    "visual-regression",
+    "playwright",
+    "screenshot-testing",
+    "rrweb",
+    "uiverify"
+  ],
+  "homepage": "https://uiverify.ai",
+  "bugs": "https://github.com/uiverify/uiverify/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/uiverify/uiverify.git",
+    "directory": "packages/playwright"
+  },
+  "license": "MIT",
+  "author": "UI Verify",
+  "engines": {
+    "node": ">=24"
+  },
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./finalize": {
+      "types": "./dist/finalize.d.ts",
+      "default": "./dist/finalize.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "prepublishOnly": "pnpm build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@playwright/test": ">=1.40.0"
+  },
+  "dependencies": {
+    "@rrweb/types": "^2.0.0",
+    "rrweb-snapshot": "^2.1.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@types/node": "^24.0.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.8"
+  }
+}

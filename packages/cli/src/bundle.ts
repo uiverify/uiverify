@@ -1,0 +1,42 @@
+import fs from "node:fs";
+import path from "node:path";
+import { create } from "tar";
+import { z } from "zod";
+
+const ARCHIVE_FORMAT_VERSION = 1;
+
+// The bits of an archived snapshot the manifest needs; the file carries more (dom, resources, …).
+const snapshotMeta = z.object({ id: z.string(), title: z.string(), name: z.string() });
+
+/**
+ * A Playwright archive dir carries per-test `snapshots/*.json` but no `index.json` — the parallel test
+ * workers can't safely co-write one shared manifest during the run. Assemble it here, at bundle time,
+ * so `uiverify upload` is the only step the user runs (no separate finalize). No-op for a Storybook
+ * static dir, which already ships an `index.json`.
+ */
+export function finalizeArchiveIfNeeded(staticDir: string): void {
+  const snapshotsDir = path.join(staticDir, "snapshots");
+  const indexPath = path.join(staticDir, "index.json");
+  if (fs.existsSync(indexPath) || !fs.existsSync(snapshotsDir)) return;
+
+  const entries: Record<string, { id: string; type: "story"; title: string; name: string; snapshot: string }> = {};
+  for (const file of fs.readdirSync(snapshotsDir)) {
+    if (!file.endsWith(".json")) continue;
+    const snap = snapshotMeta.parse(JSON.parse(fs.readFileSync(path.join(snapshotsDir, file), "utf8")));
+    entries[snap.id] = {
+      id: snap.id,
+      type: "story",
+      title: snap.title,
+      name: snap.name,
+      snapshot: path.join("snapshots", file),
+    };
+  }
+  fs.writeFileSync(indexPath, JSON.stringify({ v: ARCHIVE_FORMAT_VERSION, entries }, null, 2));
+}
+
+/** Create the bundle .tgz from a built static dir (files at the archive root). A Playwright archive dir
+ *  is finalized first — its `index.json` manifest assembled — so it uploads with no separate step. */
+export async function createBundle(staticDir: string, outPath: string): Promise<void> {
+  finalizeArchiveIfNeeded(staticDir);
+  await create({ gzip: true, file: outPath, cwd: staticDir }, ["."]);
+}

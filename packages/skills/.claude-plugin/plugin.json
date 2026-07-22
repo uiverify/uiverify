@@ -1,0 +1,19 @@
+{
+  "name": "uiverify",
+  "version": "0.1.0",
+  "description": "Agent skills for UI Verify (uiverify.ai): set up visual regression testing, author economical + deterministic stories, and triage builds, run in your own repo.",
+  "author": {
+    "name": "UI Verify",
+    "url": "https://uiverify.ai"
+  },
+  "homepage": "https://uiverify.ai",
+  "repository": "https://github.com/uiverify/uiverify",
+  "keywords": [
+    "visual-testing",
+    "visual-regression",
+    "screenshot-testing",
+    "storybook",
+    "playwright",
+    "uiverify"
+  ]
+}

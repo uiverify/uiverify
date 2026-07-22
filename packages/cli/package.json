@@ -1,0 +1,49 @@
+{
+  "name": "uiverify",
+  "version": "0.2.5",
+  "description": "UI Verify CLI (uiverify.ai): upload a prebuilt Storybook (or Playwright archive) bundle for visual testing for agents, stream render progress, and gate CI on the visual verdict.",
+  "keywords": [
+    "visual-testing",
+    "visual-regression",
+    "storybook",
+    "playwright",
+    "screenshot-testing",
+    "ci",
+    "uiverify"
+  ],
+  "homepage": "https://uiverify.ai",
+  "bugs": "https://github.com/uiverify/uiverify/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/uiverify/uiverify.git",
+    "directory": "packages/cli"
+  },
+  "license": "MIT",
+  "author": "UI Verify",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "uiverify": "dist/uiverify.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "esbuild bin/uiverify.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/uiverify.js --banner:js='#!/usr/bin/env node' && chmod +x dist/uiverify.js",
+    "prepublishOnly": "pnpm build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.28.1",
+    "tar": "^7.4.3",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.8",
+    "zod": "^3.23.8"
+  }
+}

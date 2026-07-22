@@ -1,0 +1,19 @@
+{
+  "name": "@uiverify/skills",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Agent skills for UI Verify (uiverify.ai): install these in your coding agent to set up visual testing, author economical + deterministic stories, and triage builds.",
+  "homepage": "https://uiverify.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/uiverify/uiverify.git",
+    "directory": "packages/skills"
+  },
+  "license": "MIT",
+  "author": "UI Verify",
+  "type": "module",
+  "files": [
+    "skills",
+    "LICENSE"
+  ]
+}
