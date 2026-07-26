@@ -43,7 +43,21 @@ UIVERIFY_API_KEY=... npx uiverify upload --static-dir storybook-static
 - `--api-url <url>`: UI Verify API URL (default `https://uiverify.ai`; or `UIVERIFY_API_URL`).
 - `--auto-accept-changes`: accept this build's changed snapshots as the new baseline (no review). Typically used on merges to your default branch.
 - `--exit-zero-on-changes`: detect but don't block. A `changed` (needs-review) verdict exits 0 and stays pending review; `failed` still exits non-zero.
+- `--only-changed`: render only the stories this commit's changed files could affect and carry the rest forward. Opt-in per build; see [Only changed stories](#only-changed-stories) below.
 - `--strict` / `--no-strict`: whether an operational failure (missing key, missing bundle, network error) fails the job. Strict by default.
+
+Exit codes: `0` success (or an operational failure under `--no-strict`), `1` the visual verdict or an operational failure under strict, `2` a malformed invocation (unknown option, boolean given a value, stray token). Exit 2 ignores `--no-strict` - that flag means "don't fail my job if the upload breaks", not "run with arguments I didn't mean".
+
+## Only changed stories
+
+`--only-changed` renders just the stories your commit could have affected and carries every other baseline forward at a fraction of a snapshot each, so a one-component PR costs far less than a full suite. It is **Storybook only** - a Playwright archive has no dependency graph, so those uploads always render in full and the flag is ignored. UI Verify works it out server-side from your bundle's Storybook dependency graph, which exists only if you build with `--stats-json`:
+
+```sh
+npm run build-storybook -- --stats-json
+UIVERIFY_API_KEY=... npx uiverify upload --static-dir storybook-static --only-changed
+```
+
+Without that graph there is no fallback: the build renders every story even with the flag on, deliberately, since a filename heuristic can't tell that a page story imports the component you changed.
 
 ## Environment
 

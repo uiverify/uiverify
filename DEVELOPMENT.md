@@ -17,7 +17,7 @@ server-side. Distributed as `npx <pkg> upload …` once published to npm.
    (`COMMIT_SHA`, `BRANCH`, `PR_NUMBER`, or GitHub Actions' `GITHUB_HEAD_REF`/`GITHUB_REF`) win.
 2. Tar the static dir → `bundle.tgz` (no story list is read or sent — the UI Verify service enumerates
    the stories, and their render params, from the uploaded bundle's `index.json`). If the build
-   emitted `preview-stats.json` (see [skip-unchanged](#skip-unchanged----stats-json) below), it rides
+   emitted `preview-stats.json` (see [skip-unchanged](#skip-unchanged---only-changed) below), it rides
    along automatically — the CLI tars the whole static dir, no flag needed.
 3. `POST /api/ingest/build` (API-key auth) → `{ build_id, upload_url }`.
 4. `PUT` the bundle to `upload_url` (a local endpoint in dev; an S3 presigned URL in prod).
@@ -37,37 +37,57 @@ error, a missing/invalid `UIVERIFY_API_KEY`, or even a failure building the CLI 
 (`[uiverify] ✗ …`) and the step **exits 1**.
 
 Opt out with **`--no-strict`**: operational failures are then swallowed with a `[uiverify] ⚠ …` warning
-and **exit 0**, so the step can never fail your job. `--strict` is the default; `--no-strict` opts out
-(and `--strict` wins a contradictory pair).
+and **exit 0**. `--strict` is the default; `--no-strict` opts out (and `--strict` wins a contradictory
+pair).
 
 The visual verdict is the separate, independent gate: a normal run reflects `changed`/`failed` in the
 exit code by design — that is the whole point of the default mode, and it's how UI Verify blocks a PR.
 
-### Skip-unchanged (`--stats-json`)
+**Exit codes:** `0` success (or an operational failure under `--no-strict`); `1` the visual verdict, or an
+operational failure under strict; **`2` a malformed invocation** — an unknown or misspelled option, a
+boolean given a value, a stray token, or a bad subcommand. Exit 2 ignores `--no-strict` on purpose: that
+flag means "don't fail my job if the upload breaks", not "run with arguments I didn't mean", and a typo'd
+flag that exited 0 would leave CI green with nothing uploaded and no visual gate.
 
-UI Verify's TurboSnap-equivalent renders only the stories a commit's changed files could affect and carries
-the rest forward — computed **server-side** (off by default behind `SKIP_UNCHANGED` on the UI Verify
-service). Its precise tier walks the Storybook dependency graph, which only exists if you build with
-Storybook's `--stats-json` flag (it writes `preview-stats.json` into `storybook-static`):
+### Skip-unchanged (`--only-changed`)
+
+UI Verify's TurboSnap-equivalent renders only the stories a commit's changed files could affect and
+carries the rest forward — computed **server-side**, opt-in per build with `--only-changed`. Leave it off
+and every story renders as before. The flag is the only thing that turns skipping on: no env var, no
+negative form, and no server-side toggle in either direction, so what a step passes is what that build
+does. Storybook only: an archive-replay (Playwright) build has no dependency graph, so it always renders
+in full and the flag is a no-op.
+
+It needs the Storybook **dependency graph**, which only exists if you build with Storybook's
+`--stats-json` flag (it writes `preview-stats.json` into `storybook-static`):
 
 ```sh
 storybook build --stats-json          # or: pnpm build-storybook --stats-json
 ```
 
-The CLI needs **no flag** — it tars the whole static dir, so `preview-stats.json` ships if present.
-Without it, skip-unchanged falls back to a path heuristic (direct story file + its backing component);
-with it, the server can trace shared deps (a util/theme imported by many stories) to the exact set.
+There is no fallback tier: with no `preview-stats.json` in the bundle the server renders everything even
+with `--only-changed` on, by design — a path heuristic can't see that a page story imports the leaf
+component that changed, so it isn't allowed to decide. The CLI needs no flag for the stats file itself:
+it tars the whole static dir, so `preview-stats.json` ships if present.
+
+```sh
+npm run build-storybook -- --stats-json
+npx uiverify upload --static-dir storybook-static --only-changed
+```
 
 ## CLI
 
 ```
-uiverify upload --static-dir <dir> [--working-directory <dir>] \
-                [--api-url <url>] [--auto-accept-changes] [--exit-zero-on-changes] [--strict | --no-strict]
+uiverify upload --static-dir <dir> [--working-directory <dir>] [--api-url <url>] \
+                [--auto-accept-changes] [--exit-zero-on-changes] [--only-changed] [--strict | --no-strict]
 ```
 
 - `UIVERIFY_API_KEY` (env, required) — the project key.
 - `--static-dir` the prebuilt `storybook-static` directory to upload (build Storybook first).
 - `--api-url` (or `UIVERIFY_API_URL`, default `https://uiverify.ai`; override for self-host/local dev).
+- `--only-changed` — render only the stories this commit's changed files could affect, carrying the rest
+  forward. Requires a bundle built with `--stats-json` (see
+  [Skip-unchanged](#skip-unchanged---only-changed)).
 - `--exit-zero-on-changes` — detect but don't block: a `changed` (needs-review) verdict exits 0 and
   stays pending review in the dashboard, so visual changes don't fail CI. `failed`/`blocked` still
   exit non-zero. The middle ground between the default (`changed` → job fails) and

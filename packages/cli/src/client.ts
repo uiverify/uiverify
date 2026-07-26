@@ -71,6 +71,9 @@ export interface RegisterBody {
   prNumber: number | null;
   parentShas: string[];
   autoAcceptChanges?: boolean;
+  /** Render only the stories this commit's changed files could affect and carry the rest forward
+   *  (skip-unchanged). Decided server-side; per build, so it never changes anyone else's builds. */
+  onlyChanged?: boolean;
   /** GitHub `owner/repo`; the server binds it to the project so it knows where to post the check +
    *  PR comment. Omitted when it can't be determined locally. */
   repoFullName?: string;

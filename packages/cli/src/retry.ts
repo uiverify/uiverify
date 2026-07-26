@@ -1,3 +1,5 @@
+import { redact } from "./redact";
+
 /**
  * HTTP error carrying the response status, so retry logic can tell a retryable 5xx from a
  * deterministic 4xx.
@@ -52,7 +54,9 @@ export async function withRetry<T>(opts: RetryOptions, attempt: (signal: AbortSi
     } catch (err) {
       lastErr = err;
       if (!isRetryable(err) || i === delays.length) break;
-      const reason = err instanceof Error ? err.message : String(err);
+      // Redacted: this is an arbitrary error string (often a server response body), and it is the one
+      // log line in the CLI that doesn't go through the caller's `log`/`softFail` funnel.
+      const reason = redact(err instanceof Error ? err.message : String(err));
       const delay = jitter(delays[i]);
       console.warn(`[uiverify] ${opts.label} failed (${reason}); retry ${i + 1}/${delays.length} in ${delay}ms`);
       await sleep(delay);

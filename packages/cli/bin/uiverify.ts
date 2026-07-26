@@ -1,5 +1,6 @@
 import path from "node:path";
-import { createBundle } from "../src/bundle";
+import { parseArgs } from "../src/args";
+import { createBundle, onlyChangedNoOpReason } from "../src/bundle";
 import { httpIngestClient } from "../src/client";
 import { exitCodeFor } from "../src/exit";
 import { collectGitMeta, confirmAncestors } from "../src/git";
@@ -13,36 +14,24 @@ import { defaultTmpFile, runUpload } from "../src/upload";
  * verdict (changed/failed) in the exit code. Build your Storybook first, then pass its output to
  * `--static-dir`.
  * Flags: --static-dir, --working-directory, --api-url, --auto-accept-changes, --exit-zero-on-changes,
- * --strict, --no-strict, --help (see `uiverify upload --help`).
+ * --only-changed, --strict, --no-strict, --help (see `uiverify upload --help`).
  *
- * Two independent non-zero exits:
+ * Three independent non-zero exits:
  *  - *Operational* failures (missing config, a missing/empty static dir, a network/timeout error — the
  *    upload itself not happening) fail the job by default (`resolveStrict`, fail-closed) so a silently
  *    dropped upload can't leave CI green. `--no-strict` swallows them with exit 0. Everything operational
  *    funnels through `softFail()`.
  *  - The visual verdict (changed/failed) is the deliberate gating exit on a normal run — the whole
  *    point of it.
+ *  - A malformed invocation exits **2**, ignoring `--no-strict`: an unknown or misspelled option, a
+ *    boolean given a value, a stray token (`parseArgs`' `invalid`), or a bad subcommand. That flag means
+ *    "don't fail my job if the upload breaks", not "run with arguments I didn't mean" — swallowing it
+ *    would exit 0 having uploaded nothing. New argv-validation paths go through `invalid`, not
+ *    `softFail()`.
  */
-function parseArgs(argv: string[]): { flags: Set<string>; values: Map<string, string> } {
-  const flags = new Set<string>();
-  const values = new Map<string, string>();
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (!a?.startsWith("--")) continue;
-    const key = a.slice(2);
-    const next = argv[i + 1];
-    if (next !== undefined && !next.startsWith("--")) {
-      values.set(key, next);
-      i++;
-    } else {
-      flags.add(key);
-    }
-  }
-  return { flags, values };
-}
 
 const USAGE =
-  "usage: uiverify upload --static-dir <dir> [--working-directory <dir>] [--api-url <url>] [--auto-accept-changes] [--exit-zero-on-changes] [--strict | --no-strict]";
+  "usage: uiverify upload --static-dir <dir> [--working-directory <dir>] [--api-url <url>] [--auto-accept-changes] [--exit-zero-on-changes] [--only-changed] [--strict | --no-strict]";
 
 const HELP = `uiverify upload — upload a prebuilt Storybook bundle for visual regression testing.
 
@@ -60,6 +49,10 @@ Options:
   --auto-accept-changes      Accept this build's changes as the new baseline (pass on merges to main).
   --exit-zero-on-changes     Detect but don't block: a changed (needs-review) verdict exits 0 and stays
                              pending review in the dashboard. failed/blocked still exit non-zero.
+  --only-changed             Storybook only. Render only the stories this commit's changed files could
+                             affect and carry the rest forward. Needs a bundle built with Storybook's
+                             --stats-json; with no dependency graph every story renders. Ignored for
+                             Playwright archive uploads, which always render in full.
   --strict                   Fail the CI job (exit 1) if the upload itself fails — bad/missing key,
                              missing bundle, network error. This is the DEFAULT.
   --no-strict                Never fail the CI job on an operational error (exit 0). The visual verdict
@@ -84,7 +77,7 @@ async function main(): Promise<void> {
     console.log(HELP);
     process.exit(0);
   }
-  const { flags, values } = parseArgs(rest);
+  const { flags, values, invalid, removed } = parseArgs(rest);
   // Strict-by-default: an operational failure (bad key, missing bundle, upload error — NOT the visual
   // verdict) fails the job unless explicitly opted out, so a silently dropped upload can't leave CI
   // green. Explicit --strict/--no-strict wins; else strict.
@@ -109,6 +102,29 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  // Unknown, malformed, or a boolean given a value. Rejected rather than guessed: a typo'd flag that
+  // parses "successfully" produces a run that renders something other than what was asked for, with a
+  // CI log identical to one that worked.
+  //
+  // Exits 2 unconditionally rather than routing through `softFail`, matching the bad-subcommand path
+  // above. A malformed invocation is a USER error, not an operational one, and `--no-strict` is a
+  // statement about operational failures ("don't fail my job if the upload breaks") — honouring it here
+  // would exit 0 having uploaded nothing, which is exactly the "green but nothing was uploaded" outcome
+  // strict-by-default exists to prevent. The old parser ignored unknown flags and uploaded anyway, so
+  // silently swallowing this would be strictly worse than the behaviour it replaced.
+  if (invalid.length > 0) {
+    console.error(
+      `[uiverify] ✗ unrecognized or incomplete argument(s): ${[...new Set(invalid)].join(" ")}. Options that take a value need one (--static-dir <dir>); boolean flags take none (pass --only-changed bare). Run \`uiverify upload --help\` for the full list.\n${USAGE}`,
+    );
+    process.exit(2);
+  }
+
+  // Warned, not rejected: these worked in an earlier release, so failing the job would break a workflow
+  // that upgrades without touching its arguments. Printed before the key check so it shows either way.
+  for (const opt of new Set(removed)) {
+    console.error(`[uiverify] ⚠ ${opt} was removed and is being ignored — drop it from your workflow.`);
+  }
+
   if (!apiKey) softFail("UIVERIFY_API_KEY is required");
   const apiUrl =
     values.get("api-url") ?? process.env.UIVERIFY_API_URL ?? "https://uiverify.ai";
@@ -121,12 +137,26 @@ async function main(): Promise<void> {
   staticDir = path.resolve(cwd, staticDir);
 
   const log = (m: string): void => console.log(`[uiverify] ${redact(m, apiKey)}`);
+
+  const onlyChanged = flags.has("only-changed");
+  // Not a failure — a full render is always correct — but say it, or the run is indistinguishable from
+  // a working opt-in. Stays a file check, never a reimplementation of the server's decision.
+  const noOpReason = onlyChanged ? onlyChangedNoOpReason(staticDir) : null;
+  if (noOpReason === "no-graph") {
+    log(
+      "⚠ --only-changed, but no preview-stats.json in the bundle — every story will render. Build with Storybook's --stats-json to get the dependency graph.",
+    );
+  } else if (noOpReason === "archive") {
+    log("⚠ --only-changed has no effect on a Playwright archive (no dependency graph) — every test will render.");
+  }
+
   try {
     const res = await runUpload(
       {
         staticDir,
         appUrl: apiUrl,
         autoAcceptChanges: flags.has("auto-accept-changes"),
+        onlyChanged,
       },
       {
         client: httpIngestClient(apiUrl, apiKey),

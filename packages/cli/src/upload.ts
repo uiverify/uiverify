@@ -17,6 +17,13 @@ export interface UploadOptions {
   appUrl?: string;
   /** Auto-accept this build's changed snapshots as the new baseline (pass on merges to main). */
   autoAcceptChanges?: boolean;
+  /**
+   * Skip-unchanged: render only the stories this commit's changed files could affect and carry the
+   * rest forward. Opt-in per build. The whole decision runs server-side off the uploaded bundle's
+   * dependency graph — a bundle built without Storybook's `--stats-json` carries no graph, so the
+   * server renders everything even with this on.
+   */
+  onlyChanged?: boolean;
 }
 
 export interface UploadDeps {
@@ -56,6 +63,7 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
     prNumber: meta.prNumber,
     parentShas: meta.parentShas,
     autoAcceptChanges: opts.autoAcceptChanges ?? false,
+    onlyChanged: opts.onlyChanged ?? false,
     repoFullName: meta.repoFullName || undefined,
   });
   // Advisory, non-blocking — e.g. the GitHub App isn't installed on the repo. Print loudly so the

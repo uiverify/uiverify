@@ -86,6 +86,7 @@ describe("runUpload", () => {
     expect(log.register?.commitSha).toBe("abcdef1234567890");
     expect(log.register?.prNumber).toBe(9);
     expect(log.register?.autoAcceptChanges).toBe(false);
+    expect(log.register?.onlyChanged).toBe(false);
     expect(log.uploaded).toEqual({ url: "http://cp/api/storage/bundles/b1.tgz", tgz: "/tmp/bundle.tgz" });
     expect(log.marked).toBe("b1");
     expect(log.statusPolls).toBe(3);
@@ -126,6 +127,12 @@ describe("runUpload", () => {
     const log: CallLog = { statusPolls: 0 };
     await runUpload({ staticDir: "/sb", autoAcceptChanges: true }, deps(log, ["passed"]));
     expect(log.register?.autoAcceptChanges).toBe(true);
+  });
+
+  it("forwards --only-changed as onlyChanged in the register body", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    await runUpload({ staticDir: "/sb", onlyChanged: true }, deps(log, ["passed"]));
+    expect(log.register?.onlyChanged).toBe(true);
   });
 
   it("forwards the detected repoFullName in the register body", async () => {

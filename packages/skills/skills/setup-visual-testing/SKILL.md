@@ -85,6 +85,29 @@ npm run build-storybook && UIVERIFY_API_KEY=vt_live_… npx uiverify upload --st
 # Playwright:  npx playwright test && npx uiverify upload --static-dir uiverify-archive
 ```
 
+**Optional, Storybook only — render only what the PR could have changed.** UI Verify can render just the
+stories your commit's changed files could affect and carry the rest of the baselines forward. To turn it
+on, edit the two `- run:` steps in `.github/workflows/visual.yml` (the build and the upload) in place —
+add `-- --stats-json` to the build, and `--only-changed` to the upload:
+
+```yaml
+      - run: npm run build-storybook -- --stats-json    # adds preview-stats.json to storybook-static
+      - run: npx uiverify upload --static-dir storybook-static --only-changed
+        env:
+          UIVERIFY_API_KEY: ${{ secrets.UIVERIFY_API_KEY }}
+```
+
+Both edits are required, and they replace the existing steps — don't append them, or the job builds
+Storybook twice and registers two builds per PR. The decision runs server-side off the dependency graph
+in `preview-stats.json`, so without `--stats-json` every story renders even with the flag on (the CLI
+warns when it spots this). It does nothing for the Playwright path: an archive has no dependency graph.
+
+Check the Storybook major first - the flag is `--stats-json` on Storybook 8+, but `--webpack-stats-json`
+on 7.x, and passing the wrong one fails the build step before the upload ever runs.
+
+Leave this off for the first few runs; turn it on once the check is green and you want the bill to track
+the size of the diff rather than the size of the suite.
+
 ## Step 5 — the check gates every PR
 
 Once wired, every PR gets a UI Verify check. The first run on your default branch captures the

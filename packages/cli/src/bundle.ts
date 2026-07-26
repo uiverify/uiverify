@@ -34,6 +34,29 @@ export function finalizeArchiveIfNeeded(staticDir: string): void {
   fs.writeFileSync(indexPath, JSON.stringify({ v: ARCHIVE_FORMAT_VERSION, entries }, null, 2));
 }
 
+/**
+ * Why `--only-changed` will quietly do nothing for this bundle, or `null` if it should work.
+ *
+ * Skipping is decided server-side, so a no-op looks exactly like a working opt-in in the CI log and the
+ * user keeps paying for full runs with nothing to notice. Both no-op causes are provable locally, so
+ * both get named:
+ *  - `"no-graph"` — a Storybook bundle built without `--stats-json`, so there is no dependency graph.
+ *  - `"archive"` — a Playwright archive, which has no graph to build; the server always renders it in full.
+ *
+ * Storybook is identified by its own marker, `iframe.html` (the preview frame every static build emits),
+ * rather than by ruling an archive out. Both archive-shaped tests drift: `snapshots/` alone misreads a
+ * Storybook build that copies a `snapshots/` asset dir, and "`snapshots/` and no `index.json`" flips to
+ * Storybook the moment `finalizeArchiveIfNeeded` writes that manifest, so a re-run over the same archive
+ * dir would start getting Storybook advice. A `staticDir` that doesn't exist has a real error coming and
+ * is left alone rather than pre-empted with a misleading hint.
+ */
+export function onlyChangedNoOpReason(staticDir: string): "no-graph" | "archive" | null {
+  if (fs.existsSync(path.join(staticDir, "iframe.html"))) {
+    return fs.existsSync(path.join(staticDir, "preview-stats.json")) ? null : "no-graph";
+  }
+  return fs.existsSync(path.join(staticDir, "snapshots")) ? "archive" : null;
+}
+
 /** Create the bundle .tgz from a built static dir (files at the archive root). A Playwright archive dir
  *  is finalized first — its `index.json` manifest assembled — so it uploads with no separate step. */
 export async function createBundle(staticDir: string, outPath: string): Promise<void> {
