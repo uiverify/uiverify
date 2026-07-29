@@ -25,11 +25,34 @@ Catch unintended UI changes on every pull request. UI Verify renders your compon
 
 # @uiverify/skills
 
-Agent skills for UI Verify: drop-in workflows a coding agent (Claude Code, Codex, and others) runs in **your** repo so you set up and operate visual testing the right way. Each is a plain `SKILL.md` with no runtime code. They talk to UI Verify over HTTP (the `uiverify` CLI / `@uiverify/playwright`) and MCP only.
+Agent skills for coding agents (Claude Code, Codex, and others): drop-in workflows they run in **your** repo. Two families - the agentic-development loop that takes a ticket to a merged PR, and the visual testing that keeps the UI honest. Each is a plain `SKILL.md` with no runtime code.
 
-Two of them (`economical-stories`, and the determinism pair) are written to help **any** per-snapshot visual tool, not just UI Verify, so they travel.
+The agentic-development skills are tool-agnostic and adapt to your stack (each project-specific coupling is marked, fill it in for your repo). The visual-testing skills talk to UI Verify over HTTP (the `uiverify` CLI / `@uiverify/playwright`) and MCP only; two of them (`economical-stories` and the determinism pair) help **any** per-snapshot visual tool, so they travel.
 
 ## The skills
+
+### Agentic development
+
+The loop that takes a ticket to a merged PR.
+
+| Skill | When your agent runs it |
+|---|---|
+| **[factory](skills/factory)** | Say what you want; it implements, reviews, e2e-verifies, opens the PR, and reacts to CI, all the way to merge-ready. Never auto-merges. Composes the other agentic skills. |
+| **[review-loop](skills/review-loop)** | Review and fix until the diff is actually clean: a multi-model panel, applied fixes, re-review, until a clean confirming pass. |
+| **[review-multi-model](skills/review-multi-model)** | A second opinion on a diff: Claude and Codex review in parallel, every finding verified against the code, merged into one report. |
+| **[e2e-verify](skills/e2e-verify)** | Drive the real app with Playwright before you open a PR, so "done" means it works, not just green unit tests. |
+| **[babysit-pr](skills/babysit-pr)** | Open the PR, poll CI, and fix each failure until it's green and ready to merge. Never approves or merges. |
+
+### Tuning the loop
+
+Make the system better at its own job.
+
+| Skill | When your agent runs it |
+|---|---|
+| **[add-rule](skills/add-rule)** | Turn a correction into a durable rule and, when it's mechanical, a lint guard that goes red next time. |
+| **[evaluate-run](skills/evaluate-run)** | Grade a finished run cold: did it follow the process, honor the conventions, write real tests, and capture its corrections? |
+
+### Visual testing
 
 | Skill | When your agent runs it | Capture path |
 |---|---|---|
@@ -55,9 +78,18 @@ Then invoke a skill by name. The plugin namespaces them under `uiverify`:
 /uiverify:triage-visual-changes
 ```
 
-**Or copy the folders** into your agent's skills directory (e.g. `.claude/skills/`), each is self-contained (the package isn't published to npm; grab it from the repo):
+**Or copy the folders** into your agent's skills directory (e.g. `.claude/skills/`) with plain git - nothing extra to install. Copied this way the skills are invoked bare (`/factory`, not `/uiverify:factory`), which is how the loop skills call each other:
 
 ```sh
 git clone --depth 1 https://github.com/uiverify/uiverify
-cp -r uiverify/packages/skills/skills/* .claude/skills/
+cp -r uiverify/packages/skills/skills/* .claude/skills/   # all of them
+rm -rf uiverify
+```
+
+**Or grab just one** (swap `factory` for any skill above). Note `factory` and `review-loop` call other skills, so if you grab one of those, grab the ones it composes too:
+
+```sh
+git clone --depth 1 https://github.com/uiverify/uiverify
+cp -r uiverify/packages/skills/skills/factory .claude/skills/
+rm -rf uiverify
 ```

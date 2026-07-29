@@ -1,7 +1,7 @@
 {
   "name": "uiverify",
   "version": "0.1.0",
-  "description": "Agent skills for UI Verify (uiverify.ai): set up visual regression testing, author economical + deterministic stories, and triage builds, run in your own repo.",
+  "description": "Agent skills for coding agents (uiverify.ai): the agentic-development loop that takes a ticket to a merged PR (implement, review, e2e-verify, ship, tune) plus UI Verify's visual regression testing, run in your own repo.",
   "author": {
     "name": "UI Verify",
     "url": "https://uiverify.ai"
@@ -9,6 +9,11 @@
   "homepage": "https://uiverify.ai",
   "repository": "https://github.com/uiverify/uiverify",
   "keywords": [
+    "agentic",
+    "claude-code",
+    "code-review",
+    "pull-request",
+    "ci",
     "visual-testing",
     "visual-regression",
     "screenshot-testing",
