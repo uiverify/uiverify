@@ -9,7 +9,7 @@ locally in `src/client.ts`). It carries no rendering, diffing, or judging logic;
 server-side. Distributed as `npx <pkg> upload …` once published to npm.
 
 > **Package name:** the npm package is **`uiverify`** (repo `uiverify/uiverify`); the Playwright SDK
-> publishes as **`@uiverify/playwright`**.
+> publishes as **`@uiverify/playwright`** and the Vitest SDK as **`@uiverify/vitest`**.
 
 ## What it does
 
@@ -100,5 +100,6 @@ Run locally from the repo root via `pnpm install && pnpm -C packages/cli exec ts
 or build with `pnpm -C packages/cli build` and run `node packages/cli/dist/uiverify.js upload …`.
 
 > **Monorepo:** the CLI lives in `packages/cli`; the Playwright capture SDK (`@uiverify/playwright`) lives
-> in `packages/playwright`; and the agent skills (`@uiverify/skills`, a Claude Code plugin, not published to
-> npm) live in `packages/skills` (see each README). Same "dumb client, no server-side logic" rule.
+> in `packages/playwright`; the Vitest capture SDK (`@uiverify/vitest`) lives in `packages/vitest`; and the
+> agent skills (`@uiverify/skills`, a Claude Code plugin, not published to npm) live in `packages/skills`
+> (see each README). Same "dumb client, no server-side logic" rule.

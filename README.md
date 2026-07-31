@@ -15,9 +15,10 @@ Catch unintended UI changes on every pull request. UI Verify renders your compon
 
 [![uiverify](https://img.shields.io/npm/v/uiverify?label=uiverify&color=2ea44f)](https://www.npmjs.com/package/uiverify)
 [![@uiverify/playwright](https://img.shields.io/npm/v/@uiverify/playwright?label=%40uiverify%2Fplaywright&color=2ea44f)](https://www.npmjs.com/package/@uiverify/playwright)
+[![@uiverify/vitest](https://img.shields.io/npm/v/@uiverify/vitest?label=%40uiverify%2Fvitest&color=2ea44f)](https://www.npmjs.com/package/@uiverify/vitest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/uiverify/uiverify/blob/main/LICENSE)
 
-[uiverify.ai](https://uiverify.ai) &nbsp;·&nbsp; [GitHub](https://github.com/uiverify/uiverify) &nbsp;·&nbsp; [CLI](https://www.npmjs.com/package/uiverify) &nbsp;·&nbsp; [Playwright SDK](https://www.npmjs.com/package/@uiverify/playwright) &nbsp;·&nbsp; [Skills](https://github.com/uiverify/uiverify/tree/main/packages/skills)
+[uiverify.ai](https://uiverify.ai) &nbsp;·&nbsp; [GitHub](https://github.com/uiverify/uiverify) &nbsp;·&nbsp; [CLI](https://www.npmjs.com/package/uiverify) &nbsp;·&nbsp; [Playwright SDK](https://www.npmjs.com/package/@uiverify/playwright) &nbsp;·&nbsp; [Vitest SDK](https://www.npmjs.com/package/@uiverify/vitest) &nbsp;·&nbsp; [Skills](https://github.com/uiverify/uiverify/tree/main/packages/skills)
 
 </div>
 
@@ -27,7 +28,7 @@ Catch unintended UI changes on every pull request. UI Verify renders your compon
 
 UI Verify is a hosted visual-testing service that plugs into your CI. On each PR it:
 
-1. **Captures** your UI, from Storybook stories or from your existing Playwright tests via a drop-in capture SDK.
+1. **Captures** your UI, from Storybook stories or from your existing Playwright or Vitest browser-mode tests via a drop-in capture SDK.
 2. **Renders & diffs** every state in the cloud against the baseline from your default branch.
 3. **Reports** the verdict back as a GitHub check, and gates the PR on it.
 4. **Triages**: a coding agent (Claude Code, Codex, and others) buckets real regressions vs. cosmetic noise and can accept new baselines in bulk, all over MCP.
@@ -54,8 +55,9 @@ Prefer to drive it from your agent? Install the skills (below) and run `/uiverif
 
 | Package | Install | What it does |
 |---|---|---|
-| **[`uiverify`](packages/cli)** | `npm i -D uiverify` | The CI uploader. Uploads your prebuilt Storybook bundle (or a Playwright archive), streams render progress, and reflects the visual verdict in its exit code. |
+| **[`uiverify`](packages/cli)** | `npm i -D uiverify` | The CI uploader. Uploads your prebuilt Storybook bundle (or a Playwright/Vitest archive), streams render progress, and reflects the visual verdict in its exit code. |
 | **[`@uiverify/playwright`](packages/playwright)** | `npm i -D @uiverify/playwright` | The Playwright capture SDK. Swap `@playwright/test` for it and each test archives its final UI state (serialized DOM + resource bytes) for UI Verify to replay and diff. |
+| **[`@uiverify/vitest`](packages/vitest)** | `npm i -D @uiverify/vitest` | The Vitest capture SDK. Add `uiverifyPlugin()` to your Vitest config and each browser-mode test archives its final DOM (serialized DOM + resource bytes) for UI Verify to replay and diff; `takeSnapshot()` adds named checkpoints. |
 | **[`@uiverify/skills`](packages/skills)** | plugin, see below | Agent skills: `SKILL.md` workflows a coding agent runs in your repo to set up visual testing, author economical + deterministic stories, and triage builds. |
 
 ### Agent skills
