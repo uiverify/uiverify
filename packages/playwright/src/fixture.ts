@@ -1,6 +1,5 @@
-import path from "node:path";
 import { test as base } from "@playwright/test";
-import type { ArchivedSnapshotParams } from "./archive-types";
+import { type ArchivedSnapshotParams, resolveOutDir } from "@uiverify/archive-core";
 import { PlaywrightArchiver } from "./archiver";
 
 /**
@@ -18,11 +17,6 @@ export interface UiVerifyFixture {
 
 interface UiVerifyFixtures {
   uiVerify: UiVerifyFixture;
-}
-
-/** Where archives are written. Overridable so CI can point every worker at one bundle dir. */
-function resolveOutDir(): string {
-  return process.env.UIVERIFY_ARCHIVE_DIR ?? path.resolve(process.cwd(), "uiverify-archive");
 }
 
 export const test = base.extend<UiVerifyFixtures>({

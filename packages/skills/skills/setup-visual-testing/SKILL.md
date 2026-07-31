@@ -1,6 +1,6 @@
 ---
 name: setup-visual-testing
-description: Set up UI Verify visual regression testing in a repo end to end — detect or scaffold the capture path (Storybook stories or a Playwright suite), install the uiverify CLI and wire it into CI, and author the first stories the economical, deterministic way from the start. Use when adding visual/screenshot regression testing to a project for the first time, wiring UI Verify into CI, or onboarding a repo that has no visual tests yet.
+description: Set up UI Verify visual regression testing in a repo end to end — detect or scaffold the capture path (Storybook stories, a Playwright suite, or Vitest browser-mode component tests), install the uiverify CLI and wire it into CI, and author the first stories the economical, deterministic way from the start. Use when adding visual/screenshot regression testing to a project for the first time, wiring UI Verify into CI, or onboarding a repo that has no visual tests yet.
 ---
 
 # Set up UI Verify, end to end
@@ -12,7 +12,7 @@ determinism work to the focused skills.
 
 ## Step 1 — pick the capture path (don't ask the user; detect it)
 
-UI Verify captures UI two ways. Choose by what the repo already has:
+UI Verify captures UI three ways. Choose by what the repo already has:
 
 - **Storybook path** — the repo has `.storybook/` or `@storybook/*` in `package.json`, or is a
   component/design-system library. Each **story** is a snapshot. This is the default; prefer it when
@@ -20,8 +20,12 @@ UI Verify captures UI two ways. Choose by what the repo already has:
 - **Playwright path** — the repo has a `@playwright/test` suite and you want to test **assembled real
   pages** (the app, staging, or prod), not isolated components. Each test archives its final UI state
   for UI Verify to replay + diff.
+- **Vitest path** — the repo already runs component tests in **Vitest browser mode** (`@vitest/browser`
+  with a Playwright provider), and you want those component renders diffed without adopting Storybook.
+  Each browser-mode test archives its final DOM. Prefer this over scaffolding Storybook only when a
+  browser-mode suite already exists.
 
-If neither exists, scaffold Storybook (`npx storybook@latest init`) — it's the lower-friction path and
+If none exists, scaffold Storybook (`npx storybook@latest init`) — it's the lower-friction path and
 gives you deterministic isolation for free (see `storybook-visual-testing`).
 
 ## Step 2 — install the client
@@ -40,6 +44,19 @@ npm i -D uiverify
 npm i -D @uiverify/playwright uiverify
 ```
 
+**Vitest** — add the plugin to `vitest.config.ts` so every browser-mode test archives its final DOM:
+```ts
+import { playwright } from '@vitest/browser-playwright';
+import { uiverifyPlugin } from '@uiverify/vitest/plugin';
+export default defineConfig({
+  plugins: [uiverifyPlugin()],
+  test: { browser: { enabled: true, provider: playwright(), instances: [{ browser: 'chromium' }] } },
+});
+```
+```bash
+npm i -D @uiverify/vitest @vitest/browser-playwright uiverify
+```
+
 ## Step 3 — author the first stories the right way
 
 Don't snapshot whatever exists as-is. Author (or refactor) the first few stories using the two
@@ -48,9 +65,9 @@ authoring skills, in this order:
 1. **`economical-stories`** — collapse variant matrices into gallery/data-driven stories so you snapshot
    the fewest billable shots for full coverage. Do this *before* determinism work — fewer stories is
    less to make deterministic.
-2. **`storybook-visual-testing`** (Storybook) or **`playwright-visual-testing`** (Playwright) — remove
-   the run-to-run variation the tool can't neutralize from outside your app (mostly: the clock, live
-   data, infinite animations).
+2. **`storybook-visual-testing`** (Storybook), **`playwright-visual-testing`** (Playwright), or
+   **`vitest-visual-testing`** (Vitest) — remove the run-to-run variation the tool can't neutralize from
+   outside your app (mostly: the clock, live data, infinite animations).
 
 ## Step 4 — wire CI
 
@@ -74,8 +91,8 @@ jobs:
       - run: npx uiverify upload --static-dir storybook-static
         env:
           UIVERIFY_API_KEY: ${{ secrets.UIVERIFY_API_KEY }}
-        # Playwright instead (browsers aren't preinstalled on the runner): run
-        #   "npx playwright install --with-deps && npx playwright test", then
+        # Playwright / Vitest instead (browsers aren't preinstalled on the runner): run
+        #   "npx playwright install --with-deps && npx playwright test"  (or "npx vitest run"), then
         #   "npx uiverify upload --static-dir uiverify-archive".
 ```
 
@@ -83,6 +100,7 @@ Locally the same thing is:
 ```bash
 npm run build-storybook && UIVERIFY_API_KEY=vt_live_… npx uiverify upload --static-dir storybook-static
 # Playwright:  npx playwright test && npx uiverify upload --static-dir uiverify-archive
+# Vitest:      npx playwright install --with-deps && npx vitest run && npx uiverify upload --static-dir uiverify-archive
 ```
 
 **Optional, Storybook only — render only what the PR could have changed.** UI Verify can render just the

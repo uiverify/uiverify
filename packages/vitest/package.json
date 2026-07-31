@@ -1,11 +1,12 @@
 {
-  "name": "@uiverify/playwright",
-  "version": "0.2.2",
-  "description": "Playwright capture SDK for UI Verify (uiverify.ai): swap @playwright/test for this and each test archives its final UI state (serialized DOM + resource bytes) to be replayed + visually diffed by UI Verify. Produces an archive the uiverify CLI uploads; talks to nothing at runtime.",
+  "name": "@uiverify/vitest",
+  "version": "0.1.0",
+  "description": "Vitest browser-mode capture SDK for UI Verify (uiverify.ai): add uiverifyPlugin() to your Vitest config and each browser-mode test archives its final DOM (serialized DOM + resource bytes) to be replayed + visually diffed by UI Verify. Produces an archive the uiverify CLI uploads; talks to nothing at runtime.",
   "keywords": [
     "visual-testing",
     "visual-regression",
-    "playwright",
+    "vitest",
+    "vitest-browser",
     "screenshot-testing",
     "rrweb",
     "uiverify"
@@ -15,7 +16,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/uiverify/uiverify.git",
-    "directory": "packages/playwright"
+    "directory": "packages/vitest"
   },
   "license": "MIT",
   "author": "UI Verify",
@@ -33,9 +34,13 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./finalize": {
-      "types": "./dist/finalize.d.ts",
-      "default": "./dist/finalize.js"
+    "./plugin": {
+      "types": "./dist/plugin.d.ts",
+      "default": "./dist/plugin.js"
+    },
+    "./browser-setup": {
+      "types": "./dist/browser-setup.d.ts",
+      "default": "./dist/browser-setup.js"
     }
   },
   "files": [
@@ -49,18 +54,20 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "@playwright/test": ">=1.40.0"
+    "@vitest/browser": ">=3.0.0",
+    "vitest": ">=3.0.0"
   },
   "dependencies": {
-    "@rrweb/types": "^2.0.0",
     "rrweb-snapshot": "^2.1.0"
   },
   "devDependencies": {
-    "@playwright/test": "^1.60.0",
+    "@rrweb/types": "^2.0.0",
     "@types/node": "^24.0.0",
     "@uiverify/archive-core": "workspace:*",
+    "@vitest/browser": "^4.1.8",
     "tsup": "^8.5.0",
     "typescript": "^5.7.0",
+    "vite": "^6.0.0",
     "vitest": "^4.1.8"
   }
 }

@@ -1,13 +1,16 @@
 /**
- * The E2E archive format this capture SDK writes — the on-the-wire contract for what UI Verify reads
- * back. This SDK runs inside the user's test and PRODUCES an archive; UI Verify CONSUMES it. The
- * archive-format types live here as a standalone copy; the client never imports anything server-side.
+ * The E2E archive format the UI Verify capture SDKs write — the on-the-wire contract for what UI Verify
+ * reads back. A capture SDK runs inside the user's test and PRODUCES an archive; UI Verify CONSUMES it.
+ * The archive-format types live here as a standalone copy; the client never imports anything server-side.
  *
- * The idea (capture-and-replay): a Playwright/Cypress test drives the real app to a state, and instead
- * of screenshotting live (single-browser, flaky), we capture a portable archive — the serialized DOM
- * (via rrweb-snapshot) plus every resource the browser loaded (bytes) — which UI Verify re-renders and
- * diffs later. That yields deterministic, cross-browser snapshots and an inspectable archive; an
- * archived state is addressed by a stable id, exactly like a Storybook story.
+ * The idea (capture-and-replay): a Playwright/Vitest test drives the real app (or renders a component) to
+ * a state, and instead of screenshotting live (single-browser, flaky), we capture a portable archive —
+ * the serialized DOM (via rrweb-snapshot) plus every resource the browser loaded (bytes) — which UI
+ * Verify re-renders and diffs later. That yields deterministic, cross-browser snapshots and an
+ * inspectable archive; an archived state is addressed by a stable id, exactly like a Storybook story.
+ *
+ * The format is runner-agnostic: @uiverify/playwright and @uiverify/vitest both write it, and the reader
+ * treats every archived state uniformly.
  */
 import type { serializedNodeWithId } from "@rrweb/types";
 

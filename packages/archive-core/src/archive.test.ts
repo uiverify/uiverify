@@ -3,7 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { finalizeArchive } from "./finalize";
-import { snapshotFileName } from "./archiver";
+import { snapshotFileName } from "./snapshot-file";
+import { writeSnapshot } from "./write";
 import type { ArchiveIndex, ArchivedSnapshot } from "./archive-types";
 
 /** Read + parse the manifest the way the server's consumer does (kept local — the client never
@@ -12,17 +13,15 @@ function readIndex(bundle: string): ArchiveIndex {
   return JSON.parse(fs.readFileSync(path.join(bundle, "index.json"), "utf8"));
 }
 
-/** Write a minimal snapshot file into a bundle's snapshots/ dir, the way the archiver does. */
-function writeSnapshot(bundle: string, snap: Pick<ArchivedSnapshot, "id" | "title" | "name">): void {
-  const dir = path.join(bundle, "snapshots");
-  fs.mkdirSync(dir, { recursive: true });
-  const full: ArchivedSnapshot = {
+/** Write a minimal snapshot into a bundle through the real writer (so the test exercises writeSnapshot,
+ *  not a hand-rolled copy of it). */
+function seedSnapshot(bundle: string, snap: Pick<ArchivedSnapshot, "id" | "title" | "name">): void {
+  writeSnapshot(bundle, {
     ...snap,
     viewport: { width: 800, height: 600 },
     dom: { type: 0, childNodes: [], id: 1 } as unknown as ArchivedSnapshot["dom"],
     resources: {},
-  };
-  fs.writeFileSync(path.join(dir, snapshotFileName(snap.id)), JSON.stringify(full));
+  });
 }
 
 describe("snapshotFileName", () => {
@@ -42,12 +41,33 @@ describe("snapshotFileName", () => {
   });
 });
 
+describe("writeSnapshot", () => {
+  it("writes the snapshot under snapshots/ at its deterministic filename", () => {
+    const bundle = fs.mkdtempSync(path.join(os.tmpdir(), "uiverify-write-"));
+    try {
+      const written = writeSnapshot(bundle, {
+        id: "home",
+        title: "home page",
+        name: "",
+        viewport: { width: 800, height: 600 },
+        dom: { type: 0, childNodes: [], id: 1 } as unknown as ArchivedSnapshot["dom"],
+        resources: {},
+      });
+      expect(written).toBe(path.join(bundle, "snapshots", snapshotFileName("home")));
+      expect(fs.existsSync(written)).toBe(true);
+      expect(JSON.parse(fs.readFileSync(written, "utf8")).id).toBe("home");
+    } finally {
+      fs.rmSync(bundle, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("finalizeArchive", () => {
   it("builds a v1 manifest the archive-replay capturer accepts", () => {
     const bundle = fs.mkdtempSync(path.join(os.tmpdir(), "uiverify-finalize-"));
     try {
-      writeSnapshot(bundle, { id: "home", title: "home page", name: "" });
-      writeSnapshot(bundle, { id: "home::after", title: "home page", name: "after" });
+      seedSnapshot(bundle, { id: "home", title: "home page", name: "" });
+      seedSnapshot(bundle, { id: "home::after", title: "home page", name: "after" });
 
       const count = finalizeArchive(bundle);
       expect(count).toBe(2);

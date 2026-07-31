@@ -9,6 +9,11 @@
  * build the manifest ahead of time, but it is no longer a required step.
  */
 export { test, expect, type UiVerifyFixture } from "./fixture";
-export { PlaywrightArchiver, snapshotFileName, type ArchiverOptions } from "./archiver";
-export { finalizeArchive } from "./finalize";
-export type { ArchivedSnapshot, ArchivedSnapshotParams, ArchiveIndex } from "./archive-types";
+export { PlaywrightArchiver, type ArchiverOptions } from "./archiver";
+export {
+  finalizeArchive,
+  snapshotFileName,
+  type ArchivedSnapshot,
+  type ArchivedSnapshotParams,
+  type ArchiveIndex,
+} from "@uiverify/archive-core";

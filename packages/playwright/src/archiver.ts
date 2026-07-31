@@ -1,9 +1,11 @@
-import fs from "node:fs";
-import path from "node:path";
-import { createHash } from "node:crypto";
 import type { Page, Response } from "@playwright/test";
+import {
+  type ArchivedResource,
+  type ArchivedSnapshot,
+  type ArchivedSnapshotParams,
+  writeSnapshot,
+} from "@uiverify/archive-core";
 import { rrwebRuntimeSource, RRWEB_GLOBAL } from "./rrweb-runtime";
-import type { ArchivedResource, ArchivedSnapshot, ArchivedSnapshotParams } from "./archive-types";
 
 /**
  * PlaywrightArchiver — the producer half of the E2E archive flow. It rides along a live Playwright
@@ -148,22 +150,8 @@ export class PlaywrightArchiver {
       ...(params.delayMs ? { params } : {}),
     };
 
-    const dir = path.join(this.opts.outDir, "snapshots");
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, snapshotFileName(id)), JSON.stringify(snapshot));
+    writeSnapshot(this.opts.outDir, snapshot);
     this.captureCount++;
     return id;
   }
-}
-
-/** Deterministic, filesystem-safe filename for a snapshot id: a readable slug plus a short hash of the
- *  full id (so two ids that slugify the same never collide). Shared shape with `finalizeArchive`, which
- *  discovers these files. */
-export function snapshotFileName(id: string): string {
-  const slug = id
-    .replace(/[^a-zA-Z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80);
-  const hash = createHash("sha1").update(id).digest("hex").slice(0, 10);
-  return `${slug || "snapshot"}-${hash}.json`;
 }
