@@ -12,7 +12,7 @@ at the pixels when a number is ambiguous, then summarize or accept.
 ## Connect the MCP (once)
 
 The server is a remote Streamable-HTTP MCP at `https://uiverify.ai/api/mcp`, authed with your project's
-`vt_live_…` API key as a Bearer token. **Add it as a real MCP server in your agent — don't hand-roll
+`uv_proj_…` API key as a Bearer token. **Add it as a real MCP server in your agent — don't hand-roll
 `curl` against the endpoint.** Over raw `curl` the image tools come back as MCP image blocks a shell
 can't render, so the pixels are useless to a script; a native client shows them to the model directly.
 
@@ -28,7 +28,7 @@ claude mcp add --transport http uiverify https://uiverify.ai/api/mcp \
   "mcpServers": {
     "uiverify": {
       "url": "https://uiverify.ai/api/mcp",
-      "headers": { "Authorization": "Bearer YOUR_vt_live_KEY" }
+      "headers": { "Authorization": "Bearer YOUR_uv_proj_KEY" }
     }
   }
 }

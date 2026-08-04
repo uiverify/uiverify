@@ -71,7 +71,7 @@ authoring skills, in this order:
 
 ## Step 4 — wire CI
 
-Add a CI workflow so every PR gets a check. Store the project's `UIVERIFY_API_KEY` (a `vt_live_…`
+Add a CI workflow so every PR gets a check. Store the project's `UIVERIFY_API_KEY` (a `uv_proj_…`
 key from the dashboard) as a repo secret, then run the `uiverify` CLI (installed in Step 2).
 
 ```yaml
@@ -98,7 +98,7 @@ jobs:
 
 Locally the same thing is:
 ```bash
-npm run build-storybook && UIVERIFY_API_KEY=vt_live_… npx uiverify upload --static-dir storybook-static
+npm run build-storybook && UIVERIFY_API_KEY=uv_proj_… npx uiverify upload --static-dir storybook-static
 # Playwright:  npx playwright test && npx uiverify upload --static-dir uiverify-archive
 # Vitest:      npx playwright install --with-deps && npx vitest run && npx uiverify upload --static-dir uiverify-archive
 ```
