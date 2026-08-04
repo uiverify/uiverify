@@ -1,6 +1,6 @@
 ---
 name: vitest-visual-testing
-description: Make @uiverify/vitest (Vitest browser-mode) captures deterministic so component visual tests stop coming back "changed" without a real change (flaky diffs). Use when setting up or debugging visual tests over Vitest browser-mode component tests. Focuses only on the run-to-run variation the capturer can't neutralize from outside your app — the clock, infinite JS animations, live data, and non-Math.random randomness — plus the one Vitest-specific trap: capturing before the component has settled.
+description: Make @uiverify/vitest (Vitest browser-mode) captures deterministic so component visual tests stop coming back "changed" without a real change (flaky diffs). Use when setting up or debugging visual tests over Vitest browser-mode component tests. Focuses only on the run-to-run variation the capturer can't neutralize from outside your app — the clock, infinite JS animations, live data, and non-Math.random randomness — plus the one Vitest-specific trap - capturing before the component has settled.
 ---
 
 # Deterministic Vitest captures (browser mode)
@@ -50,7 +50,7 @@ import { render } from 'vitest-browser-react'; // or your framework's browser re
 import { takeSnapshot } from '@uiverify/vitest';
 
 test('user card', async () => {
-  const screen = render(<UserCard id="u_1" />);
+  const screen = await render(<UserCard id="u_1" />); // render() is async - await it, or `screen` is a Promise
   await screen.getByText('Ada Lovelace').query(); // wait for the settled state, THEN archive
   await takeSnapshot();
 });
@@ -119,8 +119,8 @@ order/size), or mask the region.
 ## Anti-patterns
 
 - **A test that fetches live data** → mock it (`vi.mock` / MSW).
-- **`takeSnapshot()` (or letting the test end) before the component rendered its data** → archives a
-  half-rendered frame; await the settled state first.
+- **`takeSnapshot()` (or letting the test end) before the component committed or rendered its data** →
+  archives a half-rendered or blank frame; `await render(...)` (it is async), then await the settled state.
 - **Disabling CSS animations / seeding `Math.random` / waiting on fonts by hand** → wasted effort; the
   capturer already does all three. Spend the effort on the clock, settling, and infinite loops.
 - **Unseeded `crypto`/`uuid`/faker or a bare `Date.now()`** → fixtures + freeze the clock.

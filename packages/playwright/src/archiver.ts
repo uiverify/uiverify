@@ -6,6 +6,11 @@ import {
   writeSnapshot,
 } from "@uiverify/archive-core";
 import { rrwebRuntimeSource, RRWEB_GLOBAL } from "./rrweb-runtime";
+import pkg from "../package.json";
+
+/** Stamped into every snapshot so the CLI can report the capture SDK's version at upload. Inlined at
+ *  build time (tsup bundles the JSON import), so it tracks the published version automatically. */
+const PRODUCER = { name: pkg.name, version: pkg.version };
 
 /**
  * PlaywrightArchiver — the producer half of the E2E archive flow. It rides along a live Playwright
@@ -148,6 +153,7 @@ export class PlaywrightArchiver {
       dom,
       resources: Object.fromEntries(this.resources),
       ...(params.delayMs ? { params } : {}),
+      producer: PRODUCER,
     };
 
     writeSnapshot(this.opts.outDir, snapshot);

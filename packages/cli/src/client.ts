@@ -1,6 +1,11 @@
 import fs from "node:fs";
 import { HttpStatusError, withRetry } from "./retry";
 import { z } from "zod";
+import pkg from "../package.json";
+
+/** This CLI's own version, reported at register (`x-uiverify-cli-version`) so UI Verify can nudge an
+ *  outdated CLI. Inlined at build time (esbuild bundles the JSON import). */
+const CLI_VERSION: string = pkg.version;
 
 // `baselineCommits` are the (sparse) commits a baseline could come from; the CLI intersects them
 // against the head's true local git ancestry and uploads the confirmed subset at markUploaded. An
@@ -77,6 +82,11 @@ export interface RegisterBody {
   /** GitHub `owner/repo`; the server binds it to the project so it knows where to post the check +
    *  PR comment. Omitted when it can't be determined locally. */
   repoFullName?: string;
+  /** The capture SDK that produced the bundle (`@uiverify/playwright` | `@uiverify/vitest`) and its
+   *  version, read from the archive manifest. Sent as `x-uiverify-sdk-*` headers (never in the JSON
+   *  body). Absent for a Storybook upload (no SDK) or an archive from a pre-stamp SDK. */
+  sdkName?: string;
+  sdkVersion?: string;
 }
 
 export interface IngestClient {
@@ -91,12 +101,18 @@ export interface IngestClient {
 }
 
 export function httpIngestClient(apiUrl: string, apiKey: string): IngestClient {
-  const auth = { authorization: `Bearer ${apiKey}` };
+  // Every request identifies the CLI version; the API key only ever travels in Authorization.
+  const auth = { authorization: `Bearer ${apiKey}`, "x-uiverify-cli-version": CLI_VERSION };
 
-  async function postJson(pathname: string, body: unknown, signal: AbortSignal): Promise<unknown> {
+  async function postJson(
+    pathname: string,
+    body: unknown,
+    signal: AbortSignal,
+    extraHeaders: Record<string, string> = {},
+  ): Promise<unknown> {
     const res = await fetch(`${apiUrl}${pathname}`, {
       method: "POST",
-      headers: { ...auth, "content-type": "application/json" },
+      headers: { ...auth, "content-type": "application/json", ...extraHeaders },
       body: JSON.stringify(body),
       signal,
     });
@@ -106,8 +122,15 @@ export function httpIngestClient(apiUrl: string, apiKey: string): IngestClient {
 
   return {
     async register(body) {
+      // The SDK identity travels as headers, not in the JSON body - strip it out so the body stays the
+      // build-input contract and only send the headers when the bundle actually reported an SDK.
+      const { sdkName, sdkVersion, ...payload } = body;
+      const sdkHeaders: Record<string, string> = {
+        ...(sdkName ? { "x-uiverify-sdk-name": sdkName } : {}),
+        ...(sdkVersion ? { "x-uiverify-sdk-version": sdkVersion } : {}),
+      };
       return registerResponse.parse(
-        await withRetry({ label: "register" }, (signal) => postJson("/api/ingest/build", body, signal)),
+        await withRetry({ label: "register" }, (signal) => postJson("/api/ingest/build", payload, signal, sdkHeaders)),
       );
     },
     async upload(uploadUrl, tgzPath) {

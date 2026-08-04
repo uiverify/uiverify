@@ -31,6 +31,15 @@ export interface ArchivedSnapshotParams {
   delayMs?: number;
 }
 
+/** The capture SDK that produced an archive - its npm package name and version. Stamped by the SDK so
+ *  the CLI can report it at upload (`x-uiverify-sdk-*`) and UI Verify can nudge an outdated capture SDK.
+ *  `@uiverify/playwright` and `@uiverify/vitest` are independent version lines, so the name is needed to
+ *  pick the right floor. */
+export interface ArchiveProducer {
+  name: string;
+  version: string;
+}
+
 /** One captured UI state: the serialized DOM + the resources it references + the capture geometry. */
 export interface ArchivedSnapshot {
   /** Stable, human-readable id — the baseline key, analogous to a Storybook story id. Built from the
@@ -53,6 +62,14 @@ export interface ArchivedSnapshot {
   /** url → captured response, served back during replay instead of re-fetching from the network. */
   resources: Record<string, ArchivedResource>;
   params?: ArchivedSnapshotParams;
+  /** The test file that produced this snapshot, relative to the Vite/project root (e.g.
+   *  "components/Button.visual.test.tsx"). Written by @uiverify/vitest so UI Verify can locate this
+   *  snapshot's "story module" in the emitted module graph for skip-unchanged. Absent for a Playwright
+   *  archive (no module graph) and a pre-graph SDK. */
+  sourcePath?: string;
+  /** The SDK that wrote this snapshot. Stamped per-snapshot (not once) so the manifest pass can read it
+   *  without a shared file that parallel test workers would race on. Absent on a pre-stamp archive. */
+  producer?: ArchiveProducer;
 }
 
 /** One entry in an archive bundle's manifest. `type: "story"` so downstream code that already keys
@@ -64,6 +81,10 @@ export interface ArchiveIndexEntry {
   title: string;
   name: string;
   snapshot: string;
+  /** The producing test file, Vite/project-root-relative — lifted from the snapshot at manifest time.
+   *  UI Verify projects it onto the story's `importPath` to locate it in the module graph for
+   *  skip-unchanged. Absent for a Playwright archive (no graph) and a pre-graph SDK. */
+  sourcePath?: string;
 }
 
 /** An archive bundle's manifest (`index.json`): every captured state in the build, by id. */
@@ -71,6 +92,9 @@ export interface ArchiveIndex {
   /** Format version, so the reader can reject an incompatible bundle instead of guessing. */
   v: 1;
   entries: Record<string, ArchiveIndexEntry>;
+  /** The capture SDK that produced this bundle, lifted from the snapshots at manifest time. The CLI
+   *  reads it to report `x-uiverify-sdk-*` at upload. Absent on a pre-stamp archive or a Storybook build. */
+  producer?: ArchiveProducer;
 }
 
 /** The current archive format version — written by the producer, checked by the consumer. */

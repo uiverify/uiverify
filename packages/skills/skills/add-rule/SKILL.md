@@ -1,6 +1,6 @@
 ---
 name: add-rule
-description: Turn a code-owner correction (or a recurring mistake) into a durable rule - the right conventions-doc edit, and a real failing lint guard whenever the rule is mechanically checkable. This is the self-improving loop the factory leans on: when something goes rogue, capture it so the linter/conventions-doc catches it next time instead of a human re-explaining it. Also runs as a weekly sweep over recent merged work. Use when asked to "/add-rule", "turn this into a rule", "make sure this never happens again", "capture this correction", "add a lint guard for X", or "do the weekly rule review".
+description: Turn a code-owner correction (or a recurring mistake) into a durable rule - the right conventions-doc edit, and a real failing lint guard whenever the rule is mechanically checkable. This is the self-improving loop the factory leans on - when something goes rogue, capture it so the linter/conventions-doc catches it next time instead of a human re-explaining it. Also runs as a weekly sweep over recent merged work. Use when asked to "/add-rule", "turn this into a rule", "make sure this never happens again", "capture this correction", "add a lint guard for X", or "do the weekly rule review".
 argument-hint: '[the correction - or "sweep" for the weekly pass]'
 ---
 

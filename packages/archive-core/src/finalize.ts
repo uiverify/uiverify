@@ -15,18 +15,22 @@ export function finalizeArchive(bundleDir: string): number {
   const dir = path.join(bundleDir, "snapshots");
   const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith(".json")) : [];
   const entries: Record<string, ArchiveIndexEntry> = {};
+  let producer: ArchiveIndex["producer"];
   for (const file of files) {
     const raw = fs.readFileSync(path.join(dir, file), "utf8");
-    const snap: Pick<ArchivedSnapshot, "id" | "title" | "name"> = JSON.parse(raw);
+    const snap: Pick<ArchivedSnapshot, "id" | "title" | "name" | "producer" | "sourcePath"> = JSON.parse(raw);
     entries[snap.id] = {
       id: snap.id,
       type: "story",
       title: snap.title,
       name: snap.name,
       snapshot: path.join("snapshots", file),
+      ...(snap.sourcePath ? { sourcePath: snap.sourcePath } : {}),
     };
+    // Every snapshot carries the same producer; take the first seen for the manifest.
+    producer ??= snap.producer;
   }
-  const index: ArchiveIndex = { v: ARCHIVE_FORMAT_VERSION, entries };
+  const index: ArchiveIndex = { v: ARCHIVE_FORMAT_VERSION, entries, ...(producer ? { producer } : {}) };
   fs.writeFileSync(path.join(bundleDir, "index.json"), JSON.stringify(index, null, 2));
   return Object.keys(entries).length;
 }

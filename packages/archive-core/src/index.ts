@@ -16,5 +16,6 @@ export type {
 export { ARCHIVE_FORMAT_VERSION } from "./archive-types";
 export { snapshotFileName } from "./snapshot-file";
 export { resolveOutDir } from "./out-dir";
+export { UI_VERIFY_GLOBAL, UI_VERIFY_MARKER_SCRIPT } from "./ui-verify";
 export { writeSnapshot } from "./write";
 export { finalizeArchive } from "./finalize";

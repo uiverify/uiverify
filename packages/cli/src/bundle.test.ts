@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { finalizeArchiveIfNeeded, onlyChangedNoOpReason } from "./bundle";
+import { finalizeArchiveIfNeeded, onlyChangedNoOpReason, readArchiveProducer } from "./bundle";
 
 let dir: string;
 
@@ -69,6 +69,40 @@ describe("finalizeArchiveIfNeeded", () => {
   it("does nothing when there is no snapshots dir", () => {
     finalizeArchiveIfNeeded(dir);
     expect(fs.existsSync(path.join(dir, "index.json"))).toBe(false);
+  });
+
+  it("lifts the capture-SDK producer from the snapshots into the manifest", () => {
+    const producer = { name: "@uiverify/playwright", version: "1.2.3" };
+    writeSnapshot("a.json", { id: "a", title: "t", name: "", dom: {}, resources: {}, producer });
+    writeSnapshot("b.json", { id: "b", title: "t", name: "", dom: {}, resources: {}, producer });
+
+    finalizeArchiveIfNeeded(dir);
+
+    expect(JSON.parse(fs.readFileSync(path.join(dir, "index.json"), "utf8")).producer).toEqual(producer);
+  });
+
+  it("omits producer when the snapshots carry none (a pre-stamp SDK)", () => {
+    writeSnapshot("a.json", { id: "a", title: "t", name: "", dom: {}, resources: {} });
+    finalizeArchiveIfNeeded(dir);
+    expect(JSON.parse(fs.readFileSync(path.join(dir, "index.json"), "utf8"))).not.toHaveProperty("producer");
+  });
+});
+
+describe("readArchiveProducer", () => {
+  it("reads the producer the finalize step stamped into index.json", () => {
+    const producer = { name: "@uiverify/vitest", version: "0.9.0" };
+    writeSnapshot("a.json", { id: "a", title: "t", name: "", dom: {}, resources: {}, producer });
+    finalizeArchiveIfNeeded(dir);
+    expect(readArchiveProducer(dir)).toEqual(producer);
+  });
+
+  it("returns null for a Storybook bundle (index.json with no producer) and a missing/garbage index", () => {
+    fs.writeFileSync(path.join(dir, "index.json"), JSON.stringify({ v: 1, entries: {} }));
+    expect(readArchiveProducer(dir)).toBeNull();
+    fs.rmSync(path.join(dir, "index.json"));
+    expect(readArchiveProducer(dir)).toBeNull();
+    fs.writeFileSync(path.join(dir, "index.json"), "not json{");
+    expect(readArchiveProducer(dir)).toBeNull();
   });
 });
 

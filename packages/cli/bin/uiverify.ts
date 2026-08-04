@@ -1,6 +1,6 @@
 import path from "node:path";
 import { parseArgs } from "../src/args";
-import { createBundle, onlyChangedNoOpReason } from "../src/bundle";
+import { createBundle, onlyChangedNoOpReason, readArchiveProducer } from "../src/bundle";
 import { httpIngestClient } from "../src/client";
 import { exitCodeFor } from "../src/exit";
 import { collectGitMeta, confirmAncestors } from "../src/git";
@@ -163,6 +163,7 @@ async function main(): Promise<void> {
         gitMeta: () => collectGitMeta(cwd),
         confirmAncestors: (candidates, headSha) => confirmAncestors(candidates, headSha, cwd),
         createBundle,
+        readProducer: readArchiveProducer,
         tmpFile: defaultTmpFile,
         log,
       },

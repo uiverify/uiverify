@@ -1,6 +1,6 @@
 ---
 name: playwright-visual-testing
-description: Make @uiverify/playwright (archive-replay) captures deterministic so real-page visual tests stop coming back "changed" without a real change (flaky diffs). Use when driving a real page — your app under test, a staging build, or live production — and the diff flakes. A symptom-to-lever checklist for the run-to-run variation you probably have: feature flags, live data, the clock, third-party widgets, and dynamic layouts. The lever is almost always "stop the variation at record time" — the archive bakes in whatever the page was.
+description: Make @uiverify/playwright (archive-replay) captures deterministic so real-page visual tests stop coming back "changed" without a real change (flaky diffs). Use when driving a real page — your app under test, a staging build, or live production — and the diff flakes. A symptom-to-lever checklist for the run-to-run variation you probably have - feature flags, live data, the clock, third-party widgets, and dynamic layouts. The lever is almost always "stop the variation at record time" — the archive bakes in whatever the page was.
 ---
 
 # Deterministic Playwright captures (archive-replay)
@@ -40,6 +40,7 @@ change; find what injected the variation and pin it before the snapshot.*
 | A banner / chat / consent overlay appears or shifts | **Third-party widget** injecting DOM | **Stub or dismiss** it → recipe 1 + 4 |
 | Blank/placeholder where an image should be | **Lazy content** that never loaded, so its bytes aren't in the archive | **Trigger it at record time** → recipe 5 |
 | Same content, packed or ordered differently each run | **Dynamic layout** that reflows or reorders on its own | **Mask** it (or pin a fixed order/size) → recipe 6 |
+| An infinite JS animation the capturer can't stop (a charting lib's loop, a `<canvas>` spinner) | **App-driven animation** with no final frame | **Branch the component on capture** and render the end state → recipe 7 |
 
 Prefer removing a whole class at the source: **test a build/staging with flags and third-party scripts
 off** and rows 1 and 4 disappear before you write any code.
@@ -97,6 +98,18 @@ await page
   .locator('[data-testid="dynamic-region"]')
   .evaluateAll((els) => els.forEach((el) => (el.style.visibility = "hidden")));
 ```
+
+**7. Freeze an app-driven JS animation** the capturer can't reach — an infinite charting-library loop, a `<canvas>` spinner with no final frame. Detect the capture *in the component* and render the end state. `@uiverify/playwright` sets a `UIVerify` user-agent marker and a `window.__UI_VERIFY__` global at record time, so a client-side branch works on its own; if the component decides this during **server-side rendering** (no `window` yet), also set a `UI_VERIFY` env var when you boot the app for the record run and check it:
+```ts
+// in the component (your app code, not the test):
+const isUIVerify = () =>
+  (typeof process !== 'undefined' && !!process.env.UI_VERIFY) ||            // SSR / build time
+  (typeof window !== 'undefined' &&
+    (navigator.userAgent.includes('UIVerify') || '__UI_VERIFY__' in window)); // browser
+
+<Chart isAnimationActive={!isUIVerify()} />
+```
+Boot the app with the env var for the capture run only — e.g. `UI_VERIFY=1 npm start` — so a server-rendered branch can see it; the browser markers cover client-side animation without it. This is the record-side of the same freeze the Storybook/Vitest skills apply in-browser.
 
 ## Diagnosing a flaky diff
 

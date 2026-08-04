@@ -69,8 +69,7 @@ never has a final frame — framer-motion pulsing dots, a Lottie loop, an autopl
   or gate the loop yourself with `useReducedMotion()`. One line, and it's good app behavior anyway.
 
 - **Escape hatch — detect the capture** and render the end state. UI Verify flags every capture with a
-  `UIVerify` marker on the user-agent and a `window.__UI_VERIFY__` global (its `isChromatic()` analog),
-  so a component can branch:
+  `UIVerify` marker on the user-agent and a `window.__UI_VERIFY__` global, so a component can branch:
   ```ts
   export const isUIVerify = () =>
     (typeof navigator !== 'undefined' && navigator.userAgent.includes('UIVerify')) ||

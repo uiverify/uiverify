@@ -64,7 +64,15 @@ Make the system better at its own job.
 
 ## Install
 
-**As a Claude Code plugin** (recommended, this repo is a plugin marketplace):
+**With one command, into any agent** ([skills.sh](https://skills.sh)):
+
+```sh
+npx skills add uiverify/uiverify
+```
+
+Works in Claude Code, Cursor, Codex, Copilot, Gemini, and any agent that reads a skills folder. Add `--list` to pick individual skills, and run `npx skills update` to pull the latest.
+
+**As a Claude Code plugin** (this repo is a plugin marketplace), so updates arrive automatically:
 
 ```sh
 /plugin marketplace add uiverify/uiverify

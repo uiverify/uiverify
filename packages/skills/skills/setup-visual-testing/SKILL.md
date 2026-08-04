@@ -103,6 +103,59 @@ npm run build-storybook && UIVERIFY_API_KEY=vt_live_… npx uiverify upload --st
 # Vitest:      npx playwright install --with-deps && npx vitest run && npx uiverify upload --static-dir uiverify-archive
 ```
 
+**Optional — run only on PRs that can change the UI.** The workflow above fires on every PR, and the
+archive paths (Playwright/Vitest) always render in full, so on a busy repo scope it to UI-affecting
+changes. Two ways, and they differ on required checks:
+
+- **Plain `paths:` filter** — add `paths:` to the trigger. Simplest, but it skips the *whole job*, so it
+  reports no status. If the UI Verify check is a **required** status check, a PR touching none of those
+  paths is stuck "Expected" and can't merge. Use only when the check isn't required.
+- **`dorny/paths-filter` (required-check-safe)** — a first job computes whether UI files changed; the
+  upload job always runs but guards each step on that result, so a backend-only PR no-ops yet still
+  reports green and never wedges the required check. Prefer this.
+
+```yaml
+# .github/workflows/visual.yml
+on:
+  push:
+    branches: [main]          # advance the baseline as PRs merge
+  pull_request:
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs: { ui: '${{ steps.f.outputs.ui }}' }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: dorny/paths-filter@v4
+        id: f
+        with:
+          filters: |
+            ui:
+              - 'src/components/**'
+              - 'src/app/**'
+              - 'packages/ui/**'                 # shared UI packages
+              - '**/*.css'
+              - '.github/workflows/visual.yml'    # the workflow itself
+  uiverify:
+    needs: changes
+    runs-on: ubuntu-latest
+    steps:                     # every step below is also guarded:  if: ${{ needs.changes.outputs.ui == 'true' }}
+      - if: ${{ needs.changes.outputs.ui == 'true' }}
+        uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      # ...the setup-node / install / build / upload steps from Step 4, each guarded the same way.
+      # On main, add --auto-accept-changes to the upload so the post-merge render becomes the baseline.
+```
+
+**A missed render is silent — bias to include.** An unnecessary run costs a few CI minutes; a *missed*
+one renders nothing, the check passes green, and the unseen change becomes the next baseline every branch
+inherits. So list every dir the UI is built from (components, pages, shared UI packages, global CSS) **and
+the workflow file itself** — and **don't exclude a mixed folder just because it's mostly backend**: a
+`lib/` holding both a `cn()` helper the UI imports and unrelated db/AI code stays in the filter. If that
+over-runs, **split the UI-facing code onto its own path, then filter on that** — separate for granularity;
+never trade coverage for speed.
+
 **Optional, Storybook only — render only what the PR could have changed.** UI Verify can render just the
 stories your commit's changed files could affect and carry the rest of the baselines forward. To turn it
 on, edit the two `- run:` steps in `.github/workflows/visual.yml` (the build and the upload) in place —
@@ -133,6 +186,27 @@ baseline; after that each PR is diffed against it, and a real visual regression 
 failure like a broken build or network error) turns the job red. Strict-by-default is intentional: a
 silently dropped upload must not leave CI green. If the first few diffs are noisy, don't disable the
 check — loop back to the determinism skill (Step 3) to remove the flake at its source.
+
+## Step 6 — connect your agent so it can see the diffs (MCP)
+
+The check gates the PR; the **MCP** is how your coding agent reviews it without leaving the terminal —
+list builds, look at the actual before/after pixels, post them to the PR, accept baselines. Add it as a
+real MCP server (Claude Code, Cursor, Codex, …) — don't hand-roll `curl`, or the image tools come back
+as blocks a shell can't render. One command for Claude Code:
+
+```sh
+claude mcp add --transport http uiverify https://uiverify.ai/api/mcp \
+  --header "Authorization: Bearer $UIVERIFY_API_KEY"
+```
+
+Then hand the review loop to **`triage-visual-changes`** (it has the per-client setup and the recipes:
+bucket real regressions vs noise, put the before/after in the PR, bulk-accept). On a **passed** build the
+agent can still pull any story's current image by id to confirm it looks right.
+
+**Make it stick — add a rule to your `AGENTS.md` / `CLAUDE.md`.** The setup only pays off if new UI keeps
+getting captured. A one-line rule ("when you add or change a component/page, add or update its story/test
+so it's covered by visual testing, then run the UI Verify check and triage it") turns this from a
+one-time wiring into a habit the agent follows on every change.
 
 ## Done when
 

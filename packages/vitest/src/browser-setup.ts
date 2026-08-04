@@ -1,6 +1,17 @@
 import { afterEach, beforeEach, inject } from "vitest";
 import { autoSnapshot, beginTest } from "./runtime";
 
+// Flag the page as a UI Verify capture at RECORD time, as this setup module loads - before any test
+// renders a component - so `isUIVerify()` is true while the app renders in the test browser (the
+// record-side analog of the marker the capturer sets at replay). This is what makes author code like
+// `isAnimationActive={!isUIVerify()}` actually disable the animation under capture.
+//
+// The global name is inlined rather than imported from `@uiverify/archive-core` on purpose: this file
+// runs in the BROWSER, and a value import from archive-core's index pulls its Node `crypto` usage into
+// the browser bundle ("crypto.createHash externalized"). Keep the literal equal to archive-core's
+// `UI_VERIFY_GLOBAL`, which its test pins.
+Reflect.set(globalThis, "__UI_VERIFY__", true);
+
 /**
  * The setup file `uiverifyPlugin()` injects into every browser-mode test run. It is what turns the bare
  * plugin install into "each test archives its final DOM": a `beforeEach` marks the current test, and an

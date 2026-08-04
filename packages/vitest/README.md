@@ -44,7 +44,7 @@ import { render } from "vitest-browser-react"; // or your framework's browser re
 import { takeSnapshot, disableAutoSnapshot } from "@uiverify/vitest";
 
 test("menu", async () => {
-  render(<Menu />);
+  await render(<Menu />); // render() is async - await it so the DOM is committed before capture
   await takeSnapshot("closed"); // optional named checkpoint
   // the final state is archived automatically at the end of the test
 });

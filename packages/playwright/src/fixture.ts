@@ -1,5 +1,5 @@
 import { test as base } from "@playwright/test";
-import { type ArchivedSnapshotParams, resolveOutDir } from "@uiverify/archive-core";
+import { type ArchivedSnapshotParams, resolveOutDir, UI_VERIFY_MARKER_SCRIPT } from "@uiverify/archive-core";
 import { PlaywrightArchiver } from "./archiver";
 
 /**
@@ -24,6 +24,10 @@ export const test = base.extend<UiVerifyFixtures>({
   // import swap enough to get an end-of-test snapshot per test, with no per-test boilerplate.
   uiVerify: [
     async ({ page }, use, testInfo) => {
+      // Flag every page as a UI Verify capture at RECORD time, before the app's code runs, so
+      // `isUIVerify()` is true while the app renders (the record-side analog of the marker the capturer
+      // sets at replay). Registered before the test navigates, so it applies to the first goto.
+      await page.addInitScript({ content: UI_VERIFY_MARKER_SCRIPT });
       const idBase = testInfo.titlePath.join(" > ");
       const title =
         testInfo.titlePath.length > 1 ? testInfo.titlePath.slice(0, -1).join(" > ") : (testInfo.titlePath[0] ?? "");

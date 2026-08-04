@@ -1,6 +1,6 @@
 {
   "name": "@uiverify/playwright",
-  "version": "0.2.2",
+  "version": "1.0.2",
   "description": "Playwright capture SDK for UI Verify (uiverify.ai): swap @playwright/test for this and each test archives its final UI state (serialized DOM + resource bytes) to be replayed + visually diffed by UI Verify. Produces an archive the uiverify CLI uploads; talks to nothing at runtime.",
   "keywords": [
     "visual-testing",

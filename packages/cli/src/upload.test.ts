@@ -63,7 +63,12 @@ function deps(
   log: CallLog,
   statuses?: FakeStatus[],
   lines?: string[],
-  opts: { baselineCommits?: string[]; warnings?: string[]; confirm?: (c: string[], head: string) => string[] } = {},
+  opts: {
+    baselineCommits?: string[];
+    warnings?: string[];
+    confirm?: (c: string[], head: string) => string[];
+    producer?: { name: string; version: string } | null;
+  } = {},
 ): UploadDeps {
   return {
     client: fakeClient(log, statuses, opts.baselineCommits ?? [], opts.warnings ?? []),
@@ -71,6 +76,8 @@ function deps(
     // Default: every candidate is a confirmed ancestor; tests that care override `confirm`.
     confirmAncestors: opts.confirm ?? ((candidates) => candidates),
     createBundle: async () => {},
+    // Default: a Storybook upload (no capture SDK); archive tests pass a producer.
+    readProducer: () => opts.producer ?? null,
     tmpFile: () => "/tmp/bundle.tgz",
     log: (m) => lines?.push(m),
     sleep: async () => {},
@@ -139,6 +146,23 @@ describe("runUpload", () => {
     const log: CallLog = { statusPolls: 0 };
     await runUpload({ staticDir: "/sb" }, deps(log, ["passed"]));
     expect(log.register?.repoFullName).toBe("acme/web");
+  });
+
+  it("forwards the bundle's capture-SDK producer as sdkName/sdkVersion in the register body", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    await runUpload(
+      { staticDir: "/archive" },
+      deps(log, ["passed"], undefined, { producer: { name: "@uiverify/playwright", version: "1.2.3" } }),
+    );
+    expect(log.register?.sdkName).toBe("@uiverify/playwright");
+    expect(log.register?.sdkVersion).toBe("1.2.3");
+  });
+
+  it("sends no SDK identity for a Storybook upload (no capture SDK)", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    await runUpload({ staticDir: "/sb" }, deps(log, ["passed"]));
+    expect(log.register?.sdkName).toBeUndefined();
+    expect(log.register?.sdkVersion).toBeUndefined();
   });
 
   it("streams a 'Rendered X / N' line as progress advances, then a final count summary", async () => {

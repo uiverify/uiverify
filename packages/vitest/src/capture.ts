@@ -2,6 +2,11 @@ import { commands } from "@vitest/browser/context";
 import { snapshot } from "rrweb-snapshot";
 import type { ArchivedResource, ArchivedSnapshot } from "@uiverify/archive-core";
 import { snapshotIds, type TaskLike } from "./snapshot-id";
+import pkg from "../package.json";
+
+/** Stamped into every snapshot so the CLI can report the capture SDK's version at upload. Inlined at
+ *  build time (tsup bundles the JSON import), so it tracks the published version automatically. */
+const PRODUCER = { name: pkg.name, version: pkg.version };
 
 /**
  * The browser half of @uiverify/vitest. In Vitest browser mode the test body runs INSIDE the page, so
@@ -118,6 +123,11 @@ export async function capture(task: TaskLike, name: string): Promise<string> {
     colorScheme,
     dom,
     resources,
+    producer: PRODUCER,
+    // The test file (project-root-relative), so UI Verify can locate this snapshot in the module graph
+    // for skip-unchanged. `task.file.name` is already root-relative — the same value snapshot ids derive
+    // their first segment from — so it lines up with the graph names the reporter emits.
+    ...(task.file?.name ? { sourcePath: task.file.name } : {}),
   };
 
   await commands.__uiverifyWriteSnapshot(archived);

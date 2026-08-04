@@ -33,6 +33,9 @@ export interface UploadDeps {
    *  injected so the upload flow is unit-tested without a real repo. */
   confirmAncestors: (candidates: string[], headSha: string) => string[];
   createBundle: (dir: string, out: string) => Promise<void>;
+  /** The capture SDK that produced the bundle, read from the finalized manifest after `createBundle`.
+   *  Injected so the flow is unit-tested without a real archive; null for a Storybook upload. */
+  readProducer: (staticDir: string) => { name: string; version: string } | null;
   tmpFile: () => string;
   log: (msg: string) => void;
   sleep?: (ms: number) => Promise<void>;
@@ -56,6 +59,9 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
   deps.log("Bundling Storybook…");
   await deps.createBundle(opts.staticDir, tgz);
 
+  // Read after createBundle: it finalizes the archive manifest (index.json), which carries the producer.
+  const producer = deps.readProducer(opts.staticDir);
+
   deps.log("Registering build…");
   const { buildId, uploadUrl, baselineCommits, warnings } = await deps.client.register({
     commitSha: meta.commitSha,
@@ -65,6 +71,8 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
     autoAcceptChanges: opts.autoAcceptChanges ?? false,
     onlyChanged: opts.onlyChanged ?? false,
     repoFullName: meta.repoFullName || undefined,
+    sdkName: producer?.name,
+    sdkVersion: producer?.version,
   });
   // Advisory, non-blocking — e.g. the GitHub App isn't installed on the repo. Print loudly so the
   // "it did nothing on my PR" case is explained right in the CI log; never affects the exit code.
