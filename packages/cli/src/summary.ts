@@ -3,10 +3,12 @@ import type { BuildSummary } from "./client";
 /**
  * The plaintext verdict printed to the CI log on a changed/failed build - and the agent's handoff. UI
  * Verify's PR check is a bare commit status (no body), so THIS is where the agent that opened the PR
- * learns what changed and exactly how to resolve it over MCP: an agent reading `gh run view
- * --log-failed` sees the changed stories, the AI judge's intended-vs-regression call, and the numbered
- * MCP recipe (`get_build` -> `render_diff_image` -> `review_diff`/`accept_build`). Returns one string
- * per line; the caller prefixes each with `[uiverify]`.
+ * learns what changed and exactly how to resolve it: an agent reading `gh run view --log-failed` sees
+ * the changed stories, the AI judge's intended-vs-regression call, and how to resolve them. The handoff
+ * leads with the `triage-visual-changes` skill (it carries the adjudicate-baseline-and-candidate +
+ * bucket-intended/regression/flake guardrails a hand-rolled sequence skips) and falls back to the raw
+ * MCP recipe (`get_build` -> `render_diff_image` -> `review_diff`/`accept_build`) for agents without
+ * the skill. Returns one string per line; the caller prefixes each with `[uiverify]`.
  *
  * Markdown-free by design (this is a terminal): no bold, no links - the URLs are printed raw.
  */
@@ -83,7 +85,21 @@ export function formatVerdictSummary(summary: BuildSummary, buildUrl: string, ag
   // the MCP endpoint from (older invocations); a real `uiverify upload` always passes it.
   if (agent) {
     lines.push("");
-    lines.push("For the agent that opened this PR - resolve this over the UI Verify MCP:");
+    lines.push("For the agent that opened this PR:");
+    // Preferred path: the triage skill carries the guardrails (adjudicate baseline AND candidate,
+    // bucket intended/regression/flake) that a hand-rolled MCP sequence skips. Only for visual diffs -
+    // render failures aren't a triage job, so they drop straight to the MCP inspect steps.
+    if (summary.changedStories.length > 0) {
+      lines.push("  Best: invoke the UI Verify triage-visual-changes skill - it buckets each change");
+      lines.push("  (intended vs regression vs flake), adjudicates baseline AND candidate, and accepts or denies.");
+      lines.push("  Don't have it? npx skills add uiverify/uiverify");
+      lines.push("  Skill docs: https://uiverify.ai/skills/triage-visual-changes");
+      lines.push(
+        "  Skill source: https://github.com/uiverify/uiverify/blob/main/packages/skills/skills/triage-visual-changes/SKILL.md",
+      );
+      lines.push("");
+      lines.push("  Or resolve directly over the UI Verify MCP:");
+    }
     lines.push(`  Endpoint: ${agent.mcpUrl} (authenticate with your project API key)`);
     lines.push(`  1. get_build ${agent.selector} - the changed-story list, each with a diffResultId.`);
     lines.push(`  2. render_diff_image { "diffResultId": "...", "which": "diff" } - see the changed pixels.`);

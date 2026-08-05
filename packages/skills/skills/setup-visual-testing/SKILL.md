@@ -156,10 +156,10 @@ the workflow file itself** — and **don't exclude a mixed folder just because i
 over-runs, **split the UI-facing code onto its own path, then filter on that** — separate for granularity;
 never trade coverage for speed.
 
-**Optional, Storybook only — render only what the PR could have changed.** UI Verify can render just the
-stories your commit's changed files could affect and carry the rest of the baselines forward. To turn it
-on, edit the two `- run:` steps in `.github/workflows/visual.yml` (the build and the upload) in place —
-add `-- --stats-json` to the build, and `--only-changed` to the upload:
+**Optional, Storybook or Vitest — render only what the PR could have changed.** UI Verify can render just
+the stories your commit's changed files could affect and carry the rest of the baselines forward. To turn
+it on for **Storybook**, edit the two `- run:` steps in `.github/workflows/visual.yml` (the build and the
+upload) in place — add `-- --stats-json` to the build, and `--only-changed` to the upload:
 
 ```yaml
       - run: npm run build-storybook -- --stats-json    # adds preview-stats.json to storybook-static
@@ -171,7 +171,23 @@ add `-- --stats-json` to the build, and `--only-changed` to the upload:
 Both edits are required, and they replace the existing steps — don't append them, or the job builds
 Storybook twice and registers two builds per PR. The decision runs server-side off the dependency graph
 in `preview-stats.json`, so without `--stats-json` every story renders even with the flag on (the CLI
-warns when it spots this). It does nothing for the Playwright path: an archive has no dependency graph.
+warns when it spots this).
+
+**Vitest** carries forward too, and needs no build flag: `@uiverify/vitest` **1.1+** writes the Vite
+module graph into the archive on its own, so you only add `--only-changed` to the upload:
+
+```yaml
+      - run: npx uiverify upload --static-dir uiverify-archive --only-changed
+        env:
+          UIVERIFY_API_KEY: ${{ secrets.UIVERIFY_API_KEY }}
+```
+
+For Vitest the skip is only as granular as your **test files**: the server traces a changed source file to
+the tests that *import* it and carries the rest forward, so keep **one page/component per
+`*.visual.test.tsx` file** (each importing only what it renders). A file that colocates next to its
+component (`SecurityPage.visual.test.tsx` beside `SecurityPage.tsx`) lets a one-component change skip every
+other page; a single mega-test that imports half the app re-renders on every commit. It does nothing for
+the **Playwright** path — a Playwright archive has no dependency graph, so the flag is a no-op there.
 
 Check the Storybook major first - the flag is `--stats-json` on Storybook 8+, but `--webpack-stats-json`
 on 7.x, and passing the wrong one fails the build step before the upload ever runs.

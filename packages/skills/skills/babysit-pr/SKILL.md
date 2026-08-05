@@ -88,11 +88,20 @@ gh run view <run-id> --log-failed          # the failing job's logs
   fix at the correct layer per the repo conventions, re-run locally to confirm,
   commit, push.
 - **Visual regression check (if you run one, e.g. UI Verify):** a changed-snapshot signal, not
-  necessarily a bug. Triage it through your visual tool's review flow: inspect what changed on each
-  affected story and decide **intended change vs real regression vs flake** (if you use UI Verify, the
-  `uiverify:triage-visual-changes` skill covers the bucketing). If the diff is an **intended** change,
-  accept the baseline so the check clears. If it's a **regression you introduced**, fix the code and
-  push. Never blanket-accept to make the check pass - that defeats the whole point of the tool.
+  necessarily a bug. **Triage it by invoking your visual tool's triage skill as the action - for UI
+  Verify that is the `triage-visual-changes` skill - not by hand-rolling raw review/MCP calls;** the
+  skill carries the guardrails that ad-hoc calls skip. Whatever tool you use, hold three disciplines:
+  (1) **adjudicate each story baseline-vs-candidate** - look at BOTH the baseline and the candidate
+  image and compare, never judge the candidate alone (a change being caused by your diff says nothing
+  about whether the result is correct - a global CSS/theme change can quietly break an unrelated page).
+  (2) **Triage stops at the pixels** - classify intended vs regression vs flake and attribute the
+  change to the diff, but do NOT assert a code-level mechanism (an animation, a race, a specific CSS
+  cause) unless you have verified it against the actual element and code; a metric that contradicts
+  your proposed mechanism refutes it (a tiny changed-pixel count cannot be a whole-element fade - a
+  missing element is a didn't-render problem, not a frozen frame). Root-causing is a separate step.
+  (3) If the diff is an **intended** change, accept the baseline so the check clears; if it's a
+  **regression you introduced**, fix the code and push. Never blanket-accept to make the check pass -
+  that defeats the whole point of the tool.
 - **e2e / integration failure:** read the log, reproduce the flow locally (`/e2e-verify` can
   drive it), fix, push.
 - **Flaky / infra failure** (a check that failed for reasons unrelated to the diff): re-run it

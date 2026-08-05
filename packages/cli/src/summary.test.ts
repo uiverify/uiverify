@@ -134,7 +134,17 @@ describe("formatVerdictSummary", () => {
     const agent = { mcpUrl: "https://uiverify.example.com/api/mcp", selector: '{ "prNumber": 7 }' };
 
     const lines = formatVerdictSummary(summary, BUILD_URL, agent);
-    expect(lines).toContain("For the agent that opened this PR - resolve this over the UI Verify MCP:");
+    expect(lines).toContain("For the agent that opened this PR:");
+    // Skill-first: the preferred handoff points at the triage skill (with its install + docs) before
+    // the raw MCP recipe, because the skill carries the adjudicate-both-images guardrails.
+    expect(lines).toContain("  Best: invoke the UI Verify triage-visual-changes skill - it buckets each change");
+    expect(lines).toContain("  Don't have it? npx skills add uiverify/uiverify");
+    expect(lines).toContain("  Skill docs: https://uiverify.ai/skills/triage-visual-changes");
+    expect(lines).toContain(
+      "  Skill source: https://github.com/uiverify/uiverify/blob/main/packages/skills/skills/triage-visual-changes/SKILL.md",
+    );
+    // The raw MCP recipe stays as the labelled fallback for an agent without the skill.
+    expect(lines).toContain("  Or resolve directly over the UI Verify MCP:");
     expect(lines).toContain("  Endpoint: https://uiverify.example.com/api/mcp (authenticate with your project API key)");
     expect(lines).toContain('  1. get_build { "prNumber": 7 } - the changed-story list, each with a diffResultId.');
     expect(lines).toContain(
@@ -158,6 +168,8 @@ describe("formatVerdictSummary", () => {
       selector: '{ "commitSha": "abc" }',
     });
     expect(lines.some((l) => l.includes("accept_build"))).toBe(false);
+    // A render failure is not a triage job, so the skill handoff is withheld - only the fix-and-push line.
+    expect(lines.some((l) => l.includes("triage-visual-changes"))).toBe(false);
     expect(lines).toContain(
       "  These are render failures, not visual diffs - fix the failing story or its setup and push again.",
     );

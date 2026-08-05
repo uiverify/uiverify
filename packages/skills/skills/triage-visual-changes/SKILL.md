@@ -44,16 +44,19 @@ Tools it exposes:
 | Tool | Does | Key args |
 |---|---|---|
 | `list_builds` | Recent builds + gate status, to find the one to inspect | `branch?`, `status?`, `limit?` |
-| `get_build` | What changed in one build — the gate + `changedStories[]` (each with a `diffResultId`, diff %, and when AI review is on the judge's `aiVerdict`, `aiConfidence`, and for a regression `aiFlagReason` = its one-line "what looks unintended") | one of `commitSha` / `prNumber` / `buildId` |
+| `get_build` | Lean triage of one build — the gate + `counts {total, changed, failed, unchanged}`, the AI tally, and the **first page (25)** of changed/failed stories (each with a `diffResultId`, diff %, and when AI review is on the judge's `aiVerdict`, `aiConfidence`, and for a regression `aiFlagReason` = its one-line "what looks unintended"), the page carrying a `nextCursor`. It does **not** dump the unchanged list — `counts.unchanged` is the signpost; page the rest with `list_build_stories` | one of `commitSha` / `prNumber` / `buildId` |
+| `list_build_stories` | Page through one build's stories by status — the only way to browse the full changed / failed / **unchanged** set beyond `get_build`'s first page. `counts.unchanged` from `get_build` is the exact count it pages | selector, `status: changed \| unchanged \| failed`, `cursor?`, `limit?` (default 25, max 100) |
 | `get_diff` | Per-story diff metrics + **presigned image URLs** (baseline / candidate / diff) you can download to a file or link straight into a PR; when AI review is on, the judge's full call: `aiVerdict`, `aiConfidence`, `aiSummary` (what changed), `aiReasoning` (why), `aiFlagReason`. Pass `storyId` to pull one story **even if it didn't change** — you get its current baseline URL, so you can show "identical to baseline" on a passed build | same selector, optional `storyId` |
-| `render_diff_image` | The actual **pixels** of one image, inline for the vision model to look at (not a URL): `baseline` / `candidate` / `diff`, or `before_after` for a single before-and-after crop zoomed to the changed region | `diffResultId` (or `storyId` for a story that didn't change), `which` |
+| `render_diff_image` | The actual **pixels** of one image, inline for the vision model to look at (not a URL): `baseline` / `candidate` / `diff`, or `before_after` for a before-and-after crop zoomed to the changed region — one crop per region, stacked, when the story moved in several far-apart places (a header and a footer) | `diffResultId` (or `storyId` for a story that didn't change), `which` |
 | `review_diff` | Record a decision on one story | `diffResultId`, `decision: accept \| deny \| ignore` |
 | `accept_build` | Accept **every** changed story in a build at once | same selector |
 
 ## Recipe 1 — "Triage this build"
 
 Bucket the changes so the human sees signal, not 60 rows. Call `get_build` for the PR — it carries the
-AI judge's call per story (`aiVerdict`, and for a regression the `aiFlagReason`). **Read the judge before
+AI judge's call per story (`aiVerdict`, and for a regression the `aiFlagReason`) for the **first page** of
+changes; if `counts.changed` is larger than that page, keep paging `list_build_stories { status:
+"changed" }` on the `nextCursor` until it runs out, so no regression slips past the page boundary. **Read the judge before
 you form your own view, and for anything that actually changed content, adjudicate it against the
 before image, not in isolation:**
 
@@ -134,7 +137,8 @@ Keep the human in the PR instead of sending them to the dashboard. After you've 
 changed stories inline:
 
 - **The fastest single image:** `render_diff_image` `which: "before_after"` gives you one PNG, before and
-  after side by side, cropped to the changed region — the least to eyeball. Save it and attach it.
+  after side by side, cropped to the changed region (one crop per region, stacked, if the story moved in
+  several far-apart places) — the least to eyeball. Save it and attach it.
 - **Downloadable files / durable links:** `get_diff` returns presigned `baselineUrl` / `candidateUrl` /
   `diffUrl`. Download them (`curl -L "$url" -o before.png`) to attach to the PR, or drop the build link
   and the URLs into a comment. Always include the build link (`https://uiverify.ai/builds/<id>`) so the
@@ -146,8 +150,10 @@ regressions, and the build link. Post it, don't make them go looking.
 ## Passed build? You can still show the pixels
 
 A build with no changes shows no triptych — but the components still rendered, and "nothing changed" is
-only trustworthy if you can see it. Pull a story's current image by id: `get_diff { buildId, storyId }`
-for its baseline URL, or `render_diff_image { storyId, which: "baseline" }` for the pixels. Use it to
+only trustworthy if you can see it. **Enumerate the unchanged set** with `list_build_stories { status:
+"unchanged" }` (page it on the returned `nextCursor`), then pull any story's current image by id:
+`get_diff { buildId, storyId }` for its baseline URL, or `render_diff_image { storyId, which: "baseline" }`
+for the pixels. Use it to
 confirm a component looks right on a green build, or to hand the reviewer "here it is, identical to
 baseline" without opening the dashboard.
 
