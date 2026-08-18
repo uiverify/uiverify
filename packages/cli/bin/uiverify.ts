@@ -1,6 +1,6 @@
 import path from "node:path";
 import { parseArgs } from "../src/args";
-import { createBundle, onlyChangedNoOpReason, readArchiveProducer } from "../src/bundle";
+import { createBundle, createScreenshotBundle, onlyChangedNoOpReason, readArchiveProducer } from "../src/bundle";
 import { httpIngestClient } from "../src/client";
 import { exitCodeFor } from "../src/exit";
 import { collectGitMeta, confirmAncestors } from "../src/git";
@@ -31,7 +31,7 @@ import { defaultTmpFile, runUpload } from "../src/upload";
  */
 
 const USAGE =
-  "usage: uiverify upload --static-dir <dir> [--working-directory <dir>] [--api-url <url>] [--auto-accept-changes] [--exit-zero-on-changes] [--only-changed] [--strict | --no-strict]";
+  "usage: uiverify upload (--static-dir <dir> | --screenshots <dir>) [--working-directory <dir>] [--api-url <url>] [--auto-accept-changes] [--exit-zero-on-changes] [--only-changed] [--strict | --no-strict]";
 
 const HELP = `uiverify upload — upload a prebuilt Storybook bundle for visual regression testing.
 
@@ -43,7 +43,11 @@ it finishes. Exits non-zero if the visual gate is changed/failed — the one del
 independent of --strict.
 
 Options:
-  --static-dir <dir>         Upload this prebuilt Storybook static directory (e.g. storybook-static).
+  --static-dir <dir>         Upload this prebuilt Storybook static directory (e.g. storybook-static),
+                             or a Playwright/Vitest capture archive directory.
+  --screenshots <dir>        Upload a directory of finished PNGs you already produced (native, mobile,
+                             React Native). UI Verify diffs them without rendering. Mutually exclusive
+                             with --static-dir. Each image is keyed by its path under the directory.
   --working-directory <dir>  Run in this directory (default: current directory).
   --api-url <url>            UI Verify API URL (default: https://uiverify.ai; override for self-host/local).
   --auto-accept-changes      Accept this build's changes as the new baseline (pass on merges to main).
@@ -130,19 +134,33 @@ async function main(): Promise<void> {
     values.get("api-url") ?? process.env.UIVERIFY_API_URL ?? "https://uiverify.ai";
   const cwd = path.resolve(values.get("working-directory") ?? process.cwd());
 
-  let staticDir = values.get("static-dir");
-  if (!staticDir) {
-    softFail(`provide --static-dir (build your Storybook first, e.g. \`npm run build-storybook\`)\n${USAGE}`);
+  // Two mutually exclusive spellings for "what to upload": a prebuilt bundle (`--static-dir`) or a
+  // directory of finished PNGs (`--screenshots`, Model 3). Both resolve to one dir the flow tars.
+  const staticDirArg = values.get("static-dir");
+  const screenshotsArg = values.get("screenshots");
+  if (staticDirArg && screenshotsArg) {
+    softFail(`pass either --static-dir or --screenshots, not both\n${USAGE}`);
   }
-  staticDir = path.resolve(cwd, staticDir);
+  const uploadDirArg = staticDirArg ?? screenshotsArg;
+  if (!uploadDirArg) {
+    softFail(
+      `provide --static-dir (build your Storybook first, e.g. \`npm run build-storybook\`) or --screenshots <dir> (a directory of finished PNGs)\n${USAGE}`,
+    );
+  }
+  const isScreenshots = screenshotsArg !== undefined;
+  const staticDir = path.resolve(cwd, uploadDirArg);
 
   const log = (m: string): void => console.log(`[uiverify] ${redact(m, apiKey)}`);
 
   const onlyChanged = flags.has("only-changed");
   // Not a failure — a full render is always correct — but say it, or the run is indistinguishable from
   // a working opt-in. Stays a file check, never a reimplementation of the server's decision.
-  const noOpReason = onlyChanged ? onlyChangedNoOpReason(staticDir) : null;
-  if (noOpReason === "no-graph") {
+  const noOpReason = onlyChanged && !isScreenshots ? onlyChangedNoOpReason(staticDir) : null;
+  if (onlyChanged && isScreenshots) {
+    log(
+      "⚠ --only-changed has no effect on a screenshot upload (no dependency graph) — to skip work, upload only the screens you changed.",
+    );
+  } else if (noOpReason === "no-graph") {
     log(
       "⚠ --only-changed, but no preview-stats.json in the bundle — every story will render. Build with Storybook's --stats-json to get the dependency graph.",
     );
@@ -162,8 +180,9 @@ async function main(): Promise<void> {
         client: httpIngestClient(apiUrl, apiKey),
         gitMeta: () => collectGitMeta(cwd),
         confirmAncestors: (candidates, headSha) => confirmAncestors(candidates, headSha, cwd),
-        createBundle,
-        readProducer: readArchiveProducer,
+        // A screenshot upload assembles its own manifest and has no capture SDK to report.
+        createBundle: isScreenshots ? createScreenshotBundle : createBundle,
+        readProducer: isScreenshots ? () => null : readArchiveProducer,
         tmpFile: defaultTmpFile,
         log,
       },

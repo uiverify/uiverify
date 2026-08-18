@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { finalizeArchiveIfNeeded, onlyChangedNoOpReason, readArchiveProducer } from "./bundle";
+import { finalizeArchiveIfNeeded, finalizeScreenshots, onlyChangedNoOpReason, readArchiveProducer } from "./bundle";
 
 let dir: string;
 
@@ -153,3 +153,44 @@ describe("onlyChangedNoOpReason", () => {
     expect(onlyChangedNoOpReason(path.join(dir, "nope"))).toBeNull();
   });
 });
+
+describe("finalizeScreenshots", () => {
+  function writeImage(rel: string): void {
+    const abs = path.join(dir, rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, "not-a-real-png-but-finalize-only-reads-names");
+  }
+
+  it("assembles a manifest keyed by the POSIX path with the extension dropped", () => {
+    writeImage(path.join("checkout", "mobile", "cart.png"));
+    writeImage("home.png");
+    writeImage(path.join("nested", "deep", "profile.jpeg"));
+
+    finalizeScreenshots(dir);
+
+    const index = JSON.parse(fs.readFileSync(path.join(dir, "index.json"), "utf8"));
+    expect(index.v).toBe(1);
+    expect(index.entries["checkout/mobile/cart"]).toEqual({
+      id: "checkout/mobile/cart",
+      type: "story",
+      title: "checkout/mobile",
+      name: "cart",
+      image: "checkout/mobile/cart.png",
+    });
+    // A top-level image has no group title.
+    expect(index.entries["home"]).toEqual({ id: "home", type: "story", title: "", name: "home", image: "home.png" });
+    // jpeg is accepted too.
+    expect(index.entries["nested/deep/profile"]?.image).toBe("nested/deep/profile.jpeg");
+  });
+
+  it("throws when the directory has no images", () => {
+    fs.writeFileSync(path.join(dir, "readme.txt"), "x");
+    expect(() => finalizeScreenshots(dir)).toThrow(/no screenshots/);
+  });
+
+  it("throws when two images reduce to the same id", () => {
+    writeImage("cart.png");
+    writeImage("cart.jpg");
+    expect(() => finalizeScreenshots(dir)).toThrow(/same id "cart"/);
+  });
+})

@@ -5,6 +5,9 @@ describe("parseArgs", () => {
   it("reads a value option in both spellings", () => {
     expect(parseArgs(["--static-dir", "storybook-static"]).values.get("static-dir")).toBe("storybook-static");
     expect(parseArgs(["--static-dir=storybook-static"]).values.get("static-dir")).toBe("storybook-static");
+    expect(parseArgs(["--screenshots", "./shots"]).values.get("screenshots")).toBe("./shots");
+    expect(parseArgs(["--screenshots=./shots"]).values.get("screenshots")).toBe("./shots");
+    expect(parseArgs(["--screenshots", "./shots"]).invalid).toEqual([]);
   });
 
   it("collects a bare boolean flag wherever it appears in the argv", () => {

@@ -106,3 +106,51 @@ export async function createBundle(staticDir: string, outPath: string): Promise<
   finalizeArchiveIfNeeded(staticDir);
   await create({ gzip: true, file: outPath, cwd: staticDir }, ["."]);
 }
+
+const SCREENSHOT_FORMAT_VERSION = 1;
+const IMAGE_EXT = /\.(png|jpe?g)$/i;
+
+/** Recursively collect image files under `root`, returned as paths relative to `root`. */
+function collectImages(root: string, dir: string = root, out: string[] = []): string[] {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const abs = path.join(dir, entry.name);
+    if (entry.isDirectory()) collectImages(root, abs, out);
+    else if (IMAGE_EXT.test(entry.name)) out.push(path.relative(root, abs));
+  }
+  return out;
+}
+
+/**
+ * Screenshot upload (Model 3): the user points `--screenshots` at a directory of finished PNGs their own
+ * harness produced (native / mobile / React Native). Assemble the manifest UI Verify's `screenshot-upload`
+ * capturer reads — each image keyed by its POSIX bundle-relative path with the extension dropped, so a
+ * screen maps to the same baseline every build and a partial upload is a subset of the same id space. The
+ * server derives everything else; this is pure client-side assembly, no rendering. Throws on an empty dir
+ * (nothing to upload) or a colliding id (two files that reduce to the same key).
+ */
+export function finalizeScreenshots(dir: string): void {
+  const images = collectImages(dir);
+  if (images.length === 0) throw new Error(`no screenshots (*.png, *.jpg, *.jpeg) found in ${dir}`);
+  const entries: Record<string, { id: string; type: "story"; title: string; name: string; image: string }> = {};
+  for (const rel of images) {
+    const image = rel.split(path.sep).join("/");
+    const id = image.replace(IMAGE_EXT, "");
+    if (entries[id]) throw new Error(`two screenshots map to the same id "${id}" (differ only by extension): ${dir}`);
+    const posixDir = path.posix.dirname(image);
+    entries[id] = {
+      id,
+      type: "story",
+      title: posixDir === "." ? "" : posixDir,
+      name: path.posix.basename(image).replace(IMAGE_EXT, ""),
+      image,
+    };
+  }
+  fs.writeFileSync(path.join(dir, "index.json"), JSON.stringify({ v: SCREENSHOT_FORMAT_VERSION, entries }, null, 2));
+}
+
+/** Create the bundle .tgz for a screenshot upload: assemble the manifest, then tar the dir (PNGs +
+ *  index.json) exactly like `createBundle`. Swapped in for `createBundle` when `--screenshots` is used. */
+export async function createScreenshotBundle(dir: string, outPath: string): Promise<void> {
+  finalizeScreenshots(dir);
+  await create({ gzip: true, file: outPath, cwd: dir }, ["."]);
+}

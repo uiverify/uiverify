@@ -7,7 +7,7 @@
  * that looks successful in the CI log while rendering (and billing) something other than what was
  * asked for. The caller fails the run instead, which is the same fail-closed posture as `--strict`.
  */
-const VALUE_OPTIONS = new Set(["static-dir", "working-directory", "api-url"]);
+const VALUE_OPTIONS = new Set(["static-dir", "screenshots", "working-directory", "api-url"]);
 
 const BOOLEAN_FLAGS = new Set([
   "auto-accept-changes",

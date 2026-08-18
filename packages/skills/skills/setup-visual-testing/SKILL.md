@@ -12,7 +12,7 @@ determinism work to the focused skills.
 
 ## Step 1 — pick the capture path (don't ask the user; detect it)
 
-UI Verify captures UI three ways. Choose by what the repo already has:
+UI Verify captures UI four ways. Choose by what the repo already has:
 
 - **Storybook path** — the repo has `.storybook/` or `@storybook/*` in `package.json`, or is a
   component/design-system library. Each **story** is a snapshot. This is the default; prefer it when
@@ -24,9 +24,16 @@ UI Verify captures UI three ways. Choose by what the repo already has:
   with a Playwright provider), and you want those component renders diffed without adopting Storybook.
   Each browser-mode test archives its final DOM. Prefer this over scaffolding Storybook only when a
   browser-mode suite already exists.
+- **Screenshot-upload path** — the repo is **native / mobile / React Native** (or otherwise can't
+  render in a browser) but already produces finished screenshots from its own harness (Detox, Maestro,
+  native snapshot tests). Upload those PNGs directly with `--screenshots`; UI Verify diffs, judges, and
+  baselines them with no rendering. There are no stories to author and determinism is owned by your
+  capture harness, so Steps 2-3 (client SDK + story authoring) don't apply — install the CLI
+  (`npm i -D uiverify`), then jump to Step 4 and wire the CI upload with `--screenshots ./screenshots`
+  in place of `--static-dir`. Upload only the screens a PR changed and the rest carry forward.
 
-If none exists, scaffold Storybook (`npx storybook@latest init`) — it's the lower-friction path and
-gives you deterministic isolation for free (see `storybook-visual-testing`).
+If none exists and the repo is a browser app, scaffold Storybook (`npx storybook@latest init`) — it's
+the lower-friction path and gives you deterministic isolation for free (see `storybook-visual-testing`).
 
 ## Step 2 — install the client
 
@@ -94,6 +101,8 @@ jobs:
         # Playwright / Vitest instead (browsers aren't preinstalled on the runner): run
         #   "npx playwright install --with-deps && npx playwright test"  (or "npx vitest run"), then
         #   "npx uiverify upload --static-dir uiverify-archive".
+        # Screenshot upload (native / mobile / React Native): produce your PNGs (Detox, Maestro, etc.),
+        #   then "npx uiverify upload --screenshots ./screenshots" in place of the build+upload steps.
 ```
 
 Locally the same thing is:

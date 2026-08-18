@@ -25,7 +25,7 @@ Catch unintended UI changes on every pull request. UI Verify renders your compon
 
 # uiverify
 
-The CI uploader for UI Verify. `uiverify upload` uploads your prebuilt Storybook bundle, streams render progress (`Rendered X / N`), and reflects the visual verdict (`changed` / `failed`) in its exit code so CI can gate on it.
+The CI uploader for UI Verify. `uiverify upload` uploads your prebuilt Storybook bundle (or a Playwright/Vitest archive, or a directory of finished screenshots), streams render progress (`Rendered X / N`), and reflects the visual verdict (`changed` / `failed`) in its exit code so CI can gate on it.
 
 ## Usage
 
@@ -36,9 +36,18 @@ npm run build-storybook
 UIVERIFY_API_KEY=... npx uiverify upload --static-dir storybook-static
 ```
 
+Or upload finished screenshots your own harness already produced (native, mobile, React Native, anything) with `--screenshots`. No Storybook and no server-side rendering: UI Verify diffs, judges, and baselines the PNGs directly.
+
+```sh
+UIVERIFY_API_KEY=... npx uiverify upload --screenshots ./screenshots
+```
+
+Each image is keyed by its path under the directory with the extension dropped, so a screen maps to the same baseline every build. Upload only the screens you changed and the rest carry forward (the client is the source of truth for what changed, the same trade-off TurboSnap and Argos make).
+
 ## Options
 
 - `--static-dir <dir>`: the prebuilt Storybook static directory to upload (e.g. `storybook-static`).
+- `--screenshots <dir>`: a directory of finished PNG/JPG screenshots to upload directly (native / mobile / React Native), instead of `--static-dir`. Skips rendering entirely; images are keyed by their path under the directory.
 - `--working-directory <dir>`: the repo checkout (git metadata + the bundle live here).
 - `--api-url <url>`: UI Verify API URL (default `https://uiverify.ai`; or `UIVERIFY_API_URL`).
 - `--auto-accept-changes`: accept this build's changed snapshots as the new baseline (no review). Typically used on merges to your default branch.

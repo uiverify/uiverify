@@ -28,7 +28,7 @@ Catch unintended UI changes on every pull request. UI Verify renders your compon
 
 UI Verify is a hosted visual-testing service that plugs into your CI. On each PR it:
 
-1. **Captures** your UI, from Storybook stories or from your existing Playwright or Vitest browser-mode tests via a drop-in capture SDK.
+1. **Captures** your UI, from Storybook stories, from your existing Playwright or Vitest browser-mode tests via a drop-in capture SDK, or from finished screenshots your own harness already produces (native, mobile, React Native) uploaded straight for diffing.
 2. **Renders & diffs** every state in the cloud against the baseline from your default branch.
 3. **Reports** the verdict back as a GitHub check, and gates the PR on it.
 4. **Triages**: a coding agent (Claude Code, Codex, and others) buckets real regressions vs. cosmetic noise and can accept new baselines in bulk, all over MCP.
@@ -49,13 +49,21 @@ npm run build-storybook
 npx uiverify upload --static-dir storybook-static
 ```
 
+Already have screenshots? If your harness already produces them (Detox, Maestro, native snapshot tests, anything), upload the PNGs directly, no Storybook and no rendering required. UI Verify diffs, judges, and baselines them just the same:
+
+```sh
+npx uiverify upload --screenshots ./screenshots
+```
+
+This is how native, mobile, and React Native projects use UI Verify: each image is keyed by its path under the directory, so a screen maps to the same baseline every build, and you can upload only the screens you changed and carry the rest forward.
+
 Prefer to drive it from your agent? Install the skills (below) and run `/uiverify:setup-visual-testing`. It detects your capture path, wires CI, and writes the first stories for you.
 
 ## Packages
 
 | Package | Install | What it does |
 |---|---|---|
-| **[`uiverify`](packages/cli)** | `npm i -D uiverify` | The CI uploader. Uploads your prebuilt Storybook bundle (or a Playwright/Vitest archive), streams render progress, and reflects the visual verdict in its exit code. |
+| **[`uiverify`](packages/cli)** | `npm i -D uiverify` | The CI uploader. Uploads your prebuilt Storybook bundle (or a Playwright/Vitest archive, or a directory of finished screenshots), streams render progress, and reflects the visual verdict in its exit code. |
 | **[`@uiverify/playwright`](packages/playwright)** | `npm i -D @uiverify/playwright` | The Playwright capture SDK. Swap `@playwright/test` for it and each test archives its final UI state (serialized DOM + resource bytes) for UI Verify to replay and diff. |
 | **[`@uiverify/vitest`](packages/vitest)** | `npm i -D @uiverify/vitest` | The Vitest capture SDK. Add `uiverifyPlugin()` to your Vitest config and each browser-mode test archives its final DOM (serialized DOM + resource bytes) for UI Verify to replay and diff; `takeSnapshot()` adds named checkpoints. |
 | **[`@uiverify/skills`](packages/skills)** | `npx skills add`, see below | Agent skills: `SKILL.md` workflows a coding agent runs in your repo to set up visual testing, author economical + deterministic stories, and triage builds. |
