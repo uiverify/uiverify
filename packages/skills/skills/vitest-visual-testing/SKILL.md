@@ -1,6 +1,6 @@
 ---
 name: vitest-visual-testing
-description: Make @uiverify/vitest (Vitest browser-mode) captures deterministic so component visual tests stop coming back "changed" without a real change (flaky diffs). Use when setting up or debugging visual tests over Vitest browser-mode component tests. Focuses only on the run-to-run variation the capturer can't neutralize from outside your app — the clock, infinite JS animations, live data, and non-Math.random randomness — plus the one Vitest-specific trap - capturing before the component has settled.
+description: Make @uiverify/vitest (Vitest browser-mode) captures deterministic so component visual tests stop coming back "changed" without a real change (flaky diffs). Use when setting up or debugging visual tests over Vitest browser-mode component tests. Focuses only on the run-to-run variation the capturer can't neutralize from outside your app — above all live/dynamic data, the highest-value step (freeze it with static fixtures and the whole content-noise class disappears), plus the clock, infinite JS animations, and non-Math.random randomness, and the one Vitest-specific trap - capturing before the component has settled.
 ---
 
 # Deterministic Vitest captures (browser mode)
@@ -35,8 +35,15 @@ intermediate checkpoint.
 **UI Verify's capturer neutralizes these automatically — do NOT hand-fix them:** CSS animations &
 transitions (killed at render) and the Web Animations API (disabled); `prefers-reduced-motion: reduce`
 (**emulated**); `Math.random` (**seeded** before your app code runs); web fonts and `<img>` loading
-(**waited for**); **finite** JS animations (captured at their settled final frame). So the checklist
-below is only the remainder — what lives *inside your app*.
+(**waited for**); **finite** JS animations (captured at their settled final frame). And unlike a real
+page (`playwright-visual-testing`), a browser-mode test has **no SSR** — no server-rendered random pick
+to reconcile. So the checklist below is only the remainder — what lives *inside your app*.
+
+**The headline: freeze the data.** Once the list above is off the table, the one thing left that floods a
+component suite with false "changes" is **live/dynamic data** — star counts, follower counts, contributor
+lists, tiles, timestamps. Feed every component **static fixtures** and that entire class disappears at the
+source: static data can't churn run-to-run, so there is nothing to diff. This is the single
+highest-value determinism step here — do it first (step 1), and most components need nothing else.
 
 ## The one Vitest-specific trap: capture before the component settled
 
@@ -61,7 +68,42 @@ determinism surface.
 
 ## The checklist (only what the tool can't do for you)
 
-### 1. Freeze the clock
+### 1. Freeze the data — the one that actually matters
+
+A component fed live/dynamic data is flaky by construction: the stars, followers, contributor list, tile
+order, and timestamps move between runs, so the diff lights up with no code change. **Give every
+component static fixtures and the whole class is gone.** Never let a test hit a real backend.
+
+Concrete — feed fixed, ordered, complete fixtures:
+- fixed **counts** (stars, followers, downloads) — literal numbers, not a live fetch;
+- a fixed **contributor/author list**: fixed names **and** avatar URLs (or inlined avatars), in a fixed
+  order;
+- a fixed set of **tiles/rows in a fixed order** (a live "trending" sort reorders every run);
+- fixed **timestamps** (pair with the clock, step 2).
+
+Two ways to inject them, both fine:
+```ts
+// (a) pass fixtures as props — the simplest, when the component takes its data as props
+await render(<LibraryTile name="ktor" stars={12873} platforms={['jvm', 'js', 'native']} />);
+
+// (b) mock the data module the component imports — when it fetches internally
+vi.mock('../api/library', () => ({ getLibrary: () => fixtures.ktor }));
+```
+If a page is a server component that fetches, render its **client presentational subtree** with fixture
+props instead of the fetching wrapper — a browser-mode test has no server to run the fetch anyway. MSW in
+a setup file also works for `fetch`-based components; the rule is only *no real request*.
+
+**Copy the dogfood — it's the reference implementation.** `apps/web/src/components/marketing/*.visual.test.tsx`
+are real `@uiverify/vitest` tests with this exact shape: `render(<Page/>)` →
+`await expect.element(...).toBeVisible()` → `await takeSnapshot()`, all data static.
+
+**One canvas per component, not N stories.** Render every variant × state of a component (a Button's
+sizes/states, every tile kind) in a **single grid** and take **one** snapshot — cheaper (one screenshot),
+and you eyeball the whole component's surface at once. Keep each page/component in **its own test file**
+so `--only-changed` carries the untouched ones forward, and add a path filter so the visual job only runs
+on UI PRs — both keep the suite cheap at scale.
+
+### 2. Freeze the clock
 
 The one thing the capturer deliberately does **not** do. Any component that reads the clock — a relative
 timestamp, a date defaulting to "today", a chart's day axis — drifts every run. Pin it with Vitest's fake
@@ -80,16 +122,18 @@ afterEach(() => vi.useRealTimers());
 If a component animates on mount and fake timers freeze it half-way, advance to the end
 (`vi.runAllTimers()`) or set the time *after* the render settles.
 
-### 2. Infinite JS animations
+### 3. Infinite JS animations
 
 A CSS/WAAPI/finite animation is handled for you (above). What's left is an **infinite** JS loop with no
-final frame — framer-motion pulsing dots, a Lottie loop, an autoplay spinner. Two fixes:
+final frame — framer-motion pulsing dots, a Lottie loop, an autoplay spinner, or a `<canvas>` /
+`requestAnimationFrame` loop (which no media query can reach). Two fixes:
 
 - **Preferred — honor reduced motion.** The capturer emulates `prefers-reduced-motion: reduce`, so make
   the component respect it (framer-motion: `<MotionConfig reducedMotion="user">`, or gate the loop with
   `useReducedMotion()`). One line, and it's good app behavior anyway.
-- **Escape hatch — detect the capture** and render the end state. UI Verify flags every capture with a
-  `UIVerify` marker on the user-agent and a `window.__UI_VERIFY__` global:
+- **Escape hatch — detect the capture** and render the end state (for a `<canvas>` rAF loop:
+  `if (isUIVerify()) drawOneStaticFrame(); else startRaf();` in the effect). The canonical helper reads
+  two signals — a `UIVerify` `navigator.userAgent` marker and a `window.__UI_VERIFY__` global:
   ```ts
   export const isUIVerify = () =>
     (typeof navigator !== 'undefined' && navigator.userAgent.includes('UIVerify')) ||
@@ -98,12 +142,9 @@ final frame — framer-motion pulsing dots, a Lottie loop, an autoplay spinner. 
   ```tsx
   <RadarChart isAnimationActive={!isUIVerify()} />
   ```
-
-### 3. Mock live data — never let a test hit a live API
-
-A test that fetches from a real backend is flaky by construction (network, changing data, auth). Return a
-fixed fixture — `vi.mock` the data module, or run [MSW](https://mswjs.io/) in the browser via a setup
-file — the **same** response every run. Feed the component fixture data and its pixels are stable.
+  In Vitest **browser mode** the load-bearing signal is the `window.__UI_VERIFY__` global (the browser
+  provider owns the context, so the SDK sets the global, not the UA marker) — use the helper as-is; the
+  global is what fires here.
 
 ### 4. Non-`Math.random` randomness
 

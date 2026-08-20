@@ -23,9 +23,15 @@ determinism surface. Integration is one import:
 ```
 
 **What UI Verify handles server-side (don't hand-fix these):** it re-renders the archived DOM with
-animations disabled, `prefers-reduced-motion` emulated, and fonts and images settled. So pixel-level settling — waiting on `document.fonts.ready`, sticky-header animation, image
-decode — is **not** your job. Your job is narrower: make sure the **content and state** the archive
-records is the same every run.
+`prefers-reduced-motion` emulated and fonts and images settled. So pixel-level settling — waiting on
+`document.fonts.ready`, sticky-header animation, image decode — is **not** your job. Your job is
+narrower: make sure the **content and state** the archive records is the same every run.
+
+One caveat on "animations": the freeze is **replay-side**, via reduced-motion emulation — the archive
+does **not** bake a frozen frame. A CSS animation that honors `prefers-reduced-motion` freezes for free;
+an **infinite** CSS/JS animation that ignores it keeps running on replay and lands on a random frame
+(recipe 8), and a `<canvas>`/`requestAnimationFrame` loop is beyond the media query entirely (recipe 9).
+Those live inside your app, so the fix does too.
 
 ## The core skill: recognize the class, then pull the lever at record time
 
@@ -41,6 +47,10 @@ change; find what injected the variation and pin it before the snapshot.*
 | Blank/placeholder where an image should be | **Lazy content** that never loaded, so its bytes aren't in the archive | **Trigger it at record time** → recipe 5 |
 | Same content, packed or ordered differently each run | **Dynamic layout** that reflows or reorders on its own | **Mask** it (or pin a fixed order/size) → recipe 6 |
 | An infinite JS animation the capturer can't stop (a charting lib's loop, a `<canvas>` spinner) | **App-driven animation** with no final frame | **Branch the component on capture** and render the end state → recipe 7 |
+| A different logo/mascot/hero or list order each run — a whole-*element* diff, not a pixel shift | **`Math.random()` in the render body**, run at **SSR time** in Next.js/Remix | **Pin the variant on `isUIVerify()`** + `UI_VERIFY=1` on the app server → recipe 10 |
+| An infinite CSS keyframe animation on a different frame | **CSS animation that ignores `prefers-reduced-motion`** | **Honor the media query in the app's CSS** → recipe 8 |
+| A `<canvas>` (particles, chart, background) diffs every run | **`requestAnimationFrame` loop** the media query can't reach | **Draw one static frame on `isUIVerify()`** → recipe 9 |
+| The capture is a skeleton / spinner, not the loaded page | **Snapshot fired before the data arrived** | **Wait for the real content** (`networkidle`) → recipe 12 |
 
 Prefer removing a whole class at the source: **test a build/staging with flags and third-party scripts
 off** and rows 1 and 4 disappear before you write any code.
@@ -110,6 +120,79 @@ const isUIVerify = () =>
 <Chart isAnimationActive={!isUIVerify()} />
 ```
 Boot the app with the env var for the capture run only — e.g. `UI_VERIFY=1 npm start` — so a server-rendered branch can see it; the browser markers cover client-side animation without it. This is the record-side of the same freeze the Storybook/Vitest skills apply in-browser.
+
+## Determinism the app itself owns (real-app cases a stub can't reach)
+
+The recipes above pin variation from **outside** the app — routes, the clock, the DOM. The next five
+live where a stub can't reach: **inside your components** (a branch on `isUIVerify()`, recipe 7's helper,
+or the app's own CSS) or in **what the test waits for**. These are the ones that eat an afternoon if you
+fight them from the test, especially under SSR.
+
+**8. Infinite CSS animation lands on a random frame** — a rotating illustration, a pulsing dot. The
+freeze is replay-side (see the mental model): the worker emulates `prefers-reduced-motion: reduce` and
+re-runs the archived CSS, so the animation stops **only if the app honors that media query**. Add it to
+the app's CSS — not the test:
+```css
+@media (prefers-reduced-motion: reduce) { .rotating-logo { animation: none } }
+```
+Use `animation: none`, **never `animation-duration: 0s`** — 0s leaves an infinite animation on its own
+compositor layer and it sub-pixel-flakes (~1/100). No `isUIVerify()` needed here; the media query is the
+whole lever. (**FAILED:** setting `reducedMotion` in the test/config is a **no-op at record time** — the
+archive never bakes the computed transform, so there's nothing to freeze until replay. Don't reach for
+it. Also: `reducedMotion` is not a top-level Playwright `use` option anyway — it lives under
+`use: { contextOptions: { reducedMotion: 'reduce' } }` — but you don't need it at all.)
+
+**9. A `<canvas>` / `requestAnimationFrame` animation diffs every run** — particles, a chart, an animated
+background. rrweb bakes the canvas pixels (`rr_dataURL`) at the instant of capture, catching a different
+frame each time. A media query can't reach a JS rAF loop, so branch in the component's effect:
+```tsx
+useEffect(() => {
+  if (isUIVerify()) drawOneStaticFrame();   // one deterministic frame under capture
+  else startRaf();                          // the live loop for real users
+}, []);
+```
+**FAILED:** emulating `prefers-reduced-motion` in the test *does* set `matchMedia(...).matches = true` in
+the page, but a hand-written rAF loop never reads it and keeps animating — the guard has to be in the JS.
+
+**10. A random pick made *in render* changes the element each run** — a mascot/logo/hero image chosen by
+`Math.random()`, a shuffled list. Not a pixel shift: a **different element**, a large whole-element diff,
+every run. This is the biggest real-app time-sink. In any SSR framework (Next.js, Remix) the pick runs at
+**server render time** and the archive bakes the SSR'd choice, so a browser-side fix can't touch it. Pin
+the variant in the component and let real users keep the randomness:
+```tsx
+const src = isUIVerify() ? images[0] : images[Math.floor(Math.random() * images.length)];
+```
+Because the pick is server-side, **set `UI_VERIFY=1` on the app server for the capture run** (recipe 7)
+so SSR and the client agree on the fixed variant — otherwise they disagree and React throws a hydration
+mismatch. **FAILED (do not repeat):** seeding `Math.random` from a Playwright `addInitScript` fixture —
+it patches the *browser* RNG, which cannot reach a pick React already made on the server; seeded captures
+still rolled different sprites. (Redefining `navigator.userAgent` from an init script fails too — it's
+why the marker is set at context creation, not in-page.)
+
+**11. Even after gating the animation, a canvas/grid *layout* still differs** — the frame is static but
+the square positions, particle seeds, or item order move run-to-run. The layout is drawing from the
+**global** `Math.random`, and seeding it globally is **not enough**: React and other components consume
+the shared sequence first, by an amount that varies with render timing, so your component gets different
+values each capture. Give that component its **own reset-able RNG** (a tiny xorshift), reset at the start
+of each generation, used only under capture — then its output is byte-identical across runs.
+
+**12. The capture is a skeleton / spinner, not the loaded page** — the test asserted something (a URL, a
+button) and the auto-capture fired before the *data* arrived. Wait for the **real content**, not its
+container: a data row, `role="tab"`, a specific project link — or `page.waitForLoadState('networkidle')`.
+**TRAP:** a generic selector like `a[href^="/project/"]` can match a **stale** link still in the DOM
+during a client-side transition and resolve too early, capturing the loading state. Prefer `networkidle`
+or a selector for an element that only exists once the *new* content has rendered.
+
+**Freezing live/dynamic data (stars, followers, tiles, listings)** is recipe 2 — `page.route` with
+committed fixtures is fork-friendly where a private staging backend isn't reachable in CI. If the noise
+is heavy and content-driven, the higher-leverage move is often to lift those cases into **Storybook or
+Vitest with mocked data** (`storybook-visual-testing` / `vitest-visual-testing`): static data = no
+content churn at the source, and one component per canvas keeps the volume down.
+
+> **Ops, not determinism:** fork PRs, the maintainer-approval flow, the Playwright-container CI
+> (browser-install hang), and git `safe.directory` are **not** in this skill — see
+> [`/docs/open-source-and-forks`](https://uiverify.ai/docs/open-source-and-forks). This skill is only the
+> runnable determinism playbook.
 
 ## Diagnosing a flaky diff
 

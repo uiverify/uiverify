@@ -24,7 +24,14 @@ problem Storybook already removed; that's a real-page concern (see `playwright-v
   You don't need to disable these.
 
 So the checklist below is only the remainder — what lives *inside your app* and can't be fixed from
-outside it.
+outside it. And like Vitest browser mode (`vitest-visual-testing`) and unlike a real page, a story has
+**no SSR** — no server-rendered random pick to reconcile.
+
+**The headline: freeze the data.** Once the list above is off the table, the one thing left that floods a
+story suite with false "changes" is **live/dynamic data** — star counts, follower counts, contributor
+lists, tiles, timestamps. Give every story **static args / fixtures** and that entire class disappears at
+the source: static data can't churn run-to-run, so there is nothing to diff. This is the single
+highest-value determinism step here — do it first (step 1), and most stories need nothing else.
 
 Point UI Verify at your built stories:
 ```bash
@@ -33,7 +40,29 @@ npm run build-storybook && uiverify upload --static-dir storybook-static
 
 ## The checklist (only what the tool can't do for you)
 
-### 1. Freeze the clock
+### 1. Freeze the data — the one that actually matters
+
+A story fed live/dynamic data is flaky by construction: the stars, followers, contributor list, tile
+order, and timestamps move between runs, so the diff lights up with no code change. **Give every story
+static args/fixtures and the whole class is gone.** Never let a story hit a real backend.
+
+Concrete — fixed, ordered, complete data:
+- fixed **counts** (stars, followers, downloads) — literal args, not a live fetch;
+- a fixed **contributor/author list**: fixed names **and** avatar URLs (or inlined avatars), in a fixed
+  order;
+- a fixed set of **tiles/rows in a fixed order** (a live "trending" sort reorders every run);
+- fixed **timestamps** (pair with the clock, step 2).
+
+Two ways to inject them, both fine:
+- **args** — the Storybook-native path: pass the component's data as fixed `args` on the story;
+- **mock the fetch** — when a story fetches internally, [MSW via `msw-storybook-addon`](https://storybook.js.org/addons/msw-storybook-addon)
+  returns the **same** response every time.
+
+**One component per story file, every variant × state in one story** where you can — cheaper and easier
+to eyeball than N near-identical stories. Keep each in its own file so `--only-changed` carries the
+untouched ones forward, and add a path filter so the visual job only runs on UI PRs.
+
+### 2. Freeze the clock
 
 The one thing the capturer deliberately does **not** do (freezing time breaks entry animations). Any
 component that reads the clock — a relative timestamp, a date picker defaulting to "today", a chart's day
@@ -55,10 +84,11 @@ Pass a `Date`, a millisecond timestamp, or an ISO string as `mockingDate`; the m
 [`@sinonjs/fake-timers`](https://github.com/sinonjs/fake-timers) in a decorator instead
 (`install({ now: FROZEN_NOW })`) — it covers `Date`, `Date.now`, and timers in one call.
 
-### 2. Infinite JS animations
+### 3. Infinite JS animations
 
 A CSS/WAAPI/finite animation is handled for you (above). What's left is an **infinite** JS loop that
-never has a final frame — framer-motion pulsing dots, a Lottie loop, an autoplay spinner. Two fixes:
+never has a final frame — framer-motion pulsing dots, a Lottie loop, an autoplay spinner, or a
+`<canvas>` / `requestAnimationFrame` loop (which no media query can reach). Two fixes:
 
 - **Preferred — honor reduced motion.** The capturer emulates `prefers-reduced-motion: reduce`, so make
   the component respect it. framer-motion ignores it by default (`reducedMotion: "never"`); opt in:
@@ -78,13 +108,8 @@ never has a final frame — framer-motion pulsing dots, a Lottie loop, an autopl
   ```tsx
   <RadarChart isAnimationActive={!isUIVerify()} />
   ```
-  Prefer pausing at the **end** frame, not the start.
-
-### 3. Mock live data — never let a story hit a live API
-
-A story that fetches from a real backend is flaky by construction (network, changing data, auth). Mock it
-with a fixed fixture — [MSW via `msw-storybook-addon`](https://storybook.js.org/addons/msw-storybook-addon)
-is the standard — returning the **same** response every time.
+  Prefer pausing at the **end** frame, not the start. For a hand-rolled `<canvas>` rAF loop the same
+  branch applies: `if (isUIVerify()) drawOneStaticFrame(); else startRaf();` in the component's effect.
 
 ### 4. Non-`Math.random` randomness
 
