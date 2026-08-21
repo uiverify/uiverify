@@ -16,10 +16,5 @@
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test"
   },
-  "packageManager": "pnpm@10.33.0",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
-  }
+  "packageManager": "pnpm@11.22.0"
 }

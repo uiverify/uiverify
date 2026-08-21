@@ -12,4 +12,5 @@
  * --static-dir <dir>` ships the archive.
  */
 export { takeSnapshot, disableAutoSnapshot } from "./runtime";
+export { preloadFonts } from "./settle";
 export type { UiverifyPluginOptions } from "./options";

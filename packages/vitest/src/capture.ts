@@ -2,6 +2,7 @@ import { commands } from "@vitest/browser/context";
 import { snapshot } from "rrweb-snapshot";
 import type { ArchivedResource, ArchivedSnapshot } from "@uiverify/archive-core";
 import { snapshotIds, type TaskLike } from "./snapshot-id";
+import { settle } from "./settle";
 import pkg from "../package.json";
 
 /** Stamped into every snapshot so the CLI can report the capture SDK's version at upload. Inlined at
@@ -96,6 +97,11 @@ async function collectResources(): Promise<Record<string, ArchivedResource>> {
  *  `name` distinguishes multiple captures within one test; omit it for a test's single auto-snapshot. */
 export async function capture(task: TaskLike, name: string): Promise<string> {
   const { id, title } = snapshotIds(task, name);
+
+  // Settle fonts and images before serializing, so every resource the page shows is loaded and captured:
+  // the archive is a static snapshot, so a font or image still loading at capture would be absent from it
+  // (a fallback glyph / a broken image). Time-boxed inside settle().
+  await settle();
 
   // `slimDOM.script` drops <script> nodes: the archive replays as static, settled pixels, so the app's
   // JS must not re-run on replay. `inlineStylesheet` folds same-origin CSS into the DOM (no CSS fetch on

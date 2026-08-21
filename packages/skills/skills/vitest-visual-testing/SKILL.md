@@ -157,6 +157,13 @@ A JS-measured layout that reflows or reorders on its own (packing driven by meas
 list) can vary run-to-run even with identical content. Force a deterministic variant (a fixed
 order/size), or mask the region.
 
+One measured-layout case the SDK already handles: a component that measures text width **on mount** (a
+sliding tab or switch highlight) can bake a 1px-shifted position if the font wasn't ready at that first
+layout. The SDK preloads fonts before each test so the first measurement uses real metrics. If your CSS
+or a font registers late (an unusual setup) and you still see a sub-pixel shift, call `preloadFonts()`
+from `@uiverify/vitest` **before** `render()` to force it - settling after render can't undo a
+measurement already taken.
+
 ## Anti-patterns
 
 - **A test that fetches live data** → mock it (`vi.mock` / MSW).
