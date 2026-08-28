@@ -1,0 +1,55 @@
+name: Screenshots
+
+# Builds the app, runs the Maestro flow on an Android emulator to produce a screenshot per screen, and
+# uploads them to UI Verify, which diffs each against the baseline and has the AI judge triage intended
+# changes vs regressions. On a pull request the check gates the merge; on main it accepts changes to move
+# the baseline forward.
+#
+# Requires the repo secret UIVERIFY_API_KEY (a screenshot project's key, uv_proj_…).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  visual:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so --only-changed can diff against the baseline commit
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: npm install
+      - name: Generate the native Android project + build a release APK
+        # Release bundles the JS into the APK (Expo's release build is debug-signed), so the app runs
+        # self-contained on the emulator with no Metro dev server.
+        run: |
+          npx expo prebuild --platform android --no-install
+          cd android && ./gradlew assembleRelease
+      - name: Install Maestro
+        run: |
+          curl -Ls "https://get.maestro.mobile.dev" | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+      - name: Run the flow on an emulator (produces screenshots/)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          profile: pixel_6
+          script: |
+            adb install -r android/app/build/outputs/apk/release/app-release.apk
+            npm run screenshots
+      - name: Upload to UI Verify
+        env:
+          UIVERIFY_API_KEY: ${{ secrets.UIVERIFY_API_KEY }}
+        run: |
+          FLAGS="--screenshots screenshots --only-changed"
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then FLAGS="$FLAGS --auto-accept-changes"; fi
+          npx -y uiverify upload $FLAGS

@@ -87,6 +87,19 @@ Or, on Claude Code, install as a plugin so updates arrive automatically:
 
 Either way, invoke them by name: `/uiverify:setup-visual-testing`, `/uiverify:triage-visual-changes`, and more. See [`packages/skills`](packages/skills) for the full list and a copy-in-by-hand alternative.
 
+## Examples
+
+Complete, runnable projects under [`examples/`](examples) — one per capture path. Copy a folder, add a project API key, and it works.
+
+| Example | Capture path |
+|---|---|
+| **[`examples/storybook`](examples/storybook)** | Storybook stories (no SDK, `upload --static-dir`) |
+| **[`examples/vitest`](examples/vitest)** | Vitest browser-mode tests with `@uiverify/vitest` |
+| **[`examples/playwright`](examples/playwright)** | Playwright end-to-end tests with `@uiverify/playwright` |
+| **[`examples/react-native`](examples/react-native)** | Finished screenshots (native / mobile / React Native) with `upload --screenshots` |
+
+The first three capture a slice of the same [Shoppy](https://github.com/igrlk/shoppy) storefront; the React Native one is a small Expo app driven by Maestro. Each folder has its own CI workflow.
+
 ## Development
 
 ```sh

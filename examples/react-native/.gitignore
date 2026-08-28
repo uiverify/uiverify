@@ -1,0 +1,10 @@
+node_modules/
+.expo/
+dist/
+web-build/
+android/
+ios/
+screenshots/
+*.log
+.DS_Store
+package-lock.json

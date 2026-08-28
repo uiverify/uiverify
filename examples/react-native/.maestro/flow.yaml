@@ -1,0 +1,17 @@
+appId: ai.uiverify.example
+---
+# Drive the app on a simulator/emulator and screenshot each screen. Maestro writes each shot to
+# screenshots/<name>.png, which `uiverify upload --screenshots screenshots` then diffs against the
+# baseline. Each screenshot is taken AFTER the interaction that produced the state.
+- launchApp:
+    clearState: true
+- assertVisible: "Shoppy"
+- takeScreenshot: screenshots/storefront
+
+- tapOn: "Sunrise Mug"
+- assertVisible: "Add to cart"
+- takeScreenshot: screenshots/product
+
+- tapOn: "Add to cart"
+- assertVisible: "Your cart"
+- takeScreenshot: screenshots/cart
