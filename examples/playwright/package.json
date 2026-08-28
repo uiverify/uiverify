@@ -1,0 +1,30 @@
+{
+  "name": "uiverify-example-playwright",
+  "private": true,
+  "type": "module",
+  "description": "UI Verify example: capturing Playwright end-to-end tests with @uiverify/playwright.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 4173",
+    "test:e2e": "playwright test",
+    "upload": "uiverify upload --static-dir uiverify-archive --only-changed"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.1.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@uiverify/playwright": "^1.1.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "playwright": "^1.55.0",
+    "typescript": "^5.7.2",
+    "uiverify": "^1.2.1",
+    "vite": "^7.0.0"
+  }
+}

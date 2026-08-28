@@ -1,0 +1,32 @@
+name: Component tests
+
+# Builds the static Storybook and uploads it to UI Verify, which replays each story, diffs it against the
+# baseline, and has the AI judge triage intended changes vs regressions. On a pull request the check gates
+# the merge; on main it accepts changes to move the baseline forward.
+#
+# Requires the repo secret UIVERIFY_API_KEY (a Storybook project's key, uv_proj_…).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  visual:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so --only-changed can diff against the baseline commit
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install
+      - run: npm run build-storybook
+      - name: Upload to UI Verify
+        env:
+          UIVERIFY_API_KEY: ${{ secrets.UIVERIFY_API_KEY }}
+        run: |
+          FLAGS="--static-dir storybook-static --only-changed"
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then FLAGS="$FLAGS --auto-accept-changes"; fi
+          npx -y uiverify upload $FLAGS

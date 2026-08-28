@@ -100,6 +100,31 @@ export interface IngestClient {
   getStatus(buildId: string): Promise<BuildStatus>;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
+}
+
+/**
+ * Build the error for a failed HTTP response. The control plane returns `{ "error": "<message>" }` on a
+ * deliberate rejection - e.g. a wrong project type / SDK yields a 409 whose body is the actionable
+ * "This is a screenshot project, but you uploaded with the @uiverify/playwright SDK..." - so surface
+ * that message verbatim, giving the user something they can act on instead of a raw
+ * `POST /api/ingest/build -> 409: {"error":"..."}`. Falls back to the `<label> -> <status>: <body>`
+ * status line for a non-JSON / opaque body. (4xx is never retried, so this message goes straight to the
+ * CLI's error output.)
+ */
+function httpError(label: string, status: number, body: string): HttpStatusError {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (isRecord(parsed) && typeof parsed.error === "string" && parsed.error) {
+      return new HttpStatusError(status, parsed.error);
+    }
+  } catch {
+    // Not JSON - fall through to the raw status line below.
+  }
+  return new HttpStatusError(status, body ? `${label} -> ${status}: ${body}` : `${label} -> ${status}`);
+}
+
 export function httpIngestClient(apiUrl: string, apiKey: string): IngestClient {
   // Every request identifies the CLI version; the API key only ever travels in Authorization.
   const auth = { authorization: `Bearer ${apiKey}`, "x-uiverify-cli-version": CLI_VERSION };
@@ -116,7 +141,7 @@ export function httpIngestClient(apiUrl: string, apiKey: string): IngestClient {
       body: JSON.stringify(body),
       signal,
     });
-    if (!res.ok) throw new HttpStatusError(res.status, `POST ${pathname} -> ${res.status}: ${await res.text()}`);
+    if (!res.ok) throw httpError(`POST ${pathname}`, res.status, await res.text());
     return res.json();
   }
 
@@ -142,7 +167,7 @@ export function httpIngestClient(apiUrl: string, apiKey: string): IngestClient {
           body: bytes,
           signal,
         });
-        if (!res.ok) throw new HttpStatusError(res.status, `bundle upload -> ${res.status}: ${await res.text()}`);
+        if (!res.ok) throw httpError("bundle upload", res.status, await res.text());
       });
     },
     async markUploaded(buildId, ancestorShas) {
@@ -153,7 +178,7 @@ export function httpIngestClient(apiUrl: string, apiKey: string): IngestClient {
     async getStatus(buildId) {
       const res = await withRetry({ label: "status" }, async (signal) => {
         const r = await fetch(`${apiUrl}/api/ingest/build/${buildId}`, { headers: auth, signal });
-        if (!r.ok) throw new HttpStatusError(r.status, `status -> ${r.status}: ${await r.text()}`);
+        if (!r.ok) throw httpError("status", r.status, await r.text());
         return r.json();
       });
       return statusResponse.parse(res);

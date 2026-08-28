@@ -51,6 +51,33 @@ describe("httpIngestClient retries", () => {
   });
 });
 
+describe("httpIngestClient surfaces the server error message", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const failJson = (status: number, error: string): Response =>
+    new Response(JSON.stringify({ error }), { status });
+
+  // A wrong project type / SDK is a 409 whose body is the actionable message. It must reach the user
+  // verbatim (the CLI prints the thrown error), NOT buried under a `POST /api/ingest/build -> 409: {...}`
+  // prefix. Reverting the `httpError` helper (back to the raw status-line throw) turns this red.
+  it("throws the control plane's { error } body verbatim on a 409, with no status-line prefix", async () => {
+    const msg =
+      "This is a screenshot project, but you uploaded with the @uiverify/playwright SDK. Create a playwright project, or change this project's type.";
+    stubFetch([failJson(409, msg)]);
+    // Exactly the server message - no `POST ... -> 409` wrapper.
+    await expect(httpIngestClient("http://cp", "key").register(body)).rejects.toThrow(new RegExp(`^${escapeRe(msg)}$`));
+  });
+
+  it("falls back to the raw status line for a non-JSON error body", async () => {
+    stubFetch([fail(400)]); // body is "boom", not JSON
+    await expect(httpIngestClient("http://cp", "key").register(body)).rejects.toThrow("400: boom");
+  });
+});
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 describe("httpIngestClient version reporting", () => {
   afterEach(() => vi.unstubAllGlobals());
 

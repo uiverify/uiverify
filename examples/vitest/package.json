@@ -1,0 +1,30 @@
+{
+  "name": "uiverify-example-vitest",
+  "private": true,
+  "type": "module",
+  "description": "UI Verify example: capturing Vitest browser-mode tests with @uiverify/vitest.",
+  "scripts": {
+    "test:uiverify": "vitest run --config vitest.uiverify.config.ts",
+    "upload": "uiverify upload --static-dir uiverify-archive --only-changed"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@uiverify/vitest": "^1.2.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "@vitest/browser": "^4.1.10",
+    "@vitest/browser-playwright": "^4.1.10",
+    "playwright": "^1.55.0",
+    "typescript": "^5.7.2",
+    "uiverify": "^1.2.1",
+    "vite": "^7.0.0",
+    "vitest": "^4.1.10",
+    "vitest-browser-react": "^2.2.0"
+  }
+}

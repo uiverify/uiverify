@@ -110,3 +110,13 @@ service repo — *not* here): a universal determinism change owes those articles
 
 - `pnpm build` — esbuild bundle → `dist/uiverify.js` (gitignored). `prepublishOnly` runs it.
 - `pnpm test` — Vitest. `pnpm typecheck` — `tsc --noEmit`.
+
+## `examples/` pin published versions — bump them with every release
+
+The standalone example projects under `examples/` (`storybook`, `vitest`, `playwright`, `react-native`)
+are meant to be **copied out and run against the published npm packages**, so their `package.json`s pin
+the **published** versions (`uiverify`, `@uiverify/playwright`, `@uiverify/vitest`) — NOT `workspace:*`.
+That means they don't move when you bump a package here: **whenever you publish a new version of any
+client package, bump the matching `^x.y.z` in every `examples/*/package.json` that depends on it** in the
+same change, or the examples silently install a stale SDK. `grep -rl '@uiverify/\|"uiverify"' examples/*/package.json`
+finds them; the current published versions are what `npm view <pkg> version` reports.
