@@ -142,6 +142,32 @@ describe("runUpload", () => {
     expect(log.register?.onlyChanged).toBe(true);
   });
 
+  it("forwards preview + previewTargets in the register body for a preview check", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    await runUpload(
+      { staticDir: "/sb", preview: true, previewTargets: ["components-button--*", "pages-home--default"] },
+      deps(log, ["changed"]),
+    );
+    expect(log.register?.preview).toBe(true);
+    expect(log.register?.previewTargets).toEqual(["components-button--*", "pages-home--default"]);
+  });
+
+  it("a normal upload sends preview false and no targets (the body stays the CI contract)", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    await runUpload({ staticDir: "/sb" }, deps(log, ["passed"]));
+    expect(log.register?.preview).toBe(false);
+    expect(log.register?.previewTargets).toBeUndefined();
+  });
+
+  it("logs the preview targets so the agent sees exactly what will render", async () => {
+    const lines: string[] = [];
+    await runUpload(
+      { staticDir: "/sb", preview: true, previewTargets: ["components-button--default"] },
+      deps({ statusPolls: 0 }, ["changed"], lines),
+    );
+    expect(lines.some((l) => l.includes("Preview check") && l.includes("components-button--default"))).toBe(true);
+  });
+
   it("forwards the detected repoFullName in the register body", async () => {
     const log: CallLog = { statusPolls: 0 };
     await runUpload({ staticDir: "/sb" }, deps(log, ["passed"]));

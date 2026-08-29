@@ -1,8 +1,10 @@
-# `uiverify` — the CI uploader (`uiverify upload`)
+# `uiverify` — the UI Verify CLI (`uiverify upload` / `uiverify check`)
 
-Uploads a prebuilt Storybook static bundle to the UI Verify service, registers the build, then
-**waits and streams render progress** (`Rendered X / N`) until the build finishes, reflecting the
-visual verdict (`changed`/`failed`) in the exit code.
+`uiverify upload` uploads a prebuilt Storybook static bundle to the UI Verify service, registers the
+build, then **waits and streams render progress** (`Rendered X / N`) until the build finishes,
+reflecting the visual verdict (`changed`/`failed`) in the exit code. `uiverify check` is the same
+pipeline for a coding agent's edit loop (render only the stories you name, walled off from CI + main) -
+see [`uiverify check`](#uiverify-check--the-interactive-preview-check-agent-edit-loop) below.
 
 Standalone — it talks to the UI Verify service only over HTTP (the wire contracts are defined
 locally in `src/client.ts`). It carries no rendering, diffing, or judging logic; that all runs
@@ -75,14 +77,44 @@ npm run build-storybook -- --stats-json
 npx uiverify upload --static-dir storybook-static --only-changed
 ```
 
+## `uiverify check` — the interactive preview check (agent edit loop)
+
+`check` is the same pipeline as `upload` (register → PUT bundle → uploaded → poll) with three
+differences, for a coding agent iterating mid-task rather than a CI gate:
+
+1. **You choose what renders.** `--story <glob>` (repeatable; exact ids or anchored globs like
+   `components-button--*`) is REQUIRED and REPLACES the dependency-graph closure a CI build computes.
+   The whole Storybook bundle still uploads (the build is monolithic), but only the named stories render
+   on the fleet - so editing one primitive doesn't render the third of the suite it touches.
+2. **It is walled off from CI + main.** The build registers with `preview: true`: it posts no GitHub
+   check, and an accept lands in a branch-scoped preview baseline, never a CI baseline - so it can never
+   reach `main`. CI stays the only path to a `main` baseline.
+3. **`changed` is informational.** Unlike `upload`, a `changed` verdict exits **0** (it is the result to
+   review, not a gate); only `failed`/`blocked` or an operational error exit non-zero. The changed-story
+   list + the MCP handoff (`get_build` / `render_diff_image` / `accept_build`) print so the agent can
+   inspect the pixels and accept the ones it intended.
+
+```sh
+npm run build-storybook
+npx uiverify check --story 'components-button--*' --static-dir storybook-static
+```
+
+`check` deliberately does NOT accept the CI gating flags (`--only-changed`, `--auto-accept-changes`,
+`--exit-zero-on-changes`) - they are meaningless on a preview check, so passing one is rejected rather
+than silently ignored. Accept/deny happens after review, over the dashboard or the MCP accept tools.
+
 ## CLI
 
 ```
 uiverify upload --static-dir <dir> [--working-directory <dir>] [--api-url <url>] \
                 [--auto-accept-changes] [--exit-zero-on-changes] [--only-changed] [--strict | --no-strict]
+
+uiverify check  --story <glob> [--story <glob> …] (--static-dir <dir> | --screenshots <dir>) \
+                [--working-directory <dir>] [--api-url <url>] [--strict | --no-strict]
 ```
 
 - `UIVERIFY_API_KEY` (env, required) — the project key.
+- `--story <glob>` (`check` only, repeatable, required) — the stories to render for the preview check.
 - `--static-dir` the prebuilt `storybook-static` directory to upload (build Storybook first).
 - `--api-url` (or `UIVERIFY_API_URL`, default `https://uiverify.ai`; override for self-host/local dev).
 - `--only-changed` — render only the stories this commit's changed files could affect, carrying the rest

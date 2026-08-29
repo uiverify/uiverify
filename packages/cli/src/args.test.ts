@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseArgs } from "./args";
+import { CHECK_SPEC, parseArgs } from "./args";
 
 describe("parseArgs", () => {
   it("reads a value option in both spellings", () => {
@@ -110,5 +110,54 @@ describe("parseArgs", () => {
     expect(invalid).toEqual([]);
     expect(values.get("static-dir")).toBe("storybook-static");
     expect([...flags].sort()).toEqual(["auto-accept-changes", "no-strict", "only-changed"]);
+  });
+
+  // The default (upload) spec has no repeatable option, so `multi` stays empty and `--story` is unknown.
+  it("has an empty multi map and rejects --story under the default upload spec", () => {
+    expect(parseArgs(["--static-dir", "sb"]).multi.size).toBe(0);
+    expect(parseArgs(["--story", "x"]).invalid).toContain("--story");
+  });
+});
+
+describe("parseArgs — check spec (uiverify check)", () => {
+  it("accumulates a repeatable --story (both spellings) into multi", () => {
+    const p = parseArgs(
+      ["--story", "components-button--*", "--story=pages-home--default", "--static-dir", "sb"],
+      CHECK_SPEC,
+    );
+    expect(p.multi.get("story")).toEqual(["components-button--*", "pages-home--default"]);
+    expect(p.values.get("static-dir")).toBe("sb");
+    expect(p.invalid).toEqual([]);
+  });
+
+  it("drops an empty --story value (an empty glob is meaningless), same as an empty value option", () => {
+    const p = parseArgs(["--story=", "--static-dir", "sb"], CHECK_SPEC);
+    expect(p.multi.get("story")).toBeUndefined();
+    expect(p.invalid).toEqual([]);
+  });
+
+  it("rejects a --story with no value rather than swallowing the next flag", () => {
+    const p = parseArgs(["--story", "--static-dir", "sb"], CHECK_SPEC);
+    expect(p.invalid).toContain("--story");
+    // The next flag is still parsed normally — only the empty --story is rejected.
+    expect(p.values.get("static-dir")).toBe("sb");
+  });
+
+  // The per-command allowlist is the point: check accepts its own surface and rejects upload's gating
+  // flags (they'd be meaningless on a preview check), rather than silently ignoring them.
+  it("rejects upload-only flags under the check spec", () => {
+    expect(parseArgs(["--only-changed"], CHECK_SPEC).invalid).toContain("--only-changed");
+    expect(parseArgs(["--auto-accept-changes"], CHECK_SPEC).invalid).toContain("--auto-accept-changes");
+    expect(parseArgs(["--exit-zero-on-changes"], CHECK_SPEC).invalid).toContain("--exit-zero-on-changes");
+  });
+
+  it("accepts a full realistic check invocation with nothing left over", () => {
+    const p = parseArgs(
+      ["--story", "components-button--*", "--static-dir", "storybook-static", "--api-url", "http://localhost:3000"],
+      CHECK_SPEC,
+    );
+    expect(p.invalid).toEqual([]);
+    expect(p.multi.get("story")).toEqual(["components-button--*"]);
+    expect(p.values.get("api-url")).toBe("http://localhost:3000");
   });
 });

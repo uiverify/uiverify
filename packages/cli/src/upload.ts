@@ -24,6 +24,12 @@ export interface UploadOptions {
    * server renders everything even with this on.
    */
   onlyChanged?: boolean;
+  /** Run as an interactive preview check (`uiverify check`): the build renders only `previewTargets`,
+   *  diffs against the real CI baseline, posts no GitHub check, and never advances a CI baseline. */
+  preview?: boolean;
+  /** The agent's explicit render targets for a preview check (story-id globs / exact ids). Replaces the
+   *  dep-graph closure server-side; only meaningful with `preview: true`. */
+  previewTargets?: string[];
 }
 
 export interface UploadDeps {
@@ -54,6 +60,10 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
   const meta = deps.gitMeta();
   const pr = meta.prNumber ? ` · PR #${meta.prNumber}` : "";
   deps.log(`Commit ${meta.commitSha.slice(0, 7)} on ${meta.branch}${pr}`);
+  if (opts.preview) {
+    const targets = opts.previewTargets ?? [];
+    deps.log(`Preview check - rendering ${targets.length} target(s): ${targets.join(", ")}`);
+  }
 
   const tgz = deps.tmpFile();
   deps.log("Bundling Storybook…");
@@ -70,6 +80,10 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
     parentShas: meta.parentShas,
     autoAcceptChanges: opts.autoAcceptChanges ?? false,
     onlyChanged: opts.onlyChanged ?? false,
+    // Preview check: the agent's targets replace the graph closure server-side (empty/absent on a
+    // normal upload). Sent only when this is a preview run so the body stays the normal contract otherwise.
+    preview: opts.preview ?? false,
+    previewTargets: opts.preview ? (opts.previewTargets ?? []) : undefined,
     repoFullName: meta.repoFullName || undefined,
     sdkName: producer?.name,
     sdkVersion: producer?.version,

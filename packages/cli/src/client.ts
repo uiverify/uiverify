@@ -79,6 +79,14 @@ export interface RegisterBody {
   /** Render only the stories this commit's changed files could affect and carry the rest forward
    *  (skip-unchanged). Decided server-side; per build, so it never changes anyone else's builds. */
   onlyChanged?: boolean;
+  /** This is an interactive preview check (`uiverify check`, a coding agent's edit-loop): render only
+   *  `previewTargets`, diff against the real CI baseline, post no GitHub check, and never advance a CI
+   *  baseline. Metered like any build. Absent/false ⇒ a normal build. */
+  preview?: boolean;
+  /** The agent's explicit target selection for a preview check — story-id globs (`components-button--*`)
+   *  or exact ids. The server intersects them with the bundle to form the render set, REPLACING the
+   *  dep-graph closure a CI build uses. Only meaningful with `preview: true`. */
+  previewTargets?: string[];
   /** GitHub `owner/repo`; the server binds it to the project so it knows where to post the check +
    *  PR comment. Omitted when it can't be determined locally. */
   repoFullName?: string;

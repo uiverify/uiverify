@@ -20,3 +20,16 @@ export function exitCodeFor(status: string | undefined, flags: GateFlags): numbe
   if (status === "failed" || status === "blocked") return 1;
   return 0;
 }
+
+/**
+ * The exit code for `uiverify check` (the interactive preview build). Unlike `upload`, a preview check
+ * is NOT a gate — it renders the agent's targets and reports what changed so the agent can review the
+ * pixels over MCP and decide. A `changed` verdict is the expected, useful result (it worked and found a
+ * diff), so it exits **0**; the changed-story list is on stdout for the agent to read. Only a build that
+ * couldn't give a clean answer gates: `failed` (a story errored) / `blocked` (quota/payment) → 1.
+ * Operational failures (the check not running at all) are handled separately by `softFail`.
+ */
+export function previewExitCodeFor(status: string | undefined): number {
+  if (status === "failed" || status === "blocked") return 1;
+  return 0;
+}

@@ -59,11 +59,22 @@ This is how native, mobile, and React Native projects use UI Verify: each image 
 
 Prefer to drive it from your agent? Install the skills (below) and run `/uiverify:setup-visual-testing`. It detects your capture path, wires CI, and writes the first stories for you.
 
+### Mid-edit checks for coding agents: `uiverify check`
+
+While an agent is editing, it can render just the stories it is touching and diff them against the real CI baseline on the fleet - a "would this pass" answer without waiting for CI:
+
+```sh
+npm run build-storybook
+npx uiverify check --story 'components-button--*' --static-dir storybook-static
+```
+
+It renders only the stories you name (repeatable `--story`, globs or exact ids), posts no PR check, and never moves a CI baseline. A `changed` result is informational (exit 0) - review the pixels over the UI Verify MCP (`get_build` / `render_diff_image`) and accept in the dashboard or with `accept_build` to set a branch-scoped preview baseline, so your own accepted changes stop re-flagging on the next check. CI stays the only path to a `main` baseline.
+
 ## Packages
 
 | Package | Install | What it does |
 |---|---|---|
-| **[`uiverify`](packages/cli)** | `npm i -D uiverify` | The CI uploader. Uploads your prebuilt Storybook bundle (or a Playwright/Vitest archive, or a directory of finished screenshots), streams render progress, and reflects the visual verdict in its exit code. |
+| **[`uiverify`](packages/cli)** | `npm i -D uiverify` | The CLI. `uiverify upload` is the CI uploader (Storybook bundle, Playwright/Vitest archive, or a directory of finished screenshots) - streams render progress and reflects the visual verdict in its exit code. `uiverify check` is the agent edit-loop check - renders just the stories you name against the real CI baseline, without posting a check or moving a baseline. |
 | **[`@uiverify/playwright`](packages/playwright)** | `npm i -D @uiverify/playwright` | The Playwright capture SDK. Swap `@playwright/test` for it and each test archives its final UI state (serialized DOM + resource bytes) for UI Verify to replay and diff. |
 | **[`@uiverify/vitest`](packages/vitest)** | `npm i -D @uiverify/vitest` | The Vitest capture SDK. Add `uiverifyPlugin()` to your Vitest config and each browser-mode test archives its final DOM (serialized DOM + resource bytes) for UI Verify to replay and diff; `takeSnapshot()` adds named checkpoints. |
 | **[`@uiverify/skills`](packages/skills)** | `npx skills add`, see below | Agent skills: `SKILL.md` workflows a coding agent runs in your repo to set up visual testing, author economical + deterministic stories, and triage builds. |

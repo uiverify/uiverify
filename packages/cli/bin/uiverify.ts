@@ -1,41 +1,56 @@
 import path from "node:path";
-import { parseArgs } from "../src/args";
+import { CHECK_SPEC, type ParseSpec, UPLOAD_SPEC, parseArgs } from "../src/args";
 import { createBundle, createScreenshotBundle, onlyChangedNoOpReason, readArchiveProducer } from "../src/bundle";
 import { httpIngestClient } from "../src/client";
-import { exitCodeFor } from "../src/exit";
+import { exitCodeFor, previewExitCodeFor } from "../src/exit";
 import { collectGitMeta, confirmAncestors } from "../src/git";
 import { redact } from "../src/redact";
 import { resolveStrict } from "../src/strict";
-import { defaultTmpFile, runUpload } from "../src/upload";
+import { type UploadDeps, defaultTmpFile, runUpload } from "../src/upload";
 
 /**
- * `uiverify upload` — upload a prebuilt Storybook static bundle, register the build, then wait-and-stream:
- * poll the build, print a live "Rendered X / N" progress line until it finishes, and reflect the visual
- * verdict (changed/failed) in the exit code. Build your Storybook first, then pass its output to
- * `--static-dir`.
- * Flags: --static-dir, --working-directory, --api-url, --auto-accept-changes, --exit-zero-on-changes,
- * --only-changed, --strict, --no-strict, --help (see `uiverify upload --help`).
+ * `uiverify` — two subcommands over the same ingest pipeline (register → PUT bundle → uploaded → poll):
+ *  - `upload`: the CI uploader. Renders the whole suite (or the skip-unchanged subset), gates the PR on
+ *    the visual verdict (changed/failed → exit 1).
+ *  - `check`: the interactive preview build a coding agent runs mid-edit-loop. Renders only the agent's
+ *    `--story` targets, diffs against the real CI baseline, posts no GitHub check, and never advances a
+ *    CI baseline. A `changed` verdict is informational (exit 0) — the agent reviews the pixels over MCP.
  *
- * Three independent non-zero exits:
- *  - *Operational* failures (missing config, a missing/empty static dir, a network/timeout error — the
- *    upload itself not happening) fail the job by default (`resolveStrict`, fail-closed) so a silently
- *    dropped upload can't leave CI green. `--no-strict` swallows them with exit 0. Everything operational
+ * Three independent non-zero exits, shared by both commands:
+ *  - *Operational* failures (missing config, a missing/empty capture dir, a network/timeout error — the
+ *    run itself not happening) fail the job by default (`resolveStrict`, fail-closed) so a silently
+ *    dropped run can't leave CI green. `--no-strict` swallows them with exit 0. Everything operational
  *    funnels through `softFail()`.
- *  - The visual verdict (changed/failed) is the deliberate gating exit on a normal run — the whole
- *    point of it.
+ *  - The visual verdict is the deliberate gating exit — `changed`/`failed` for `upload`, only
+ *    `failed`/`blocked` for `check` (a preview `changed` is the expected result, not a gate).
  *  - A malformed invocation exits **2**, ignoring `--no-strict`: an unknown or misspelled option, a
- *    boolean given a value, a stray token (`parseArgs`' `invalid`), or a bad subcommand. That flag means
- *    "don't fail my job if the upload breaks", not "run with arguments I didn't mean" — swallowing it
- *    would exit 0 having uploaded nothing. New argv-validation paths go through `invalid`, not
- *    `softFail()`.
+ *    boolean given a value, a stray token (`parseArgs`' `invalid`), or a bad subcommand. New
+ *    argv-validation paths go through `invalid`, not `softFail()`.
  */
 
-const USAGE =
+const TOP_LEVEL_USAGE = "usage: uiverify <upload | check> [options]  (run `uiverify <command> --help`)";
+
+const TOP_LEVEL_HELP = `uiverify — visual regression testing for Storybook, Vitest, Playwright, and custom screenshots.
+
+${TOP_LEVEL_USAGE}
+
+Commands:
+  upload   Upload a prebuilt bundle for a CI visual check (gates the PR on changed/failed).
+  check    Interactive preview check for a coding agent's edit loop: render only the stories you
+           name and diff against the real CI baseline, without posting a check or moving a baseline.
+
+Run \`uiverify upload --help\` or \`uiverify check --help\` for each command's options.
+
+Environment:
+  UIVERIFY_API_KEY   Project API key (required).
+  UIVERIFY_API_URL   Override the default UI Verify API URL (https://uiverify.ai); for self-host/local dev.`;
+
+const UPLOAD_USAGE =
   "usage: uiverify upload (--static-dir <dir> | --screenshots <dir>) [--working-directory <dir>] [--api-url <url>] [--auto-accept-changes] [--exit-zero-on-changes] [--only-changed] [--strict | --no-strict]";
 
-const HELP = `uiverify upload — upload a prebuilt Storybook bundle for visual regression testing.
+const UPLOAD_HELP = `uiverify upload — upload a prebuilt Storybook bundle for visual regression testing.
 
-${USAGE}
+${UPLOAD_USAGE}
 
 Build your Storybook first (e.g. \`npm run build-storybook\`), then point --static-dir at its output.
 Upload, register, then poll the build every ~2s and print a live "Rendered X / N" progress line until
@@ -67,136 +82,213 @@ Environment:
   UIVERIFY_API_KEY   Project API key (required).
   UIVERIFY_API_URL   Override the default UI Verify API URL (https://uiverify.ai); for self-host/local dev.`;
 
-async function main(): Promise<void> {
-  const [cmd, ...rest] = process.argv.slice(2);
-  if (cmd === "--help" || cmd === "-h" || cmd === "help") {
-    console.log(HELP);
-    process.exit(0);
-  }
-  if (cmd !== "upload") {
-    console.error(USAGE);
-    process.exit(2);
-  }
-  if (rest.includes("--help") || rest.includes("-h")) {
-    console.log(HELP);
-    process.exit(0);
-  }
-  const { flags, values, invalid, removed } = parseArgs(rest);
+const CHECK_USAGE =
+  "usage: uiverify check --story <glob> [--story <glob> …] (--static-dir <dir> | --screenshots <dir>) [--working-directory <dir>] [--api-url <url>] [--strict | --no-strict]";
+
+const CHECK_HELP = `uiverify check — interactive preview check for a coding agent's edit loop.
+
+${CHECK_USAGE}
+
+Renders ONLY the stories you name with --story (repeatable; story-id globs or exact ids) on the UI
+Verify fleet and diffs them against the real CI baseline — a true "would this pass" answer mid-edit,
+without a local render. A preview check posts no GitHub check and never advances a CI baseline; accept
+its changes (in the dashboard or via the MCP accept tools) to establish a branch-scoped preview baseline
+so your own accepted changes stop re-flagging on the next check. Build your Storybook first, then point
+--static-dir at its output (the whole bundle uploads; only the named stories render).
+
+Prints the changed-story list and an MCP handoff so the agent can inspect the pixels (get_diff /
+render_diff_image). A changed verdict exits 0 (it's the expected result to review, not a gate); only
+failed/blocked or an operational error exit non-zero.
+
+Options:
+  --story <glob>             A story to render (repeatable): an exact id (components-button--default) or
+                             an anchored glob (components-button--*). At least one is required. These
+                             REPLACE the dependency-graph closure a CI build would compute — you choose
+                             exactly what to preview.
+  --static-dir <dir>         Upload this prebuilt Storybook static directory (e.g. storybook-static),
+                             or a Playwright/Vitest capture archive directory.
+  --screenshots <dir>        Upload a directory of finished PNGs you already produced. Mutually exclusive
+                             with --static-dir.
+  --working-directory <dir>  Run in this directory (default: current directory).
+  --api-url <url>            UI Verify API URL (default: https://uiverify.ai; override for self-host/local).
+  --strict                   Fail the job (exit 1) if the check itself fails — bad/missing key, missing
+                             bundle, network error. This is the DEFAULT.
+  --no-strict                Never fail on an operational error (exit 0).
+  -h, --help                 Show this help.
+
+Environment:
+  UIVERIFY_API_KEY   Project API key (required).
+  UIVERIFY_API_URL   Override the default UI Verify API URL (https://uiverify.ai); for self-host/local dev.`;
+
+/** The inputs both subcommands resolve identically: auth, target URL, the capture dir, and the shared
+ *  `softFail` funnel. Resolving them in one place keeps the two commands' operational-failure handling
+ *  byte-identical (the funnel invariant). `process.exit`s on a rejected/incomplete invocation. */
+interface CommonContext {
+  apiKey: string;
+  apiUrl: string;
+  cwd: string;
+  staticDir: string;
+  isScreenshots: boolean;
+  flags: Set<string>;
+  multi: Map<string, string[]>;
+  softFail: (msg: string) => never;
+  log: (msg: string) => void;
+}
+
+function resolveCommon(rest: string[], spec: ParseSpec, cmdName: string, usage: string): CommonContext {
+  const { flags, values, multi, invalid, removed } = parseArgs(rest, spec);
   // Strict-by-default: an operational failure (bad key, missing bundle, upload error — NOT the visual
-  // verdict) fails the job unless explicitly opted out, so a silently dropped upload can't leave CI
-  // green. Explicit --strict/--no-strict wins; else strict.
-  const strict = resolveStrict({
-    strict: flags.has("strict"),
-    noStrict: flags.has("no-strict"),
-  });
-  const exitZeroOnChanges = flags.has("exit-zero-on-changes");
+  // verdict) fails the job unless explicitly opted out. Explicit --strict/--no-strict wins; else strict.
+  const strict = resolveStrict({ strict: flags.has("strict"), noStrict: flags.has("no-strict") });
   const apiKey = process.env.UIVERIFY_API_KEY;
 
   // Every operational failure funnels through here. Strict (the default) surfaces it as a job failure
-  // (exit 1); --no-strict logs it loudly and swallows it with exit 0 so the upload never fails the
-  // consumer's CI. The secret is redacted either way. (A function so its `never` return narrows the
-  // callers below.)
+  // (exit 1); --no-strict logs it loudly and swallows it with exit 0 so the run never fails the
+  // consumer's CI. The secret is redacted either way.
   function softFail(msg: string): never {
     const safe = redact(msg, apiKey);
     if (strict) {
       console.error(`[uiverify] ✗ ${safe}`);
       process.exit(1);
     }
-    console.error(`[uiverify] ⚠ ${safe} — non-blocking (--no-strict); exiting 0 so the upload never fails your CI.`);
+    console.error(`[uiverify] ⚠ ${safe} — non-blocking (--no-strict); exiting 0 so the run never fails your CI.`);
     process.exit(0);
   }
 
-  // Unknown, malformed, or a boolean given a value. Rejected rather than guessed: a typo'd flag that
-  // parses "successfully" produces a run that renders something other than what was asked for, with a
-  // CI log identical to one that worked.
-  //
-  // Exits 2 unconditionally rather than routing through `softFail`, matching the bad-subcommand path
-  // above. A malformed invocation is a USER error, not an operational one, and `--no-strict` is a
-  // statement about operational failures ("don't fail my job if the upload breaks") — honouring it here
-  // would exit 0 having uploaded nothing, which is exactly the "green but nothing was uploaded" outcome
-  // strict-by-default exists to prevent. The old parser ignored unknown flags and uploaded anyway, so
-  // silently swallowing this would be strictly worse than the behaviour it replaced.
+  // Unknown, malformed, or a boolean given a value. Exits 2 unconditionally (not through softFail): a
+  // malformed invocation is a USER error, not an operational one, and --no-strict is about operational
+  // failures, so honouring it here would exit 0 having run nothing — the "green but nothing uploaded"
+  // outcome strict-by-default exists to prevent.
   if (invalid.length > 0) {
     console.error(
-      `[uiverify] ✗ unrecognized or incomplete argument(s): ${[...new Set(invalid)].join(" ")}. Options that take a value need one (--static-dir <dir>); boolean flags take none (pass --only-changed bare). Run \`uiverify upload --help\` for the full list.\n${USAGE}`,
+      `[uiverify] ✗ unrecognized or incomplete argument(s): ${[...new Set(invalid)].join(" ")}. Options that take a value need one (--static-dir <dir>); boolean flags take none. Run \`uiverify ${cmdName} --help\` for the full list.\n${usage}`,
     );
     process.exit(2);
   }
 
   // Warned, not rejected: these worked in an earlier release, so failing the job would break a workflow
-  // that upgrades without touching its arguments. Printed before the key check so it shows either way.
+  // that upgrades without touching its arguments.
   for (const opt of new Set(removed)) {
     console.error(`[uiverify] ⚠ ${opt} was removed and is being ignored — drop it from your workflow.`);
   }
 
   if (!apiKey) softFail("UIVERIFY_API_KEY is required");
-  const apiUrl =
-    values.get("api-url") ?? process.env.UIVERIFY_API_URL ?? "https://uiverify.ai";
+  const apiUrl = values.get("api-url") ?? process.env.UIVERIFY_API_URL ?? "https://uiverify.ai";
   const cwd = path.resolve(values.get("working-directory") ?? process.cwd());
 
-  // Two mutually exclusive spellings for "what to upload": a prebuilt bundle (`--static-dir`) or a
-  // directory of finished PNGs (`--screenshots`, Model 3). Both resolve to one dir the flow tars.
+  // Two mutually exclusive spellings for "what to upload": a prebuilt bundle (--static-dir) or a
+  // directory of finished PNGs (--screenshots). Both resolve to one dir the flow tars.
   const staticDirArg = values.get("static-dir");
   const screenshotsArg = values.get("screenshots");
-  if (staticDirArg && screenshotsArg) {
-    softFail(`pass either --static-dir or --screenshots, not both\n${USAGE}`);
-  }
+  if (staticDirArg && screenshotsArg) softFail(`pass either --static-dir or --screenshots, not both\n${usage}`);
   const uploadDirArg = staticDirArg ?? screenshotsArg;
   if (!uploadDirArg) {
     softFail(
-      `provide --static-dir (build your Storybook first, e.g. \`npm run build-storybook\`) or --screenshots <dir> (a directory of finished PNGs)\n${USAGE}`,
+      `provide --static-dir (build your Storybook first, e.g. \`npm run build-storybook\`) or --screenshots <dir> (a directory of finished PNGs)\n${usage}`,
     );
   }
   const isScreenshots = screenshotsArg !== undefined;
   const staticDir = path.resolve(cwd, uploadDirArg);
-
   const log = (m: string): void => console.log(`[uiverify] ${redact(m, apiKey)}`);
 
-  const onlyChanged = flags.has("only-changed");
+  return { apiKey, apiUrl, cwd, staticDir, isScreenshots, flags, multi, softFail, log };
+}
+
+/** The injected collaborators for `runUpload`, identical for both commands (a screenshot dir assembles
+ *  its own manifest and has no capture SDK to report). */
+function uploadDepsFor(ctx: CommonContext): UploadDeps {
+  return {
+    client: httpIngestClient(ctx.apiUrl, ctx.apiKey),
+    gitMeta: () => collectGitMeta(ctx.cwd),
+    confirmAncestors: (candidates, headSha) => confirmAncestors(candidates, headSha, ctx.cwd),
+    createBundle: ctx.isScreenshots ? createScreenshotBundle : createBundle,
+    readProducer: ctx.isScreenshots ? () => null : readArchiveProducer,
+    tmpFile: defaultTmpFile,
+    log: ctx.log,
+  };
+}
+
+async function uploadCommand(rest: string[]): Promise<void> {
+  if (rest.includes("--help") || rest.includes("-h")) {
+    console.log(UPLOAD_HELP);
+    process.exit(0);
+  }
+  const ctx = resolveCommon(rest, UPLOAD_SPEC, "upload", UPLOAD_USAGE);
+  const exitZeroOnChanges = ctx.flags.has("exit-zero-on-changes");
+  const onlyChanged = ctx.flags.has("only-changed");
   // Not a failure — a full render is always correct — but say it, or the run is indistinguishable from
   // a working opt-in. Stays a file check, never a reimplementation of the server's decision.
-  const noOpReason = onlyChanged && !isScreenshots ? onlyChangedNoOpReason(staticDir) : null;
-  if (onlyChanged && isScreenshots) {
-    log(
+  const noOpReason = onlyChanged && !ctx.isScreenshots ? onlyChangedNoOpReason(ctx.staticDir) : null;
+  if (onlyChanged && ctx.isScreenshots) {
+    ctx.log(
       "⚠ --only-changed has no effect on a screenshot upload (no dependency graph) — to skip work, upload only the screens you changed.",
     );
   } else if (noOpReason === "no-graph") {
-    log(
+    ctx.log(
       "⚠ --only-changed, but no preview-stats.json in the bundle — every story will render. Build with Storybook's --stats-json to get the dependency graph.",
     );
   } else if (noOpReason === "archive") {
-    log("⚠ --only-changed has no effect on a Playwright archive (no dependency graph) — every test will render.");
+    ctx.log("⚠ --only-changed has no effect on a Playwright archive (no dependency graph) — every test will render.");
   }
 
   try {
     const res = await runUpload(
       {
-        staticDir,
-        appUrl: apiUrl,
-        autoAcceptChanges: flags.has("auto-accept-changes"),
+        staticDir: ctx.staticDir,
+        appUrl: ctx.apiUrl,
+        autoAcceptChanges: ctx.flags.has("auto-accept-changes"),
         onlyChanged,
       },
-      {
-        client: httpIngestClient(apiUrl, apiKey),
-        gitMeta: () => collectGitMeta(cwd),
-        confirmAncestors: (candidates, headSha) => confirmAncestors(candidates, headSha, cwd),
-        // A screenshot upload assembles its own manifest and has no capture SDK to report.
-        createBundle: isScreenshots ? createScreenshotBundle : createBundle,
-        readProducer: isScreenshots ? () => null : readArchiveProducer,
-        tmpFile: defaultTmpFile,
-        log,
-      },
+      uploadDepsFor(ctx),
     );
     // The only deliberate non-zero exit: the visual verdict on a normal run. `--exit-zero-on-changes`
     // softens a `changed` (needs-review) verdict to exit 0 so changes surface in the dashboard without
     // failing CI; `failed`/`blocked` still gate.
     if (res.status === "changed" && exitZeroOnChanges) {
-      log("Changes detected — not failing CI (--exit-zero-on-changes); review them in the dashboard.");
+      ctx.log("Changes detected — not failing CI (--exit-zero-on-changes); review them in the dashboard.");
     }
     process.exit(exitCodeFor(res.status, { exitZeroOnChanges }));
   } catch (e) {
-    softFail(e instanceof Error ? e.message : String(e));
+    ctx.softFail(e instanceof Error ? e.message : String(e));
   }
+}
+
+async function checkCommand(rest: string[]): Promise<void> {
+  if (rest.includes("--help") || rest.includes("-h")) {
+    console.log(CHECK_HELP);
+    process.exit(0);
+  }
+  const ctx = resolveCommon(rest, CHECK_SPEC, "check", CHECK_USAGE);
+  const targets = ctx.multi.get("story") ?? [];
+  // A preview check with no targets is meaningless (the whole point is the agent's explicit selection),
+  // and the server rejects an empty target list — fail here with the actionable message instead.
+  if (targets.length === 0) {
+    ctx.softFail(`provide at least one --story <glob> to check (e.g. --story 'components-button--*')\n${CHECK_USAGE}`);
+  }
+
+  try {
+    const res = await runUpload(
+      { staticDir: ctx.staticDir, appUrl: ctx.apiUrl, preview: true, previewTargets: targets },
+      uploadDepsFor(ctx),
+    );
+    // A preview check is not a gate: a `changed` verdict is the expected result the agent reviews over
+    // MCP (exit 0). Only failed/blocked gate; operational failures already went through softFail.
+    process.exit(previewExitCodeFor(res.status));
+  } catch (e) {
+    ctx.softFail(e instanceof Error ? e.message : String(e));
+  }
+}
+
+async function main(): Promise<void> {
+  const [cmd, ...rest] = process.argv.slice(2);
+  if (cmd === "--help" || cmd === "-h" || cmd === "help") {
+    console.log(TOP_LEVEL_HELP);
+    process.exit(0);
+  }
+  if (cmd === "upload") return uploadCommand(rest);
+  if (cmd === "check") return checkCommand(rest);
+  console.error(TOP_LEVEL_USAGE);
+  process.exit(2);
 }
 
 void main();
