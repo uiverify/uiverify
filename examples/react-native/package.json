@@ -22,6 +22,6 @@
     "@types/react": "~19.1.10",
     "pngjs": "^7.0.0",
     "typescript": "~5.9.2",
-    "uiverify": "^1.2.1"
+    "uiverify": "^1.4.0"
   }
 }
