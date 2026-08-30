@@ -1,6 +1,6 @@
 {
   "name": "@uiverify/vitest",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Vitest browser-mode capture SDK for UI Verify (uiverify.ai): add uiverifyPlugin() to your Vitest config and each browser-mode test archives its final DOM (serialized DOM + resource bytes) to be replayed + visually diffed by UI Verify. Produces an archive the uiverify CLI uploads; talks to nothing at runtime.",
   "keywords": [
     "visual-testing",

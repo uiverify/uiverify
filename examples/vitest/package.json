@@ -16,7 +16,7 @@
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@uiverify/vitest": "^1.2.0",
+    "@uiverify/vitest": "^1.2.1",
     "@vitejs/plugin-react": "^4.3.4",
     "@vitest/browser": "^4.1.10",
     "@vitest/browser-playwright": "^4.1.10",

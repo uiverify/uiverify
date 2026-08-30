@@ -14,6 +14,13 @@ import { preloadFonts } from "./settle";
 // `UI_VERIFY_GLOBAL`, which its test pins.
 Reflect.set(globalThis, "__UI_VERIFY__", true);
 
+// Lift the Resource Timing buffer's default 250-entry cap before the app loads any modules. `capture()`
+// rediscovers every asset to archive by reading `performance.getEntriesByType("resource")`; once the
+// buffer is full the browser silently drops later entries, so an <img> requested after its component's
+// JS graph (the common case) can be evicted - it renders on screen but its URL never reaches the archive,
+// replaying as a blank. Set here (this module runs before any test renders) the buffer never overflows.
+performance.setResourceTimingBufferSize?.(1_000_000);
+
 // Seed Math.random at record time, before any component renders, so a random-paced pick (a shuffled list,
 // a randomly chosen image) is deterministic in the archive: the archive is a static snapshot, so whatever
 // the pick produced at capture is what's baked in.
