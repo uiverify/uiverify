@@ -8,13 +8,13 @@
  * asked for. The caller fails the run instead, which is the same fail-closed posture as `--strict`.
  *
  * The allowlist is **per subcommand** (`ParseSpec`), so each command accepts exactly its own surface:
- * `upload --story` and `check --only-changed` are both rejected, not silently ignored. `parseArgs`
+ * `upload --target` and `check --only-changed` are both rejected, not silently ignored. `parseArgs`
  * defaults to the `upload` spec so its callers/tests are unchanged.
  */
 export interface ParseSpec {
   /** Options that take exactly one value (`--static-dir <dir>`); a later occurrence overwrites. */
   valueOptions: Set<string>;
-  /** Options that may repeat and accumulate into `multi` (`--story a --story b`). */
+  /** Options that may repeat and accumulate into `multi` (`--target a --target b`). */
   multiValueOptions: Set<string>;
   /** Bare boolean flags (`--strict`); a value makes them `invalid`. */
   booleanFlags: Set<string>;
@@ -26,12 +26,12 @@ export const UPLOAD_SPEC: ParseSpec = {
   booleanFlags: new Set(["auto-accept-changes", "exit-zero-on-changes", "only-changed", "strict", "no-strict"]),
 };
 
-/** `uiverify check` (the interactive preview build): capture input + the agent's `--story` targets +
+/** `uiverify check` (the interactive preview build): capture input + the agent's `--target` selection +
  *  the operational-failure switches. Deliberately NOT the upload gating flags (a preview check is not a
  *  CI gate), so passing one is rejected rather than silently ignored. */
 export const CHECK_SPEC: ParseSpec = {
   valueOptions: new Set(["static-dir", "screenshots", "working-directory", "api-url"]),
-  multiValueOptions: new Set(["story"]),
+  multiValueOptions: new Set(["target"]),
   booleanFlags: new Set(["strict", "no-strict"]),
 };
 
@@ -52,8 +52,8 @@ const REMOVED_OPTIONS = new Map<string, { takesValue: boolean }>([
 export interface ParsedArgs {
   flags: Set<string>;
   values: Map<string, string>;
-  /** Accumulated values for repeatable options (each occurrence of `--story`), empty values dropped —
-   *  so `--story a --story b` reads back as `["a", "b"]`. Empty for a command with no repeatable option. */
+  /** Accumulated values for repeatable options (each occurrence of `--target`), empty values dropped —
+   *  so `--target a --target b` reads back as `["a", "b"]`. Empty for a command with no repeatable option. */
   multi: Map<string, string[]>;
   /**
    * Tokens that are unknown, malformed, or a boolean given a value — for the caller to reject.

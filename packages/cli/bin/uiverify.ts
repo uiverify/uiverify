@@ -1,6 +1,12 @@
 import path from "node:path";
 import { CHECK_SPEC, type ParseSpec, UPLOAD_SPEC, parseArgs } from "../src/args";
-import { createBundle, createScreenshotBundle, onlyChangedNoOpReason, readArchiveProducer } from "../src/bundle";
+import {
+  createBundle,
+  createScreenshotBundle,
+  isStorybookStaticDir,
+  onlyChangedNoOpReason,
+  readArchiveProducer,
+} from "../src/bundle";
 import { httpIngestClient } from "../src/client";
 import { exitCodeFor, previewExitCodeFor } from "../src/exit";
 import { collectGitMeta, confirmAncestors } from "../src/git";
@@ -13,7 +19,7 @@ import { type UploadDeps, defaultTmpFile, runUpload } from "../src/upload";
  *  - `upload`: the CI uploader. Renders the whole suite (or the skip-unchanged subset), gates the PR on
  *    the visual verdict (changed/failed → exit 1).
  *  - `check`: the interactive preview build a coding agent runs mid-edit-loop. Renders only the agent's
- *    `--story` targets, diffs against the real CI baseline, posts no GitHub check, and never advances a
+ *    `--target` selection, diffs against the real CI baseline, posts no GitHub check, and never advances a
  *    CI baseline. A `changed` verdict is informational (exit 0) — the agent reviews the pixels over MCP.
  *
  * Three independent non-zero exits, shared by both commands:
@@ -83,28 +89,31 @@ Environment:
   UIVERIFY_API_URL   Override the default UI Verify API URL (https://uiverify.ai); for self-host/local dev.`;
 
 const CHECK_USAGE =
-  "usage: uiverify check --story <glob> [--story <glob> …] (--static-dir <dir> | --screenshots <dir>) [--working-directory <dir>] [--api-url <url>] [--strict | --no-strict]";
+  "usage: uiverify check [--target <glob> …] (--static-dir <dir> | --screenshots <dir>) [--working-directory <dir>] [--api-url <url>] [--strict | --no-strict]";
 
 const CHECK_HELP = `uiverify check — interactive preview check for a coding agent's edit loop.
 
 ${CHECK_USAGE}
 
-Renders ONLY the stories you name with --story (repeatable; story-id globs or exact ids) on the UI
+Renders ONLY the targets you name with --target (repeatable; id globs or exact ids) on the UI
 Verify fleet and diffs them against the real CI baseline — a true "would this pass" answer mid-edit,
 without a local render. A preview check posts no GitHub check and never advances a CI baseline; accept
 its changes (in the dashboard or via the MCP accept tools) to establish a branch-scoped preview baseline
 so your own accepted changes stop re-flagging on the next check. Build your Storybook first, then point
---static-dir at its output (the whole bundle uploads; only the named stories render).
+--static-dir at its output (the whole bundle uploads; only the named targets render).
 
-Prints the changed-story list and an MCP handoff so the agent can inspect the pixels (get_diff /
+Prints the changed list and an MCP handoff so the agent can inspect the pixels (get_diff /
 render_diff_image). A changed verdict exits 0 (it's the expected result to review, not a gate); only
 failed/blocked or an operational error exit non-zero.
 
 Options:
-  --story <glob>             A story to render (repeatable): an exact id (components-button--default) or
-                             an anchored glob (components-button--*). At least one is required. These
-                             REPLACE the dependency-graph closure a CI build would compute — you choose
-                             exactly what to preview.
+  --target <glob>            A target to render (repeatable): an exact id (components-button--default,
+                             a Playwright/Vitest test id, or a screenshot path key) or an anchored glob
+                             (components-button--*, settings/*). Required for a Storybook --static-dir
+                             (the whole suite is built, so you name what to render); optional for a
+                             Playwright/Vitest archive or --screenshots, which are already scoped to what
+                             you captured. When given, these REPLACE the dependency-graph closure a CI
+                             build would compute — you choose exactly what to preview.
   --static-dir <dir>         Upload this prebuilt Storybook static directory (e.g. storybook-static),
                              or a Playwright/Vitest capture archive directory.
   --screenshots <dir>        Upload a directory of finished PNGs you already produced. Mutually exclusive
@@ -259,11 +268,18 @@ async function checkCommand(rest: string[]): Promise<void> {
     process.exit(0);
   }
   const ctx = resolveCommon(rest, CHECK_SPEC, "check", CHECK_USAGE);
-  const targets = ctx.multi.get("story") ?? [];
-  // A preview check with no targets is meaningless (the whole point is the agent's explicit selection),
-  // and the server rejects an empty target list — fail here with the actionable message instead.
-  if (targets.length === 0) {
-    ctx.softFail(`provide at least one --story <glob> to check (e.g. --story 'components-button--*')\n${CHECK_USAGE}`);
+  const targets = ctx.multi.get("target") ?? [];
+  // --target is required ONLY for a Storybook --static-dir. Storybook builds the whole monolithic suite
+  // regardless of what you name, so a preview must name what to render or the server would render
+  // everything — and the server rejects an empty target list for a Storybook preview. A screenshot upload
+  // or a capture archive is already scoped at capture time (only the PNGs you took / the tests you
+  // replayed are in the bundle), so the uploaded artifact IS the render set and --target is optional there.
+  // A pure file sniff (iframe.html), never server logic — the dumb-client rule.
+  const isStorybook = !ctx.isScreenshots && isStorybookStaticDir(ctx.staticDir);
+  if (isStorybook && targets.length === 0) {
+    ctx.softFail(
+      `--target is required for a Storybook check — Storybook builds the whole suite, so name what to render (e.g. --target 'components-button--*')\n${CHECK_USAGE}`,
+    );
   }
 
   try {

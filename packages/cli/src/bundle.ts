@@ -93,11 +93,24 @@ export function readArchiveProducer(staticDir: string): ArchiveProducer | null {
  * is left alone rather than pre-empted with a misleading hint.
  */
 export function onlyChangedNoOpReason(staticDir: string): "no-graph" | "archive" | null {
-  if (fs.existsSync(path.join(staticDir, "iframe.html"))) {
+  if (isStorybookStaticDir(staticDir)) {
     return fs.existsSync(path.join(staticDir, "preview-stats.json")) ? null : "no-graph";
   }
   if (!fs.existsSync(path.join(staticDir, "snapshots"))) return null;
   return fs.existsSync(path.join(staticDir, "preview-stats.json")) ? null : "archive";
+}
+
+/**
+ * Whether a `--static-dir` is a built Storybook, by its own marker: `iframe.html`, the preview frame every
+ * static Storybook build emits. Used to decide whether `check` needs `--target` (see the check command): a
+ * Storybook build is monolithic — the whole suite is built regardless of what you name — so a preview must
+ * name what to render, whereas an archive `--static-dir` is already scoped to the tests you replayed. This
+ * is the same positive Storybook sniff `onlyChangedNoOpReason` relies on, kept as one predicate so both
+ * decisions read the same marker. A dir that doesn't exist reads as "not Storybook" (an archive/screenshot)
+ * — the real "missing bundle" error then surfaces at upload, not pre-empted with a misleading hint.
+ */
+export function isStorybookStaticDir(staticDir: string): boolean {
+  return fs.existsSync(path.join(staticDir, "iframe.html"));
 }
 
 /** Create the bundle .tgz from a built static dir (files at the archive root). A Playwright archive dir

@@ -2,7 +2,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { finalizeArchiveIfNeeded, finalizeScreenshots, onlyChangedNoOpReason, readArchiveProducer } from "./bundle";
+import {
+  finalizeArchiveIfNeeded,
+  finalizeScreenshots,
+  isStorybookStaticDir,
+  onlyChangedNoOpReason,
+  readArchiveProducer,
+} from "./bundle";
 
 let dir: string;
 
@@ -151,6 +157,30 @@ describe("onlyChangedNoOpReason", () => {
   // A missing dir already fails loudly a moment later; this hint would only misdirect.
   it("stays quiet when the static dir doesn't exist", () => {
     expect(onlyChangedNoOpReason(path.join(dir, "nope"))).toBeNull();
+  });
+});
+
+describe("isStorybookStaticDir", () => {
+  // Drives whether `check` requires --target: a Storybook build is monolithic (whole suite), so a preview
+  // must name what to render; an archive/screenshot is already scoped to what was uploaded.
+  it("is true for a built Storybook (has iframe.html)", () => {
+    fs.writeFileSync(path.join(dir, "iframe.html"), "<html></html>");
+    expect(isStorybookStaticDir(dir)).toBe(true);
+  });
+
+  it("is false for a capture archive (snapshots/, no iframe.html)", () => {
+    writeSnapshot("login-abc123.json", { id: "a", title: "a", name: "" });
+    expect(isStorybookStaticDir(dir)).toBe(false);
+  });
+
+  it("is false for a CLI-finalized archive (index.json but no iframe.html)", () => {
+    writeSnapshot("login-abc123.json", { id: "a", title: "a", name: "" });
+    finalizeArchiveIfNeeded(dir);
+    expect(isStorybookStaticDir(dir)).toBe(false);
+  });
+
+  it("is false for a dir that doesn't exist (the real missing-bundle error surfaces at upload)", () => {
+    expect(isStorybookStaticDir(path.join(dir, "nope"))).toBe(false);
   });
 });
 
