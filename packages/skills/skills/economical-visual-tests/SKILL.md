@@ -1,9 +1,9 @@
 ---
-name: economical-stories
-description: Author economical visual-test stories — full visual coverage in the fewest billable snapshots. Applies to any per-snapshot visual tool (UI Verify, Chromatic, Percy, Playwright screenshots), which all bill and diff per rendered story. Use when a component's variants/states are exploding into one story per combination, when the visual-testing bill or noise is driven by snapshot count, or when writing new stories and you want the cheapest layout that still covers every variant. Covers gallery/matrix stories, data-driven states, and the coarse-granularity tradeoff.
+name: economical-visual-tests
+description: Author economical visual tests — full visual coverage in the fewest billable snapshots. Applies to any per-snapshot visual tool (UI Verify, Chromatic, Percy, Playwright screenshots), which all bill and diff per rendered story/test. Use when a component's variants/states are exploding into one snapshot per combination, when the visual-testing bill or noise is driven by snapshot count, or when writing new stories/captures and you want the cheapest layout that still covers every variant. Covers gallery/matrix stories, data-driven states, and the coarse-granularity tradeoff.
 ---
 
-# Author economical stories
+# Author economical visual tests
 
 Every per-snapshot visual tool — UI Verify, Chromatic, Percy, Playwright screenshots — renders and bills
 **per story**. So the number of stories *is* the cost and the noise surface. The naive pattern (one

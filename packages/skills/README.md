@@ -27,7 +27,7 @@ Catch unintended UI changes on every pull request. UI Verify renders your compon
 
 Agent skills for coding agents (Claude Code, Codex, and others): drop-in workflows they run in **your** repo. Two families - the agentic-development loop that takes a ticket to a merged PR, and the visual testing that keeps the UI honest. Each is a plain `SKILL.md` with no runtime code.
 
-The agentic-development skills are tool-agnostic and adapt to your stack (each project-specific coupling is marked, fill it in for your repo). The visual-testing skills talk to UI Verify over HTTP (the `uiverify` CLI / `@uiverify/playwright`) and MCP only; two of them (`economical-stories` and the determinism pair) help **any** per-snapshot visual tool, so they travel.
+The agentic-development skills are tool-agnostic and adapt to your stack (each project-specific coupling is marked, fill it in for your repo). The visual-testing skills talk to UI Verify over HTTP (the `uiverify` CLI / `@uiverify/playwright`) and MCP only; two of them (`economical-visual-tests` and the determinism pair) help **any** per-snapshot visual tool, so they travel.
 
 ## The skills
 
@@ -56,8 +56,9 @@ Make the system better at its own job.
 
 | Skill | When your agent runs it | Capture path |
 |---|---|---|
+| **[making-ui-changes](skills/making-ui-changes)** | Before any UI change: reuse before you create, cover every state with a story/capture in the same change, check the blast radius on shared components, and prove the change with a visual test. The entry point wired into your `AGENTS.md` / `CLAUDE.md`. | either |
 | **[setup-visual-testing](skills/setup-visual-testing)** | "Add visual testing to this repo". End-to-end onboarding: detect/scaffold the capture path, install the CLI and wire CI, author the first stories the economical + deterministic way. | either |
-| **[economical-stories](skills/economical-stories)** | Full visual coverage in the fewest billable snapshots: collapse a variant matrix into one gallery shot, drive states from data. Works with any per-snapshot visual tool. | Storybook |
+| **[economical-visual-tests](skills/economical-visual-tests)** | Full visual coverage in the fewest billable snapshots: collapse a variant matrix into one gallery shot, drive states from data. Works with any per-snapshot visual tool. | either |
 | **[storybook-visual-testing](skills/storybook-visual-testing)** | Flaky story diffs: make Storybook stories deterministic (only what the capturer can't neutralize for you). | Storybook |
 | **[playwright-visual-testing](skills/playwright-visual-testing)** | Flaky real-page diffs: make `@uiverify/playwright` archive-replay captures deterministic (feature flags, live data, the clock, overlays, dynamic layout). | Playwright |
 | **[triage-visual-changes](skills/triage-visual-changes)** | A build came back "changed": bucket real regressions vs cosmetic noise, summarize for a PR comment, accept baselines in bulk, all via the UI Verify MCP. | either |

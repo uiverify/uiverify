@@ -69,7 +69,7 @@ npm i -D @uiverify/vitest @vitest/browser-playwright uiverify
 Don't snapshot whatever exists as-is. Author (or refactor) the first few stories using the two
 authoring skills, in this order:
 
-1. **`economical-stories`** — collapse variant matrices into gallery/data-driven stories so you snapshot
+1. **`economical-visual-tests`** — collapse variant matrices into gallery/data-driven stories so you snapshot
    the fewest billable shots for full coverage. Do this *before* determinism work — fewer stories is
    less to make deterministic.
 2. **`storybook-visual-testing`** (Storybook), **`playwright-visual-testing`** (Playwright), or
@@ -228,14 +228,26 @@ Then hand the review loop to **`triage-visual-changes`** (it has the per-client 
 bucket real regressions vs noise, put the before/after in the PR, bulk-accept). On a **passed** build the
 agent can still pull any story's current image by id to confirm it looks right.
 
-**Make it stick — add a rule to your `AGENTS.md` / `CLAUDE.md`.** The setup only pays off if new UI keeps
-getting captured. A one-line rule ("when you add or change a component/page, add or update its story/test
-so it's covered by visual testing, then run the UI Verify check and triage it") turns this from a
-one-time wiring into a habit the agent follows on every change.
+**Make it stick — install `making-ui-changes` and point your `AGENTS.md` / `CLAUDE.md` at it.** The setup
+only pays off if new UI keeps getting captured, and it will only get captured if the agent reads the
+discipline on *every* UI change instead of when a human remembers to. So don't leave the customer to
+hand-edit `CLAUDE.md` — do it as part of setup: install the **`making-ui-changes`** skill (the playbook
+for changing UI safely — reuse before you create, add the story/capture in the same change, check the
+blast radius, prove it with a visual test), then add a one-line rule to **both** `AGENTS.md` and
+`CLAUDE.md` so every tool (Claude, Codex, Cursor, …) sees it:
+
+```md
+## UI changes
+- Before changing any component, page, or styles, read the `making-ui-changes` skill and follow it:
+  reuse before you create, add/update the story or capture in the same change, check the blast radius on
+  shared components, and prove the change with a visual test before calling it done.
+```
+
+That turns a one-time wiring into a habit the agent follows on every change.
 
 ## Done when
 
 - A PR shows a UI Verify check with a baseline captured.
 - The first build's changed-stories list is empty or all-real (no clock/data/animation flake) — if not,
   loop back to the determinism skill for that path.
-- Stories cover the variants without one-story-per-combo explosion (`economical-stories` applied).
+- Stories cover the variants without one-story-per-combo explosion (`economical-visual-tests` applied).
