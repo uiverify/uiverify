@@ -1,6 +1,6 @@
 {
   "name": "uiverify",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "UI Verify CLI (uiverify.ai): upload a prebuilt Storybook (or Playwright archive) bundle for visual testing for agents, stream render progress, and gate CI on the visual verdict.",
   "keywords": [
     "visual-testing",
@@ -9,7 +9,10 @@
     "playwright",
     "screenshot-testing",
     "ci",
-    "uiverify"
+    "uiverify",
+    "coding-agents",
+    "claude-code",
+    "cursor"
   ],
   "homepage": "https://uiverify.ai",
   "bugs": "https://github.com/uiverify/uiverify/issues",

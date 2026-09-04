@@ -1,0 +1,24 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.json",
+  "name": "io.github.uiverify/uiverify",
+  "description": "UI Verify MCP server for visual regression testing: your coding agent (Claude Code, Cursor, Codex) pulls a pull request's UI changes into the conversation, views each visual diff, reads the AI judge's verdict, and accepts the intended baselines - all over MCP.",
+  "repository": {
+    "url": "https://github.com/uiverify/uiverify",
+    "source": "github"
+  },
+  "version": "1.0.0",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://uiverify.ai/api/mcp",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer token: your UIVERIFY_API_KEY from your uiverify.ai project setup page.",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

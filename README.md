@@ -98,6 +98,31 @@ Or, on Claude Code, install as a plugin so updates arrive automatically:
 
 Either way, invoke them by name: `/uiverify:setup-visual-testing`, `/uiverify:triage-visual-changes`, and more. See [`packages/skills`](packages/skills) for the full list and a copy-in-by-hand alternative.
 
+## Triage over MCP
+
+Connect the UI Verify MCP server and your coding agent (Claude Code, Cursor, Codex, and others) can pull a pull request's UI changes into the conversation, look at each diff, read the AI judge's verdict, and accept the intended baselines - without leaving the terminal.
+
+```sh
+claude mcp add --scope project --transport http uiverify https://uiverify.ai/api/mcp \
+  --header 'Authorization: Bearer ${UIVERIFY_API_KEY}'
+```
+
+`--scope project` writes it to your committed `.mcp.json` so the whole team gets it; the key is referenced as the `UIVERIFY_API_KEY` env var, never baked in. Your project setup page has this command with the key filled in. Full guide: [Triage visual changes from your coding agent](https://uiverify.ai/docs/triage-with-your-agent).
+
+The server is remote (streamable HTTP) - there is nothing to install or run. It exposes:
+
+| Tool | What it does |
+|---|---|
+| `list_builds` | List recent UI Verify builds |
+| `get_build` | Get what changed in a build |
+| `list_build_stories` | Page through a build's stories by status |
+| `get_pr_changeset` | Get what a PR does to the UI vs its base branch |
+| `list_pr_stories` | Page through the PR-vs-base changeset by kind |
+| `get_diff` | Per-story diff detail with image URLs |
+| `render_diff_image` | Fetch the actual pixels of a story image |
+| `review_diff` | Accept, deny, or ignore one story's change |
+| `accept_build` | Accept every changed story in a build |
+
 ## Examples
 
 Complete, runnable projects under [`examples/`](examples) — one per capture path. Copy a folder, add a project API key, and it works.
