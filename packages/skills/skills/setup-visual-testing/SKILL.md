@@ -78,13 +78,21 @@ authoring skills, in this order:
 
 ## Step 4 — wire CI
 
-Add a CI workflow so every PR gets a check. Store the project's `UIVERIFY_API_KEY` (a `uv_proj_…`
-key from the dashboard) as a repo secret, then run the `uiverify` CLI (installed in Step 2).
+Add a CI workflow so every PR gets a check, **and** so it runs once on your default branch — that
+first default-branch build is what becomes the baseline every PR diffs against, so without the `push`
+trigger every PR shows all-new until a merge happens to seed it. Store the project's `UIVERIFY_API_KEY`
+(a `uv_proj_…` key from the dashboard) as a repo secret, then run the `uiverify` CLI (installed in
+Step 2). Change `[main]` to whatever your default branch is (`master`, `develop`) — a repo whose default
+isn't `main` gets a `push` trigger that never fires. Accept that first build once, or add
+`--auto-accept-changes` to the upload on your default branch to seed it automatically.
 
 ```yaml
 # .github/workflows/visual.yml
 name: Visual
-on: pull_request
+on:
+  push:
+    branches: [main]                           # your default branch, so the first build seeds the baseline
+  pull_request:
 jobs:
   uiverify:
     runs-on: ubuntu-latest

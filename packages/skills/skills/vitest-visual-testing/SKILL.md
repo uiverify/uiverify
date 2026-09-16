@@ -32,10 +32,34 @@ export default defineConfig({
 Every browser-mode test then archives its final DOM automatically; `takeSnapshot('name')` adds an
 intermediate checkpoint.
 
+**Load your app's global CSS + fonts once, in a setup file.** An isolated browser-mode test renders a
+single component — it does **not** import your app's entry/layout, so your global stylesheet and any
+icon-font CSS (`bootstrap-icons`, an icon pack) are never loaded, and the component captures with
+fallback fonts / tofu glyphs. This is a **setup** gap, not a per-test one: load them once in a
+`setupFiles` file (it runs in the browser, in the same document your components render into) so every
+test inherits them with no duplication:
+
+```ts
+// vitest.setup.ts   ← referenced from test.setupFiles
+import 'bootstrap-icons/font/bootstrap-icons.css'; // icon @font-face + .bi-* classes
+import './src/styles/globals.css';                 // your tokens + base font
+```
+```ts
+// vitest.config.ts
+test: { setupFiles: ['./vitest.setup.ts'], browser: { /* … */ } }
+```
+
+Import fonts from an npm package or a same-origin asset (not a CDN `<link>`), so Vite serves the bytes
+and the archive stays self-contained. The capturer then waits for these fonts like any other — but it can
+only wait for fonts the test actually loads; it can't declare one you never imported
+(`document.fonts.check('16px "bootstrap-icons"')` is `false` until the CSS is imported, which is the whole
+"icons render as boxes" bug).
+
 **UI Verify's capturer neutralizes these automatically — do NOT hand-fix them:** CSS animations &
 transitions (killed at render) and the Web Animations API (disabled); `prefers-reduced-motion: reduce`
 (**emulated**); `Math.random` (**seeded** before your app code runs); web fonts and `<img>` loading
-(**waited for**); **finite** JS animations (captured at their settled final frame). And unlike a real
+(**waited for** — the fonts your app actually loads; see the setup file above); **finite** JS animations
+(captured at their settled final frame). And unlike a real
 page (`playwright-visual-testing`), a browser-mode test has **no SSR** — no server-rendered random pick
 to reconcile. So the checklist below is only the remainder — what lives *inside your app*.
 

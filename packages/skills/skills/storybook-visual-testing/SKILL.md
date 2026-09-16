@@ -19,7 +19,8 @@ problem Storybook already removed; that's a real-page concern (see `playwright-v
 - `prefers-reduced-motion: reduce` — **emulated**, so any component that honors it renders its calm state.
 - `Math.random` — **seeded** before your app code runs (a shuffle/jitter driven by `Math.random` is
   already stable).
-- Web fonts and `<img>` loading — **waited for** before capture.
+- Web fonts and `<img>` loading — **waited for** before capture (the fonts your story actually loads; see
+  the `preview.ts` setup below).
 - **Finite** JS animations (a Recharts entry draw, react-smooth) — captured at their settled final frame.
   You don't need to disable these.
 
@@ -32,6 +33,22 @@ story suite with false "changes" is **live/dynamic data** — star counts, follo
 lists, tiles, timestamps. Give every story **static args / fixtures** and that entire class disappears at
 the source: static data can't churn run-to-run, so there is nothing to diff. This is the single
 highest-value determinism step here — do it first (step 1), and most stories need nothing else.
+
+**Load your app's global CSS + fonts in `.storybook/preview.ts`.** A story renders an isolated component,
+so anything your real app loads in its entry/layout — the global stylesheet, an icon-font CSS
+(`bootstrap-icons`) — has to be imported in `preview.ts` (which loads once for every story) or the story
+captures with fallback fonts / tofu glyphs:
+
+```ts
+// .storybook/preview.ts
+import 'bootstrap-icons/font/bootstrap-icons.css';
+import '../src/styles/globals.css';
+```
+
+Import fonts from a package or a same-origin asset (not a CDN `<link>` in `preview-head.html`), so the
+archive captures the bytes. The capturer waits for these like any other font — but only ones the story
+actually loads; it can't declare a font you never imported. Rule of thumb: if a story renders right in
+your local Storybook, its fonts are already in the build.
 
 Point UI Verify at your built stories:
 ```bash
