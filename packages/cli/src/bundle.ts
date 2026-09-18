@@ -1,9 +1,58 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { create } from "tar";
+import { create, list } from "tar";
 import { z } from "zod";
 
 const ARCHIVE_FORMAT_VERSION = 1;
+
+/** The algorithm-version tag on every `bundle_content_hash`. A change to the hashing rules below bumps
+ *  this (to `v2`), so a hash computed by a newer CLI can never MATCH one an older CLI stored — drift
+ *  falls through to a render (a safe miss), never a wrong skip. */
+const BUNDLE_HASH_VERSION = "v1";
+
+/** Files kept OUT of the bundle content hash: build METADATA that varies across rebuilds of the identical
+ *  source without affecting the rendered screenshots. Two back-to-back Storybook builds of the same commit
+ *  differ ONLY in these two — `project.json` carries a `generatedAt` timestamp, and `preview-stats.json` is
+ *  the dependency graph (absolute paths / ordering) the browser never loads. Hashing them would give every
+ *  CI re-run a new hash, so the same-commit rebuild skip would never fire; any change that actually affects
+ *  the render also touches a hashed asset, so excluding these two can't mask a real difference. (Neither
+ *  file exists in an archive/screenshot bundle, so the exclusion is a no-op there.) */
+const HASH_EXCLUDED_FILES = new Set(["project.json", "preview-stats.json"]);
+
+/**
+ * A deterministic content hash of the built bundle `.tgz`, computed client-side and sent at register so
+ * the server can skip the rebuild of an already-passed commit (a same-commit re-upload whose bundle is
+ * byte-identical to a prior fully-accepted build renders nothing new). Streams every regular file entry
+ * through its own sha256 (never buffered), builds a manifest of `path:sha256hex` lines (POSIX paths with a
+ * leading `./` stripped) sorted by path, hashes that, and tags it `v1:`. Stable across tar mtime/ordering
+ * noise and excludes the two metadata files that vary run-to-run (`HASH_EXCLUDED_FILES`), so a genuine CI
+ * re-upload of the same source matches. The server never recomputes it (on a skip nothing is uploaded); the
+ * `v1:` tag makes a future algorithm change a safe miss rather than a wrong skip.
+ */
+export async function bundleContentHash(tgzPath: string): Promise<string> {
+  const entries: { path: string; hash: string }[] = [];
+  await list({
+    file: tgzPath,
+    onentry: (entry) => {
+      if (entry.type !== "File") {
+        entry.resume();
+        return;
+      }
+      const name = entry.path.replace(/^\.?\//, "");
+      const h = createHash("sha256");
+      entry.on("data", (c) => h.update(c));
+      entry.on("end", () => {
+        if (!HASH_EXCLUDED_FILES.has(name)) entries.push({ path: name, hash: h.digest("hex") });
+      });
+    },
+  });
+  // Sort by PATH in byte order (paths are unique), then join one `path:sha256hex` per line with a trailing
+  // newline — the exact manifest a future server-side recompute would rebuild.
+  entries.sort((a, b) => Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)));
+  const manifest = entries.map((e) => `${e.path}:${e.hash}\n`).join("");
+  return `${BUNDLE_HASH_VERSION}:${createHash("sha256").update(manifest).digest("hex")}`;
+}
 
 /** The capture SDK that produced an archive (npm name + version), stamped into each snapshot by the SDK
  *  and lifted into `index.json` here. Kept as a local type - the CLI vendors the archive format rather

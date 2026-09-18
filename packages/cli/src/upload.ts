@@ -27,6 +27,10 @@ export interface UploadOptions {
   /** Run as an interactive preview check (`uiverify check`): the build renders only `previewTargets`,
    *  diffs against the real CI baseline, posts no GitHub check, and never advances a CI baseline. */
   preview?: boolean;
+  /** The exact command to watch this PR's checks to completion (`ciWatchCommand`), printed once while the
+   *  build renders so an agent watching from outside CI copies it instead of hand-rolling a poll. Absent
+   *  off a GitHub PR run. */
+  watchHint?: string;
   /** The agent's explicit render targets for a preview check (story-id globs / exact ids). Replaces the
    *  dep-graph closure server-side; only meaningful with `preview: true`. */
   previewTargets?: string[];
@@ -46,6 +50,10 @@ export interface UploadDeps {
    *  injected like `confirmAncestors` so the upload flow is unit-tested without a real repo. */
   deltaFor: (bases: string[], headSha: string) => Record<string, ClientDeltaEntry>;
   createBundle: (dir: string, out: string) => Promise<void>;
+  /** The deterministic content hash of the built `.tgz`, computed after `createBundle`. Sent at register
+   *  so the server can skip the rebuild of an already-passed commit. Injected so the flow is unit-tested
+   *  without hashing a real archive. */
+  bundleContentHash: (tgzPath: string) => Promise<string>;
   /** The capture SDK that produced the bundle, read from the finalized manifest after `createBundle`.
    *  Injected so the flow is unit-tested without a real archive; null for a Storybook upload. */
   readProducer: (staticDir: string) => { name: string; version: string } | null;
@@ -78,9 +86,20 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
 
   // Read after createBundle: it finalizes the archive manifest (index.json), which carries the producer.
   const producer = deps.readProducer(opts.staticDir);
+  // Hash the finalized bundle so the server can skip the rebuild of an already-passed commit when this is
+  // a byte-identical re-upload of one it already rendered + accepted (computed after createBundle so the
+  // finalized index.json is included). The hash is a pure optimization hint: if hashing somehow fails,
+  // omit it and upload normally (the server just won't consider the skip) rather than failing the upload
+  // over an optimization. This is why the wire field is optional.
+  let bundleContentHash: string | undefined;
+  try {
+    bundleContentHash = await deps.bundleContentHash(tgz);
+  } catch (e) {
+    deps.log(`Could not hash the bundle (${e instanceof Error ? e.message : String(e)}); uploading without the rebuild-skip hint.`);
+  }
 
   deps.log("Registering build…");
-  const { buildId, uploadUrl, baselineCommits, deltaBases, warnings } = await deps.client.register({
+  const reg = await deps.client.register({
     commitSha: meta.commitSha,
     branch: meta.branch,
     prNumber: meta.prNumber,
@@ -94,7 +113,19 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
     repoFullName: meta.repoFullName || undefined,
     sdkName: producer?.name,
     sdkVersion: producer?.version,
+    bundleContentHash,
   });
+
+  // The server skipped the rebuild of an already-passed commit: this exact commit already has a green
+  // check + a dashboard build from the prior run, so there is nothing to upload, mark, or poll. Print and
+  // exit clean (status `passed`). A build only reaches here on a byte-identical re-upload of a
+  // fully-accepted build at the same commit; the dashboard's Re-run button forces a fresh capture.
+  if (reg.outcome === "skipped") {
+    const buildUrl = opts.appUrl ? `${opts.appUrl.replace(/\/$/, "")}/builds/${reg.buildId}` : reg.buildId;
+    deps.log(`Skipping rebuild of already-passed build #${reg.buildNumber} (same commit, nothing changed): ${buildUrl}`);
+    return { buildId: reg.buildId, status: "passed" };
+  }
+  const { buildId, uploadUrl, baselineCommits, deltaBases, warnings } = reg;
   // Advisory, non-blocking — e.g. the GitHub App isn't installed on the repo. Print loudly so the
   // "it did nothing on my PR" case is explained right in the CI log; never affects the exit code.
   for (const w of warnings) deps.log(`⚠ ${w}`);
@@ -130,6 +161,13 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
   deps.log(`Build uploaded: ${buildUrl}`);
 
   deps.log(`Waiting for build ${buildId} to render and diff…`);
+  // This step already blocks until the verdict (its exit code is the result), so an agent that opened the
+  // PR need only wait on this job — not invent a `gh pr checks … | jq` poll. Hand it the canonical
+  // watch command once, up front, where it's visible while the build is still rendering.
+  if (opts.watchHint) {
+    deps.log(`This check blocks until the verdict — its exit code is the result.`);
+    deps.log(`Watching from your terminal or coding agent? Run: ${opts.watchHint}`);
+  }
   const sleep = deps.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms)));
   let lastProcessed = -1;
   for (let i = 0; i < MAX_WAIT_MS / POLL_INTERVAL_MS; i++) {

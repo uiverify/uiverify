@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, it, expect } from "vitest";
 import {
   branchFromEnv,
+  ciWatchCommand,
   confirmAncestors,
   deltaFor,
   parseParents,
@@ -36,6 +37,21 @@ describe("git", () => {
     expect(prNumberFromEnv({ BITBUCKET_PR_ID: "nope" })).toBeNull();
     expect(prNumberFromEnv({ GITHUB_REF: "refs/heads/main" })).toBeNull();
     expect(prNumberFromEnv({})).toBeNull();
+  });
+
+  it("ciWatchCommand returns the gh watch command only on a GitHub Actions PR run", () => {
+    expect(ciWatchCommand({ GITHUB_ACTIONS: "true", GITHUB_REF: "refs/pull/1900/merge" })).toBe(
+      "gh pr checks 1900 --watch",
+    );
+    expect(ciWatchCommand({ GITHUB_ACTIONS: "true", PR_NUMBER: "42" })).toBe("gh pr checks 42 --watch");
+    // Not GitHub Actions (e.g. a Bitbucket PR, or a local run) — `gh pr checks` doesn't apply.
+    expect(ciWatchCommand({ BITBUCKET_PR_ID: "9" })).toBeNull();
+    expect(ciWatchCommand({ GITHUB_ACTIONS: "true", GITHUB_REF: "refs/pull/1900/merge", BITBUCKET_PR_ID: "9" })).toBe(
+      "gh pr checks 1900 --watch",
+    );
+    // On GitHub Actions but a branch push (no PR) — nothing to watch.
+    expect(ciWatchCommand({ GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main" })).toBeNull();
+    expect(ciWatchCommand({})).toBeNull();
   });
 
   it("parseRepoFromRemote handles ssh, https, and trailing .git/slash forms", () => {

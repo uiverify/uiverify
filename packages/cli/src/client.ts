@@ -25,6 +25,22 @@ const registerResponse = z.object({
   warnings: z.array(z.string()).default([]),
 });
 
+// The server skipped the rebuild of an already-passed commit: a same-commit re-upload whose bundle hash
+// matched a prior fully-accepted, zero-failure build. Nothing was created; `buildNumber` is that prior
+// build (for the "Skipping rebuild of already-passed build #N" line). Only a server new enough to know
+// the hash returns this, and only when the CLI sent one — an older server always returns an upload URL.
+const skippedRegisterResponse = z.object({
+  outcome: z.literal("skipped"),
+  buildId: z.string(),
+  buildNumber: z.number(),
+});
+
+/** The register outcome: either an upload URL to PUT the bundle to (the normal flow), or a skip of the
+ *  rebuild of an already-passed commit (no upload, no poll — just print and exit 0). */
+export type RegisterResult =
+  | { outcome: "upload"; buildId: string; uploadUrl: string; baselineCommits: string[]; deltaBases: string[]; warnings: string[] }
+  | { outcome: "skipped"; buildId: string; buildNumber: number };
+
 const CANONICAL_SHA = /^[0-9a-f]{40}$/;
 const MAX_DELTA_BASES = 16;
 
@@ -111,12 +127,14 @@ export interface RegisterBody {
    *  body). Absent for a Storybook upload (no SDK) or an archive from a pre-stamp SDK. */
   sdkName?: string;
   sdkVersion?: string;
+  /** The deterministic content hash of the bundle about to be uploaded (`bundleContentHash`, tagged
+   *  `v1:<hex>`). Lets the server skip the rebuild of an already-passed commit when it matches a prior
+   *  fully-accepted build at the same commit. Omitted only if hashing somehow failed. */
+  bundleContentHash?: string;
 }
 
 export interface IngestClient {
-  register(
-    body: RegisterBody,
-  ): Promise<{ buildId: string; uploadUrl: string; baselineCommits: string[]; deltaBases: string[]; warnings: string[] }>;
+  register(body: RegisterBody): Promise<RegisterResult>;
   upload(uploadUrl: string, tgzPath: string): Promise<void>;
   /** `ancestorShas`: the confirmed-ancestor subset of the register response's `baselineCommits`, used
    *  to gate baseline inheritance against true git ancestry. Empty when the checkout was shallow.
@@ -179,10 +197,16 @@ export function httpIngestClient(apiUrl: string, apiKey: string): IngestClient {
         ...(sdkName ? { "x-uiverify-sdk-name": sdkName } : {}),
         ...(sdkVersion ? { "x-uiverify-sdk-version": sdkVersion } : {}),
       };
-      const parsed = registerResponse.parse(
-        await withRetry({ label: "register" }, (signal) => postJson("/api/ingest/build", payload, signal, sdkHeaders)),
+      const raw = await withRetry({ label: "register" }, (signal) =>
+        postJson("/api/ingest/build", payload, signal, sdkHeaders),
       );
-      return { ...parsed, deltaBases: sanitizeDeltaBases(parsed.deltaBases) };
+      // The server skipped the rebuild of an already-passed commit — no upload URL, nothing to do. Only a
+      // new-enough server that got a hash returns this shape; try it first, then fall back to the normal
+      // upload response (which an older server, or a non-skippable build, always returns).
+      const skipped = skippedRegisterResponse.safeParse(raw);
+      if (skipped.success) return skipped.data;
+      const parsed = registerResponse.parse(raw);
+      return { outcome: "upload", ...parsed, deltaBases: sanitizeDeltaBases(parsed.deltaBases) };
     },
     async upload(uploadUrl, tgzPath) {
       const bytes = new Uint8Array(fs.readFileSync(tgzPath));

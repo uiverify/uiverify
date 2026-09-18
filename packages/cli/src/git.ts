@@ -64,6 +64,18 @@ export function prNumberFromEnv(env: NodeJS.ProcessEnv): number | null {
 }
 
 /**
+ * The command to watch this PR's checks to completion — what an agent that opened the PR should run
+ * instead of hand-rolling a `gh pr checks … | jq` poll. GitHub Actions only (`gh pr checks --watch` is a
+ * GitHub CLI feature) and only on a PR-triggered run; `null` otherwise, so the caller prints nothing when
+ * there's no PR to watch. `--watch` blocks until every check is terminal and exits non-zero if any failed.
+ */
+export function ciWatchCommand(env: NodeJS.ProcessEnv): string | null {
+  if (env.GITHUB_ACTIONS !== "true") return null;
+  const pr = prNumberFromEnv(env);
+  return pr !== null ? `gh pr checks ${pr} --watch` : null;
+}
+
+/**
  * Extract `owner/repo` from a git remote URL. Handles the SSH (`git@github.com:owner/repo.git`),
  * HTTPS (`https://github.com/owner/repo.git`), and `ssh://` forms — the host/port/scheme are dropped
  * and the last two path segments win. Returns null when there aren't two segments to take.

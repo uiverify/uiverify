@@ -29,8 +29,22 @@ describe("httpIngestClient retries", () => {
     const client = httpIngestClient("http://cp", "key");
     const p = client.register(body);
     await vi.runAllTimersAsync();
-    expect(await p).toEqual({ buildId: "b1", uploadUrl: "http://s3/b1", baselineCommits: [], deltaBases: [], warnings: [] });
+    expect(await p).toEqual({
+      outcome: "upload",
+      buildId: "b1",
+      uploadUrl: "http://s3/b1",
+      baselineCommits: [],
+      deltaBases: [],
+      warnings: [],
+    });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns a skipped outcome when the server skips the rebuild of an already-passed commit", async () => {
+    const fetchMock = stubFetch([ok({ outcome: "skipped", buildId: "prior1", buildNumber: 42 })]);
+    const client = httpIngestClient("http://cp", "key");
+    expect(await client.register(body)).toEqual({ outcome: "skipped", buildId: "prior1", buildNumber: 42 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("retries on a transport error (network / attempt timeout)", async () => {

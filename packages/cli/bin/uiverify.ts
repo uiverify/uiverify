@@ -1,6 +1,7 @@
 import path from "node:path";
 import { CHECK_SPEC, type ParseSpec, UPLOAD_SPEC, parseArgs } from "../src/args";
 import {
+  bundleContentHash,
   createBundle,
   createScreenshotBundle,
   isStorybookStaticDir,
@@ -9,7 +10,7 @@ import {
 } from "../src/bundle";
 import { httpIngestClient } from "../src/client";
 import { exitCodeFor, previewExitCodeFor } from "../src/exit";
-import { collectGitMeta, confirmAncestors, deltaFor } from "../src/git";
+import { ciWatchCommand, collectGitMeta, confirmAncestors, deltaFor } from "../src/git";
 import { redact } from "../src/redact";
 import { resolveStrict } from "../src/strict";
 import { type UploadDeps, defaultTmpFile, runUpload } from "../src/upload";
@@ -212,6 +213,7 @@ function uploadDepsFor(ctx: CommonContext): UploadDeps {
     confirmAncestors: (candidates, headSha) => confirmAncestors(candidates, headSha, ctx.cwd),
     deltaFor: (bases, headSha) => deltaFor(bases, headSha, ctx.cwd),
     createBundle: ctx.isScreenshots ? createScreenshotBundle : createBundle,
+    bundleContentHash,
     readProducer: ctx.isScreenshots ? () => null : readArchiveProducer,
     tmpFile: defaultTmpFile,
     log: ctx.log,
@@ -247,6 +249,7 @@ async function uploadCommand(rest: string[]): Promise<void> {
         staticDir: ctx.staticDir,
         appUrl: ctx.apiUrl,
         autoAcceptChanges: ctx.flags.has("auto-accept-changes"),
+        watchHint: ciWatchCommand(process.env) ?? undefined,
         onlyChanged,
         // A graph-carrying `--only-changed` upload is the only one that computes + sends the client delta.
         // Reuses the same file sniff `noOpReason` already ran (null ⇒ a graph is present).

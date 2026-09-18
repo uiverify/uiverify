@@ -3,6 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  bundleContentHash,
+  createBundle,
   finalizeArchiveIfNeeded,
   finalizeScreenshots,
   isStorybookStaticDir,
@@ -222,5 +224,56 @@ describe("finalizeScreenshots", () => {
     writeImage("cart.png");
     writeImage("cart.jpg");
     expect(() => finalizeScreenshots(dir)).toThrow(/same id "cart"/);
+  });
+})
+
+describe("bundleContentHash", () => {
+  /** Write a static dir with the given files (POSIX-relative paths), tar it, and return its hash. */
+  async function hashOf(files: Record<string, string>): Promise<string> {
+    const staticDir = fs.mkdtempSync(path.join(os.tmpdir(), "vt-hash-src-"));
+    const tgz = path.join(dir, `bundle-${Math.random().toString(36).slice(2)}.tgz`);
+    try {
+      for (const [rel, content] of Object.entries(files)) {
+        const abs = path.join(staticDir, rel);
+        fs.mkdirSync(path.dirname(abs), { recursive: true });
+        fs.writeFileSync(abs, content);
+      }
+      await createBundle(staticDir, tgz);
+      return await bundleContentHash(tgz);
+    } finally {
+      fs.rmSync(staticDir, { recursive: true, force: true });
+    }
+  }
+
+  const base = {
+    "iframe.html": "<html></html>",
+    "index.json": '{"v":5,"entries":{}}',
+    "assets/app.js": "console.log(1)",
+    "project.json": '{"generatedAt":"2026-01-01"}',
+    "preview-stats.json": '{"modules":[]}',
+  };
+
+  it("is tagged v1 and deterministic across identical bundles", async () => {
+    const a = await hashOf(base);
+    const b = await hashOf(base);
+    expect(a).toMatch(/^v1:[0-9a-f]{64}$/);
+    expect(a).toBe(b);
+  });
+
+  it("ignores project.json and preview-stats.json (the metadata that varies run-to-run)", async () => {
+    const a = await hashOf(base);
+    // Same rendered assets, only the excluded metadata differs -> same hash (a real CI re-run).
+    const b = await hashOf({
+      ...base,
+      "project.json": '{"generatedAt":"2026-09-18"}',
+      "preview-stats.json": '{"modules":[{"name":"./x"}]}',
+    });
+    expect(b).toBe(a);
+  });
+
+  it("changes when a rendered asset changes", async () => {
+    const a = await hashOf(base);
+    const b = await hashOf({ ...base, "assets/app.js": "console.log(2)" });
+    expect(b).not.toBe(a);
   });
 })

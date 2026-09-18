@@ -31,12 +31,24 @@ function fakeClient(
   baselineCommits: string[] = [],
   warnings: string[] = [],
   deltaBases: string[] = [],
+  skippedBuildNumber?: number,
 ): IngestClient {
   let i = 0;
   return {
     async register(body) {
       log.register = body;
-      return { buildId: "b1", uploadUrl: "http://cp/api/storage/bundles/b1.tgz", baselineCommits, deltaBases, warnings };
+      // The server skipped the rebuild of an already-passed commit — no upload URL, just the prior build.
+      if (skippedBuildNumber !== undefined) {
+        return { outcome: "skipped", buildId: "prior1", buildNumber: skippedBuildNumber };
+      }
+      return {
+        outcome: "upload",
+        buildId: "b1",
+        uploadUrl: "http://cp/api/storage/bundles/b1.tgz",
+        baselineCommits,
+        deltaBases,
+        warnings,
+      };
     },
     async upload(url, tgz) {
       log.uploaded = { url, tgz };
@@ -74,10 +86,21 @@ function deps(
     producer?: { name: string; version: string } | null;
     deltaBases?: string[];
     delta?: (bases: string[], head: string) => Record<string, ClientDeltaEntry>;
+    /** When set, the fake server skips the rebuild and returns this prior build number. */
+    skippedBuildNumber?: number;
+    /** When true, bundle hashing throws - the upload must proceed without the rebuild-skip hint. */
+    hashThrows?: boolean;
   } = {},
 ): UploadDeps {
   return {
-    client: fakeClient(log, statuses, opts.baselineCommits ?? [], opts.warnings ?? [], opts.deltaBases ?? []),
+    client: fakeClient(
+      log,
+      statuses,
+      opts.baselineCommits ?? [],
+      opts.warnings ?? [],
+      opts.deltaBases ?? [],
+      opts.skippedBuildNumber,
+    ),
     gitMeta: () => meta,
     // Default: every candidate is a confirmed ancestor; tests that care override `confirm`.
     confirmAncestors: opts.confirm ?? ((candidates) => candidates),
@@ -86,6 +109,10 @@ function deps(
       return opts.delta ? opts.delta(bases, head) : {};
     },
     createBundle: async () => {},
+    bundleContentHash: async () => {
+      if (opts.hashThrows) throw new Error("tar stream broke");
+      return "v1:deadbeef";
+    },
     // Default: a Storybook upload (no capture SDK); archive tests pass a producer.
     readProducer: () => opts.producer ?? null,
     tmpFile: () => "/tmp/bundle.tgz",
@@ -107,6 +134,51 @@ describe("runUpload", () => {
     expect(log.uploaded).toEqual({ url: "http://cp/api/storage/bundles/b1.tgz", tgz: "/tmp/bundle.tgz" });
     expect(log.marked).toBe("b1");
     expect(log.statusPolls).toBe(3);
+  });
+
+  it("prints the watch-command hint while rendering when one is supplied, and stays silent otherwise", async () => {
+    const withHint: string[] = [];
+    await runUpload(
+      { staticDir: "/sb", watchHint: "gh pr checks 9 --watch" },
+      deps({ statusPolls: 0 }, ["running", "passed"], withHint),
+    );
+    expect(withHint.some((l) => l.includes("gh pr checks 9 --watch"))).toBe(true);
+    expect(withHint.some((l) => l.includes("blocks until the verdict"))).toBe(true);
+
+    const noHint: string[] = [];
+    await runUpload({ staticDir: "/sb" }, deps({ statusPolls: 0 }, ["running", "passed"], noHint));
+    expect(noHint.some((l) => l.includes("gh pr checks"))).toBe(false);
+  });
+
+  it("sends the bundle content hash at register", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    await runUpload({ staticDir: "/sb" }, deps(log, ["passed"]));
+    expect(log.register?.bundleContentHash).toBe("v1:deadbeef");
+  });
+
+  it("uploads normally (no hash) when hashing throws, rather than failing the upload", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    const lines: string[] = [];
+    // The hash is a pure optimization hint; a hashing failure must not abort the upload.
+    const res = await runUpload({ staticDir: "/sb" }, deps(log, ["passed"], lines, { hashThrows: true }));
+    expect(res.status).toBe("passed");
+    expect(log.register).toBeDefined();
+    expect(log.register?.bundleContentHash).toBeUndefined();
+    expect(lines.some((l) => l.includes("without the rebuild-skip hint"))).toBe(true);
+  });
+
+  it("on a skipped rebuild: prints the skip line and exits clean without uploading, marking, or polling", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    const lines: string[] = [];
+    const res = await runUpload({ staticDir: "/sb", appUrl: "http://cp" }, deps(log, [], lines, { skippedBuildNumber: 42 }));
+    // A skip inherits the prior build's pass, so the run exits 0.
+    expect(res.status).toBe("passed");
+    expect(res.buildId).toBe("prior1");
+    // Create/do nothing: no bundle PUT, no markUploaded, no status poll.
+    expect(log.uploaded).toBeUndefined();
+    expect(log.marked).toBeUndefined();
+    expect(log.statusPolls).toBe(0);
+    expect(lines.some((l) => l.includes("Skipping rebuild of already-passed build #42"))).toBe(true);
   });
 
   it("prints register warnings (e.g. App not installed) into the log without failing", async () => {
