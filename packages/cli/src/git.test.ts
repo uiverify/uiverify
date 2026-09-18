@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, it, expect } from "vitest";
 import {
   branchFromEnv,
   confirmAncestors,
+  deltaFor,
   parseParents,
   parseRepoFromRemote,
   prNumberFromEnv,
@@ -98,5 +99,71 @@ describe("confirmAncestors (real git)", () => {
 
   it("returns [] for empty candidates without touching git", () => {
     expect(confirmAncestors([], sha("feat"), dir)).toEqual([]);
+  });
+});
+
+describe("deltaFor (real git)", () => {
+  let dir: string;
+  let base: string;
+  let head: string;
+  const sha = (rev: string): string => execFileSync("git", ["rev-parse", rev], { cwd: dir, encoding: "utf8" }).trim();
+  const git = (...args: string[]): void => {
+    execFileSync("git", args, { cwd: dir, stdio: "ignore" });
+  };
+  const write = (name: string, content: string): void => fs.writeFileSync(path.join(dir, name), content);
+
+  beforeAll(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "uiverify-delta-test-"));
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "t@t.t");
+    git("config", "user.name", "t");
+    write("foo.txt", "1");
+    write("keep.txt", "k");
+    git("add", "-A");
+    git("commit", "-q", "-m", "base");
+    base = sha("HEAD");
+    // head: rename foo.txt -> renamed.txt (a real rename), modify keep.txt, add bar.txt.
+    fs.rmSync(path.join(dir, "foo.txt"));
+    write("renamed.txt", "1");
+    write("keep.txt", "k2");
+    write("bar.txt", "new");
+    git("add", "-A");
+    git("commit", "-q", "-m", "head");
+    head = sha("HEAD");
+  });
+  afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it("lists changed/added/deleted files for a local base, treating a rename as delete + add", () => {
+    const out = deltaFor([base], head, dir);
+    const entry = out[base];
+    expect(entry?.truncated).toBe(false);
+    expect(entry?.fetched).toBeUndefined();
+    expect([...(entry?.files ?? [])].sort()).toEqual(["bar.txt", "foo.txt", "keep.txt", "renamed.txt"]);
+  });
+
+  it("reports an absent base with no origin as not-fetched, never an error", () => {
+    const out = deltaFor(["b".repeat(40)], head, dir);
+    expect(out["b".repeat(40)]).toEqual({ files: [], truncated: true, reason: "not-fetched" });
+  });
+
+  it("reports every base head-missing when the head commit is not present", () => {
+    const missingHead = "f".repeat(40);
+    const out = deltaFor([base], missingHead, dir);
+    expect(out[base]).toEqual({ files: [], truncated: true, reason: "head-missing" });
+  });
+
+  it("treats a base/head as revisions even when a working-tree file is named like the base sha", () => {
+    // The trailing `--` in the diff argv keeps `git` from reading a sha-named path as ambiguous.
+    write(base, "decoy");
+    git("add", "-A");
+    git("commit", "-q", "-m", "sha-named file");
+    const head2 = sha("HEAD");
+    const out = deltaFor([base], head2, dir);
+    expect(out[base]?.truncated).toBe(false);
+    expect(out[base]?.files).toContain(base);
+  });
+
+  it("returns nothing for an empty base list without touching git", () => {
+    expect(deltaFor([], head, dir)).toEqual({});
   });
 });

@@ -110,6 +110,131 @@ export function confirmAncestors(candidates: string[], headSha: string, cwd: str
   return candidates.filter((c) => reachable.has(c));
 }
 
+/** One base commit's changed-file delta against the head, as sent advisory on the uploaded call. A
+ *  `truncated` entry means "I could not read this base" (never "nothing changed") and carries a reason. */
+export interface ClientDeltaEntry {
+  files: string[];
+  truncated: boolean;
+  reason?: DeltaReason;
+  /** The base was absent locally and fetched by SHA. */
+  fetched?: boolean;
+}
+
+type DeltaReason = "not-fetched" | "fetch-failed" | "head-missing" | "git-error" | "budget" | "cap";
+
+const DELTA_STEP_BUDGET_MS = 60_000;
+const DELTA_CALL_TIMEOUT_MS = 20_000;
+const DELTA_MAX_FETCHES = 4;
+const DELTA_MAX_PATHS_PER_BASE = 10_000;
+const DELTA_MAX_PATH_LEN = 4_096;
+const DELTA_MAX_TOTAL_BYTES = 1_048_576; // 1 MiB — keep the request body small
+// Above DELTA_MAX_TOTAL_BYTES so a genuinely huge delta overflows into the `cap` branch below rather
+// than surfacing as Node's ENOBUFS (which would be filed under `git-error`, the undiagnosable bucket).
+const DELTA_MAXBUFFER = 64 * 1024 * 1024;
+
+/** Run git for the delta step: never prompt (fail fast on a missing credential), never lazy-fetch trees
+ *  from a promisor remote (that network I/O would burn the step budget), bounded output. Returns null on
+ *  any non-zero exit / timeout so the caller classifies it. */
+function gitDeltaOrNull(args: string[], cwd: string, timeoutMs: number): string | null {
+  try {
+    return execFileSync("git", args, {
+      cwd,
+      encoding: "utf8",
+      timeout: Math.max(1, timeoutMs),
+      maxBuffer: DELTA_MAXBUFFER,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_NO_LAZY_FETCH: "1" },
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Compute each base commit's changed-file delta against `head` with local git, for `--only-changed`.
+ * The server names the base commits to diff against in the register response; the CLI diffs them here
+ * and sends the raw file lists with the upload (the render decision stays server-side — this client
+ * only reports what git says changed). Never throws: every failure becomes a per-base
+ * `{ truncated: true, reason }` entry, so the upload can't be failed by the diff step. Diffs local
+ * bases first, then fetches up to {@link DELTA_MAX_FETCHES} absent ones by SHA, under a
+ * {@link DELTA_STEP_BUDGET_MS} step budget (each git call capped to the smaller of 20s and the budget
+ * remaining, so the step never overruns).
+ */
+export function deltaFor(bases: string[], head: string, cwd: string): Record<string, ClientDeltaEntry> {
+  const out: Record<string, ClientDeltaEntry> = {};
+  if (bases.length === 0) return out;
+  // Run from the repo root so paths are root-relative on every git version (no dependency on --no-relative).
+  const root = gitOrNull(["rev-parse", "--show-toplevel"], cwd) ?? cwd;
+  const start = Date.now();
+  const callTimeout = (): number => Math.min(DELTA_CALL_TIMEOUT_MS, DELTA_STEP_BUDGET_MS - (Date.now() - start));
+
+  const headPresent = gitDeltaOrNull(["cat-file", "-e", `${head}^{commit}`], root, callTimeout()) !== null;
+  const hasOrigin = gitOrNull(["remote", "get-url", "origin"], root) !== null;
+  const shallow = isShallowRepo(root);
+  let fetches = 0;
+  let totalBytes = 0;
+
+  for (const base of bases) {
+    const trunc = (reason: DeltaReason, fetched?: boolean): void => {
+      out[base] = fetched ? { files: [], truncated: true, reason, fetched } : { files: [], truncated: true, reason };
+    };
+    if (!headPresent) {
+      trunc("head-missing");
+      continue;
+    }
+    if (callTimeout() <= 0) {
+      trunc("budget");
+      continue;
+    }
+
+    let fetched = false;
+    const present = gitDeltaOrNull(["cat-file", "-e", `${base}^{commit}`], root, callTimeout()) !== null;
+    if (!present) {
+      if (!hasOrigin || fetches >= DELTA_MAX_FETCHES) {
+        trunc("not-fetched");
+        continue;
+      }
+      fetches += 1;
+      // A --depth=1 fetch into a full clone turns it shallow, so only shallow clones pass --depth (a full
+      // clone fetches the SHA plain and stays full); GitHub serves a commit by SHA whether or not a ref
+      // still reaches it, so this is also the force-push recovery path.
+      const fetchArgs = shallow ? ["fetch", "--depth=1", "origin", base] : ["fetch", "origin", base];
+      if (gitDeltaOrNull(fetchArgs, root, callTimeout()) === null) {
+        trunc("fetch-failed");
+        continue;
+      }
+      fetched = true;
+    }
+
+    if (callTimeout() <= 0) {
+      trunc("budget", fetched);
+      continue;
+    }
+    // Pinned so nothing in the customer's repo/runner can narrow the diff: a `.gitmodules` `ignore = all`
+    // or a runner-global `diff.ignoreSubmodules = all` would silently drop a submodule pointer bump — the
+    // one shape that would be a false "nothing changed". --no-renames makes a rename a delete + add. The
+    // trailing `--` keeps a root file named like a sha from being read as a path.
+    const raw = gitDeltaOrNull(
+      // prettier-ignore
+      ["-c", "diff.ignoreSubmodules=none", "-c", "diff.renames=false", "diff", "--name-only", "--no-renames", "--ignore-submodules=none", "-z", base, head, "--"],
+      root,
+      callTimeout(),
+    );
+    if (raw === null) {
+      trunc(callTimeout() <= 0 ? "budget" : "git-error", fetched);
+      continue;
+    }
+    const files = raw.split("\0").filter(Boolean);
+    const bytes = files.reduce((n, f) => n + f.length + 1, 0);
+    if (files.length > DELTA_MAX_PATHS_PER_BASE || files.some((f) => f.length > DELTA_MAX_PATH_LEN) || totalBytes + bytes > DELTA_MAX_TOTAL_BYTES) {
+      trunc("cap", fetched);
+      continue;
+    }
+    totalBytes += bytes;
+    out[base] = fetched ? { files, truncated: false, fetched: true } : { files, truncated: false };
+  }
+  return out;
+}
+
 export function collectGitMeta(cwd: string, env: NodeJS.ProcessEnv = process.env): GitMeta {
   const commitSha = env.COMMIT_SHA || git(["rev-parse", "HEAD"], cwd);
   const headBranch = git(["rev-parse", "--abbrev-ref", "HEAD"], cwd);

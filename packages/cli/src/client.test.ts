@@ -29,7 +29,7 @@ describe("httpIngestClient retries", () => {
     const client = httpIngestClient("http://cp", "key");
     const p = client.register(body);
     await vi.runAllTimersAsync();
-    expect(await p).toEqual({ buildId: "b1", uploadUrl: "http://s3/b1", baselineCommits: [], warnings: [] });
+    expect(await p).toEqual({ buildId: "b1", uploadUrl: "http://s3/b1", baselineCommits: [], deltaBases: [], warnings: [] });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 

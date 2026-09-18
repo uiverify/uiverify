@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { BuildStatus, IngestClient, RegisterBody } from "./client";
-import type { GitMeta } from "./git";
+import type { ClientDeltaEntry, GitMeta } from "./git";
 import { runUpload, type UploadDeps } from "./upload";
 
 interface CallLog {
@@ -8,6 +8,8 @@ interface CallLog {
   uploaded?: { url: string; tgz: string };
   marked?: string;
   markedAncestors?: string[];
+  markedChangedFiles?: Record<string, ClientDeltaEntry>;
+  deltaForBases?: string[];
   statusPolls: number;
 }
 
@@ -28,19 +30,21 @@ function fakeClient(
   statuses: FakeStatus[] = [],
   baselineCommits: string[] = [],
   warnings: string[] = [],
+  deltaBases: string[] = [],
 ): IngestClient {
   let i = 0;
   return {
     async register(body) {
       log.register = body;
-      return { buildId: "b1", uploadUrl: "http://cp/api/storage/bundles/b1.tgz", baselineCommits, warnings };
+      return { buildId: "b1", uploadUrl: "http://cp/api/storage/bundles/b1.tgz", baselineCommits, deltaBases, warnings };
     },
     async upload(url, tgz) {
       log.uploaded = { url, tgz };
     },
-    async markUploaded(buildId, ancestorShas) {
+    async markUploaded(buildId, ancestorShas, changedFiles) {
       log.marked = buildId;
       log.markedAncestors = ancestorShas;
+      log.markedChangedFiles = changedFiles;
     },
     async getStatus() {
       log.statusPolls++;
@@ -68,13 +72,19 @@ function deps(
     warnings?: string[];
     confirm?: (c: string[], head: string) => string[];
     producer?: { name: string; version: string } | null;
+    deltaBases?: string[];
+    delta?: (bases: string[], head: string) => Record<string, ClientDeltaEntry>;
   } = {},
 ): UploadDeps {
   return {
-    client: fakeClient(log, statuses, opts.baselineCommits ?? [], opts.warnings ?? []),
+    client: fakeClient(log, statuses, opts.baselineCommits ?? [], opts.warnings ?? [], opts.deltaBases ?? []),
     gitMeta: () => meta,
     // Default: every candidate is a confirmed ancestor; tests that care override `confirm`.
     confirmAncestors: opts.confirm ?? ((candidates) => candidates),
+    deltaFor: (bases, head) => {
+      log.deltaForBases = bases;
+      return opts.delta ? opts.delta(bases, head) : {};
+    },
     createBundle: async () => {},
     // Default: a Storybook upload (no capture SDK); archive tests pass a producer.
     readProducer: () => opts.producer ?? null,
@@ -140,6 +150,47 @@ describe("runUpload", () => {
     const log: CallLog = { statusPolls: 0 };
     await runUpload({ staticDir: "/sb", onlyChanged: true }, deps(log, ["passed"]));
     expect(log.register?.onlyChanged).toBe(true);
+  });
+
+  it("computes the delta over the server's bases and sends it when --only-changed + a graph", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    const base = "a".repeat(40);
+    await runUpload(
+      { staticDir: "/sb", onlyChanged: true, bundleHasGraph: true },
+      deps(log, ["passed"], undefined, {
+        deltaBases: [base],
+        delta: (bases) => ({ [bases[0] ?? ""]: { files: ["src/x.ts"], truncated: false } }),
+      }),
+    );
+    expect(log.deltaForBases).toEqual([base]);
+    expect(log.markedChangedFiles).toEqual({ [base]: { files: ["src/x.ts"], truncated: false } });
+  });
+
+  it("does NOT compute a delta without a graph, even under --only-changed", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    await runUpload(
+      { staticDir: "/sb", onlyChanged: true, bundleHasGraph: false },
+      deps(log, ["passed"], undefined, { deltaBases: ["a".repeat(40)] }),
+    );
+    expect(log.deltaForBases).toBeUndefined();
+    expect(log.markedChangedFiles).toBeUndefined();
+  });
+
+  it("UIVERIFY_NO_DELTA=1 skips the delta step entirely", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    const prev = process.env.UIVERIFY_NO_DELTA;
+    process.env.UIVERIFY_NO_DELTA = "1";
+    try {
+      await runUpload(
+        { staticDir: "/sb", onlyChanged: true, bundleHasGraph: true },
+        deps(log, ["passed"], undefined, { deltaBases: ["a".repeat(40)] }),
+      );
+    } finally {
+      if (prev === undefined) delete process.env.UIVERIFY_NO_DELTA;
+      else process.env.UIVERIFY_NO_DELTA = prev;
+    }
+    expect(log.deltaForBases).toBeUndefined();
+    expect(log.markedChangedFiles).toBeUndefined();
   });
 
   it("forwards preview + previewTargets in the register body for a preview check", async () => {

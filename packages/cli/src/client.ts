@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import type { ClientDeltaEntry } from "./git";
 import { HttpStatusError, withRetry } from "./retry";
 import { z } from "zod";
 import pkg from "../package.json";
@@ -15,10 +16,25 @@ const registerResponse = z.object({
   buildId: z.string(),
   uploadUrl: z.string(),
   baselineCommits: z.array(z.string()).default([]),
+  // The base commits `--only-changed` should diff against, named by the server. The CLI computes the
+  // changed-file delta over these with local git (`deltaFor`) and sends it with the upload. An older
+  // server omits the field ⇒ empty (no git work). Sanitized in `register` before use.
+  deltaBases: z.array(z.string()).default([]),
   // Advisory, non-blocking messages surfaced into the CI log (e.g. the GitHub App isn't installed on
   // the repo, so no check/comment will post). An older server omits the field ⇒ empty.
   warnings: z.array(z.string()).default([]),
 });
+
+const CANONICAL_SHA = /^[0-9a-f]{40}$/;
+const MAX_DELTA_BASES = 16;
+
+/** Each base lands on a `git` argv, so a base is trusted only if it is a canonical 40-hex SHA; any
+ *  violation (or an over-long list from a hostile/proxied `--api-url`) drops the whole field so no git
+ *  work runs on attacker-influenced input. */
+function sanitizeDeltaBases(bases: string[]): string[] {
+  if (bases.length > MAX_DELTA_BASES || !bases.every((b) => CANONICAL_SHA.test(b))) return [];
+  return bases;
+}
 // The per-story summary the server attaches on the terminal poll (and only then) so the CLI can print
 // the changed-story list + AI verdicts into the CI log. Mirrors what the GitHub check / `get_build`
 // MCP render. Extra per-story fields it carries (viewport, browser, diffResultId, changedPct) are
@@ -100,11 +116,12 @@ export interface RegisterBody {
 export interface IngestClient {
   register(
     body: RegisterBody,
-  ): Promise<{ buildId: string; uploadUrl: string; baselineCommits: string[]; warnings: string[] }>;
+  ): Promise<{ buildId: string; uploadUrl: string; baselineCommits: string[]; deltaBases: string[]; warnings: string[] }>;
   upload(uploadUrl: string, tgzPath: string): Promise<void>;
   /** `ancestorShas`: the confirmed-ancestor subset of the register response's `baselineCommits`, used
-   *  to gate baseline inheritance against true git ancestry. Empty when the checkout was shallow. */
-  markUploaded(buildId: string, ancestorShas: string[]): Promise<void>;
+   *  to gate baseline inheritance against true git ancestry. Empty when the checkout was shallow.
+   *  `changedFiles`: the advisory skip-unchanged delta (`deltaFor`), omitted when there is none. */
+  markUploaded(buildId: string, ancestorShas: string[], changedFiles?: Record<string, ClientDeltaEntry>): Promise<void>;
   getStatus(buildId: string): Promise<BuildStatus>;
 }
 
@@ -162,9 +179,10 @@ export function httpIngestClient(apiUrl: string, apiKey: string): IngestClient {
         ...(sdkName ? { "x-uiverify-sdk-name": sdkName } : {}),
         ...(sdkVersion ? { "x-uiverify-sdk-version": sdkVersion } : {}),
       };
-      return registerResponse.parse(
+      const parsed = registerResponse.parse(
         await withRetry({ label: "register" }, (signal) => postJson("/api/ingest/build", payload, signal, sdkHeaders)),
       );
+      return { ...parsed, deltaBases: sanitizeDeltaBases(parsed.deltaBases) };
     },
     async upload(uploadUrl, tgzPath) {
       const bytes = new Uint8Array(fs.readFileSync(tgzPath));
@@ -178,9 +196,10 @@ export function httpIngestClient(apiUrl: string, apiKey: string): IngestClient {
         if (!res.ok) throw httpError("bundle upload", res.status, await res.text());
       });
     },
-    async markUploaded(buildId, ancestorShas) {
+    async markUploaded(buildId, ancestorShas, changedFiles) {
+      const body = changedFiles ? { ancestorShas, changedFiles } : { ancestorShas };
       await withRetry({ label: "markUploaded" }, (signal) =>
-        postJson(`/api/ingest/build/${buildId}/uploaded`, { ancestorShas }, signal),
+        postJson(`/api/ingest/build/${buildId}/uploaded`, body, signal),
       );
     },
     async getStatus(buildId) {

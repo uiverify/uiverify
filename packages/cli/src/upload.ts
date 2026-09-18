@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import type { IngestClient } from "./client";
-import type { GitMeta } from "./git";
+import type { ClientDeltaEntry, GitMeta } from "./git";
 import { formatVerdictSummary } from "./summary";
 
 /**
@@ -30,6 +30,10 @@ export interface UploadOptions {
   /** The agent's explicit render targets for a preview check (story-id globs / exact ids). Replaces the
    *  dep-graph closure server-side; only meaningful with `preview: true`. */
   previewTargets?: string[];
+  /** Whether the bundle carries a dependency graph (Storybook with --stats-json, or a Vitest archive) —
+   *  computed at the call site (where the file sniff already lives). Only a graph-carrying `--only-changed`
+   *  upload computes and sends the client delta; false skips it. */
+  bundleHasGraph?: boolean;
 }
 
 export interface UploadDeps {
@@ -38,6 +42,9 @@ export interface UploadDeps {
   /** Filter the server's candidate baseline commits to the head's true local git ancestors —
    *  injected so the upload flow is unit-tested without a real repo. */
   confirmAncestors: (candidates: string[], headSha: string) => string[];
+  /** Compute the skip-unchanged changed-file delta for the server's offered `deltaBases` with local git —
+   *  injected like `confirmAncestors` so the upload flow is unit-tested without a real repo. */
+  deltaFor: (bases: string[], headSha: string) => Record<string, ClientDeltaEntry>;
   createBundle: (dir: string, out: string) => Promise<void>;
   /** The capture SDK that produced the bundle, read from the finalized manifest after `createBundle`.
    *  Injected so the flow is unit-tested without a real archive; null for a Storybook upload. */
@@ -73,7 +80,7 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
   const producer = deps.readProducer(opts.staticDir);
 
   deps.log("Registering build…");
-  const { buildId, uploadUrl, baselineCommits, warnings } = await deps.client.register({
+  const { buildId, uploadUrl, baselineCommits, deltaBases, warnings } = await deps.client.register({
     commitSha: meta.commitSha,
     branch: meta.branch,
     prNumber: meta.prNumber,
@@ -100,9 +107,25 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
     deps.log(`Confirmed ${ancestorShas.length} / ${baselineCommits.length} baseline commits in git ancestry`);
   }
 
+  // Skip-unchanged: for a graph-carrying `--only-changed` upload, diff the base commits the server named
+  // against HEAD with local git and send the file lists with the upload. `UIVERIFY_NO_DELTA=1` opts a
+  // runner out entirely. Never fails the upload — `deltaFor` turns every git error into a truncated entry.
+  let changedFiles: Record<string, ClientDeltaEntry> | undefined;
+  if (opts.onlyChanged && opts.bundleHasGraph && deltaBases.length > 0) {
+    if (process.env.UIVERIFY_NO_DELTA === "1") {
+      deps.log("Skipping changed-file delta (UIVERIFY_NO_DELTA=1)");
+    } else {
+      changedFiles = deps.deltaFor(deltaBases, meta.commitSha);
+      const entries = Object.values(changedFiles);
+      const fetched = entries.filter((e) => e.fetched).length;
+      const unreadable = entries.filter((e) => e.truncated).length;
+      deps.log(`Diffed HEAD against ${entries.length} baseline commit(s) (${fetched} fetched, ${unreadable} unreadable)`);
+    }
+  }
+
   deps.log(`Registered build ${buildId} — uploading bundle…`);
   await deps.client.upload(uploadUrl, tgz);
-  await deps.client.markUploaded(buildId, ancestorShas);
+  await deps.client.markUploaded(buildId, ancestorShas, changedFiles);
   const buildUrl = opts.appUrl ? `${opts.appUrl.replace(/\/$/, "")}/builds/${buildId}` : buildId;
   deps.log(`Build uploaded: ${buildUrl}`);
 

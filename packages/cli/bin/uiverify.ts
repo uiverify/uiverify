@@ -9,7 +9,7 @@ import {
 } from "../src/bundle";
 import { httpIngestClient } from "../src/client";
 import { exitCodeFor, previewExitCodeFor } from "../src/exit";
-import { collectGitMeta, confirmAncestors } from "../src/git";
+import { collectGitMeta, confirmAncestors, deltaFor } from "../src/git";
 import { redact } from "../src/redact";
 import { resolveStrict } from "../src/strict";
 import { type UploadDeps, defaultTmpFile, runUpload } from "../src/upload";
@@ -210,6 +210,7 @@ function uploadDepsFor(ctx: CommonContext): UploadDeps {
     client: httpIngestClient(ctx.apiUrl, ctx.apiKey),
     gitMeta: () => collectGitMeta(ctx.cwd),
     confirmAncestors: (candidates, headSha) => confirmAncestors(candidates, headSha, ctx.cwd),
+    deltaFor: (bases, headSha) => deltaFor(bases, headSha, ctx.cwd),
     createBundle: ctx.isScreenshots ? createScreenshotBundle : createBundle,
     readProducer: ctx.isScreenshots ? () => null : readArchiveProducer,
     tmpFile: defaultTmpFile,
@@ -247,6 +248,9 @@ async function uploadCommand(rest: string[]): Promise<void> {
         appUrl: ctx.apiUrl,
         autoAcceptChanges: ctx.flags.has("auto-accept-changes"),
         onlyChanged,
+        // A graph-carrying `--only-changed` upload is the only one that computes + sends the client delta.
+        // Reuses the same file sniff `noOpReason` already ran (null ⇒ a graph is present).
+        bundleHasGraph: onlyChanged && !ctx.isScreenshots && noOpReason === null,
       },
       uploadDepsFor(ctx),
     );
