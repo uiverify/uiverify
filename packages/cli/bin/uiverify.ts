@@ -75,10 +75,11 @@ Options:
   --auto-accept-changes      Accept this build's changes as the new baseline (pass on merges to main).
   --exit-zero-on-changes     Detect but don't block: a changed (needs-review) verdict exits 0 and stays
                              pending review in the dashboard. failed/blocked still exit non-zero.
-  --only-changed             Storybook only. Render only the stories this commit's changed files could
-                             affect and carry the rest forward. Needs a bundle built with Storybook's
-                             --stats-json; with no dependency graph every story renders. Ignored for
-                             Playwright archive uploads, which always render in full.
+  --only-changed             Render only the stories this commit's changed files could affect and carry
+                             the rest forward. Works for Storybook and Vitest uploads, which ship a
+                             dependency graph (Storybook needs --stats-json; the @uiverify/vitest plugin
+                             emits preview-stats.json automatically). Ignored for Playwright archives and
+                             screenshot uploads, which have no graph — every test renders in full.
   --strict                   Fail the CI job (exit 1) if the upload itself fails — bad/missing key,
                              missing bundle, network error. This is the DEFAULT.
   --no-strict                Never fail the CI job on an operational error (exit 0). The visual verdict
@@ -240,7 +241,7 @@ async function uploadCommand(rest: string[]): Promise<void> {
       "⚠ --only-changed, but no preview-stats.json in the bundle — every story will render. Build with Storybook's --stats-json to get the dependency graph.",
     );
   } else if (noOpReason === "archive") {
-    ctx.log("⚠ --only-changed has no effect on a Playwright archive (no dependency graph) — every test will render.");
+    ctx.log("⚠ --only-changed has no effect on this archive — no preview-stats.json dependency graph (a Playwright archive has none; the @uiverify/vitest plugin emits one) — every test will render.");
   }
 
   try {

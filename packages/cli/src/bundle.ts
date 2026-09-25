@@ -99,6 +99,9 @@ export function finalizeArchiveIfNeeded(staticDir: string): void {
     // Every snapshot carries the same producer; take the first seen for the manifest.
     producer ??= snap.producer;
   }
+  // Nothing captured: write no manifest, so `createBundle` refuses the upload AND a later run that does
+  // capture isn't shadowed by a stale empty `index.json` (this function no-ops once one exists).
+  if (Object.keys(entries).length === 0) return;
   fs.writeFileSync(
     indexPath,
     JSON.stringify({ v: ARCHIVE_FORMAT_VERSION, entries, ...(producer ? { producer } : {}) }, null, 2),
@@ -162,10 +165,39 @@ export function isStorybookStaticDir(staticDir: string): boolean {
   return fs.existsSync(path.join(staticDir, "iframe.html"));
 }
 
+/** Whether a static dir's `index.json` lists at least one entry (v5 `entries` or legacy `stories`; a
+ *  manifest with neither lists nothing). A manifest we can't parse counts as non-empty: the server owns
+ *  validating it and says why. */
+function hasManifestEntries(staticDir: string): boolean {
+  const indexPath = path.join(staticDir, "index.json");
+  if (!fs.existsSync(indexPath)) return false;
+  let index: unknown;
+  try {
+    index = JSON.parse(fs.readFileSync(indexPath, "utf8"));
+  } catch {
+    return true;
+  }
+  const parsed = z
+    .object({ entries: z.record(z.string(), z.unknown()).optional(), stories: z.record(z.string(), z.unknown()).optional() })
+    .safeParse(index);
+  if (!parsed.success) return true;
+  const map = parsed.data.entries ?? parsed.data.stories;
+  return map !== undefined && Object.keys(map).length > 0;
+}
+
+/** Why a `--static-dir` has nothing to upload, with what to check for each capture path. Refused before a
+ *  build exists, since the server can't render a bundle with no entries. */
+function nothingToUploadMessage(staticDir: string): string {
+  if (!fs.existsSync(staticDir)) return `--static-dir ${staticDir} does not exist`;
+  return `nothing to upload in ${staticDir}: no captures (index.json is missing or lists nothing). For Storybook, point --static-dir at your \`storybook build\` output. For Vitest or Playwright, check that your tests ran with the UI Verify capture SDK (@uiverify/vitest in browser mode, or @uiverify/playwright) and wrote their captures to this directory.`;
+}
+
 /** Create the bundle .tgz from a built static dir (files at the archive root). A Playwright archive dir
- *  is finalized first — its `index.json` manifest assembled — so it uploads with no separate step. */
+ *  is finalized first — its `index.json` manifest assembled — so it uploads with no separate step. Throws
+ *  when the dir holds nothing to render (no `index.json` once finalized, or one listing no entries). */
 export async function createBundle(staticDir: string, outPath: string): Promise<void> {
   finalizeArchiveIfNeeded(staticDir);
+  if (!hasManifestEntries(staticDir)) throw new Error(nothingToUploadMessage(staticDir));
   await create({ gzip: true, file: outPath, cwd: staticDir }, ["."]);
 }
 

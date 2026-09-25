@@ -54,7 +54,9 @@ function sanitizeDeltaBases(bases: string[]): string[] {
 // The per-story summary the server attaches on the terminal poll (and only then) so the CLI can print
 // the changed-story list + AI verdicts into the CI log. Mirrors what the GitHub check / `get_build`
 // MCP render. Extra per-story fields it carries (viewport, browser, diffResultId, changedPct) are
-// intentionally dropped here — the log doesn't print them.
+// intentionally dropped here — the log doesn't print them. `comments` (open review notes) may be absent or null:
+// an older server doesn't send it, and the CLI then prints no comment lines.
+const commentCounts = z.object({ total: z.number(), unresolved: z.number() });
 const changedStorySummary = z.object({
   storyId: z.string(),
   title: z.string(),
@@ -63,6 +65,7 @@ const changedStorySummary = z.object({
   aiVerdict: z.string().nullable(),
   aiConfidence: z.string().nullable(),
   aiSummary: z.string().nullable(),
+  comments: commentCounts.nullish(),
 });
 const failedStorySummary = z.object({
   storyId: z.string(),
@@ -72,6 +75,7 @@ const failedStorySummary = z.object({
 });
 const buildSummary = z.object({
   aiReview: z.object({ regressions: z.number(), intended: z.number(), reviewed: z.number() }).nullable(),
+  comments: commentCounts.nullish(),
   changedStories: z.array(changedStorySummary),
   changedStoriesTruncated: z.object({ shown: z.number(), total: z.number() }).nullable(),
   failedStories: z.array(failedStorySummary),
@@ -88,6 +92,8 @@ const statusResponse = z.object({
   changed: z.number().default(0),
   failed: z.number().default(0),
   summary: buildSummary.optional(),
+  // Why a build failed as a whole (an unusable upload, a bundle crash). Absent on an older server.
+  failureReason: z.string().nullable().optional(),
 });
 
 export type BuildStatus = z.infer<typeof statusResponse>;

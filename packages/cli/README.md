@@ -59,11 +59,19 @@ Exit codes: `0` success (or an operational failure under `--no-strict`), `1` the
 
 ## Only changed stories
 
-`--only-changed` renders just the stories your commit could have affected and carries every other baseline forward at a fraction of a snapshot each, so a one-component PR costs far less than a full suite. It is **Storybook only** - a Playwright archive has no dependency graph, so those uploads always render in full and the flag is ignored. UI Verify works it out server-side from your bundle's Storybook dependency graph, which exists only if you build with `--stats-json`:
+`--only-changed` renders just the stories your commit could have affected and carries every other baseline forward at a fraction of a snapshot each, so a one-component PR costs far less than a full suite. It works for **Storybook and Vitest** uploads — both ship a dependency graph UI Verify resolves server-side. A **Playwright archive has no graph**, so those uploads (and screenshot uploads) always render in full and the flag is ignored.
+
+Storybook builds the graph only when you pass `--stats-json`:
 
 ```sh
 npm run build-storybook -- --stats-json
 UIVERIFY_API_KEY=... npx uiverify upload --static-dir storybook-static --only-changed
+```
+
+The `@uiverify/vitest` plugin emits the graph (`preview-stats.json`) into the archive automatically, so a Vitest upload just adds the flag:
+
+```sh
+UIVERIFY_API_KEY=... npx uiverify upload --static-dir uiverify-archive --only-changed
 ```
 
 Without that graph there is no fallback: the build renders every story even with the flag on, deliberately, since a filename heuristic can't tell that a page story imports the component you changed.

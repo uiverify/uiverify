@@ -102,6 +102,10 @@ gh run view <run-id> --log-failed          # the failing job's logs
   (3) If the diff is an **intended** change, accept the baseline so the check clears; if it's a
   **regression you introduced**, fix the code and push. Never blanket-accept to make the check pass -
   that defeats the whole point of the tool.
+  (4) **A reviewer's comment on a diff is part of the job, not decoration.** A green check does not mean
+  done while a human's note on the build is open: read the comments on every poll (for UI Verify, the
+  `comments {unresolved}` count on each story, then `list_comments`), do what they ask, and resolve the
+  thread when it is addressed. UI Verify refuses to accept a story whose note is still open.
 - **e2e / integration failure:** read the log, reproduce the flow locally (`/e2e-verify` can
   drive it), fix, push.
 - **Flaky / infra failure** (a check that failed for reasons unrelated to the diff): re-run it

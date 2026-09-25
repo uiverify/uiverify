@@ -61,6 +61,7 @@ Make the system better at its own job.
 | **[economical-visual-tests](skills/economical-visual-tests)** | Full visual coverage in the fewest billable snapshots: collapse a variant matrix into one gallery shot, drive states from data. Works with any per-snapshot visual tool. | either |
 | **[storybook-visual-testing](skills/storybook-visual-testing)** | Flaky story diffs: make Storybook stories deterministic (only what the capturer can't neutralize for you). | Storybook |
 | **[playwright-visual-testing](skills/playwright-visual-testing)** | Flaky real-page diffs: make `@uiverify/playwright` archive-replay captures deterministic (feature flags, live data, the clock, overlays, dynamic layout). | Playwright |
+| **[implement-figma-design](skills/implement-figma-design)** | "Build this Figma design": gets the design as a PNG (Figma MCP export, or asks you for one), declares it as the story's baseline, then converges the render to it section by section using UI Verify's diff. Stops without accepting, so the design stays the baseline. | Storybook |
 | **[triage-visual-changes](skills/triage-visual-changes)** | A build came back "changed": bucket real regressions vs cosmetic noise, summarize for a PR comment, accept baselines in bulk, all via the UI Verify MCP. | either |
 
 ## Install

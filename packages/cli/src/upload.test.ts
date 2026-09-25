@@ -23,6 +23,7 @@ type FakeStatus =
       changed?: number;
       failed?: number;
       summary?: BuildStatus["summary"];
+      failureReason?: string | null;
     };
 
 function fakeClient(
@@ -400,6 +401,16 @@ describe("runUpload", () => {
     expect(lines.some((l) => l.startsWith("Build b1 blocked — shot quota reached or payment required."))).toBe(true);
     // No misleading "0 changed, 0 failed" all-clear line for a build that rendered nothing.
     expect(lines.some((l) => l.includes("finished: blocked"))).toBe(false);
+  });
+
+  it("prints the server's reason on a build that failed as a whole", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    const lines: string[] = [];
+    await runUpload(
+      { staticDir: "/sb" },
+      deps(log, [{ status: "failed", failureReason: "The upload has no index.json at its root." }], lines),
+    );
+    expect(lines).toContain("Reason: The upload has no index.json at its root.");
   });
 
   it("prints no summary block on a passed build", async () => {

@@ -187,6 +187,7 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
       }
       const detail = s.total > 0 ? ` — ${s.changed} changed, ${s.failed} failed of ${s.total}` : "";
       deps.log(`Build ${buildId} finished: ${s.status}${detail}`);
+      if (s.status === "failed" && s.failureReason) deps.log(`Reason: ${s.failureReason}`);
       // On a red verdict, print the per-story summary AND the agent MCP handoff so an agent reading the
       // CI log sees what changed and exactly how to resolve it. UI Verify's PR check is a bare commit
       // status now (no body), so this log is the agent's only recipe. `passed` prints nothing;

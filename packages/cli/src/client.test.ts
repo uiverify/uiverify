@@ -131,3 +131,37 @@ describe("httpIngestClient version reporting", () => {
     expect(headers["x-uiverify-sdk-version"]).toBeUndefined();
   });
 });
+
+describe("httpIngestClient getStatus", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** A null review-comment tally must not fail the parse: that error is operational, so under the default
+   *  strict mode it would fail the consumer's CI on a build that finished fine. */
+  it("accepts a null or missing comments tally in the terminal summary", async () => {
+    const summary = (comments: unknown) => ({
+      aiReview: null,
+      comments,
+      changedStories: [
+        {
+          storyId: "a",
+          title: "A",
+          name: "X",
+          decision: null,
+          aiVerdict: null,
+          aiConfidence: null,
+          aiSummary: null,
+          comments,
+        },
+      ],
+      changedStoriesTruncated: null,
+      failedStories: [],
+    });
+    stubFetch([
+      ok({ status: "changed", summary: summary(null) }),
+      ok({ status: "changed", summary: summary(undefined) }),
+    ]);
+    const client = httpIngestClient("http://cp", "key");
+    await expect(client.getStatus("b1")).resolves.toMatchObject({ status: "changed" });
+    await expect(client.getStatus("b1")).resolves.toMatchObject({ status: "changed" });
+  });
+});

@@ -79,6 +79,7 @@ describe("finalizeArchiveIfNeeded", () => {
     expect(fs.existsSync(path.join(dir, "index.json"))).toBe(false);
   });
 
+
   it("lifts the capture-SDK producer from the snapshots into the manifest", () => {
     const producer = { name: "@uiverify/playwright", version: "1.2.3" };
     writeSnapshot("a.json", { id: "a", title: "t", name: "", dom: {}, resources: {}, producer });
@@ -247,7 +248,7 @@ describe("bundleContentHash", () => {
 
   const base = {
     "iframe.html": "<html></html>",
-    "index.json": '{"v":5,"entries":{}}',
+    "index.json": '{"v":5,"entries":{"btn--default":{"id":"btn--default","type":"story"}}}',
     "assets/app.js": "console.log(1)",
     "project.json": '{"generatedAt":"2026-01-01"}',
     "preview-stats.json": '{"modules":[]}',
@@ -277,3 +278,36 @@ describe("bundleContentHash", () => {
     expect(b).not.toBe(a);
   });
 })
+
+describe("createBundle", () => {
+  /** The real failure: a Vitest run that captured nothing left an empty dir, which uploaded as an empty
+   *  tarball and left the build stuck server-side. It must be refused before anything is registered. */
+  it("refuses an empty static dir with a hint, instead of tarring nothing", async () => {
+    await expect(createBundle(dir, path.join(os.tmpdir(), "vt-empty.tgz"))).rejects.toThrow(
+      /nothing to upload in .*@uiverify\/vitest in browser mode/,
+    );
+  });
+
+  it("refuses an archive whose snapshots dir holds no captures, leaving no stale manifest behind", async () => {
+    fs.mkdirSync(path.join(dir, "snapshots"));
+    await expect(createBundle(dir, path.join(os.tmpdir(), "vt-empty-snaps.tgz"))).rejects.toThrow(/nothing to upload/);
+    // A later run that does capture must be finalized fresh, not shadowed by an empty index.json.
+    expect(fs.existsSync(path.join(dir, "index.json"))).toBe(false);
+  });
+
+  it("refuses a manifest with no entries map at all", async () => {
+    fs.writeFileSync(path.join(dir, "index.json"), JSON.stringify({ v: 5 }));
+    await expect(createBundle(dir, path.join(os.tmpdir(), "vt-no-map.tgz"))).rejects.toThrow(/nothing to upload/);
+  });
+
+  it("refuses a manifest that lists no entries (an archive finalized with nothing captured)", async () => {
+    fs.writeFileSync(path.join(dir, "index.json"), JSON.stringify({ v: 1, entries: {} }));
+    await expect(createBundle(dir, path.join(os.tmpdir(), "vt-empty-index.tgz"))).rejects.toThrow(/nothing to upload/);
+  });
+
+  it("says a missing static dir does not exist", async () => {
+    await expect(createBundle(path.join(dir, "nope"), path.join(os.tmpdir(), "vt-missing.tgz"))).rejects.toThrow(
+      /does not exist/,
+    );
+  });
+});

@@ -102,27 +102,29 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 24, cache: npm }
       - run: npm ci
-      - run: npm run build-storybook            # produces ./storybook-static
-      - run: npx uiverify upload --static-dir storybook-static
+      - run: npm run build-storybook -- --stats-json    # ./storybook-static + the dependency graph
+      - run: npx uiverify upload --static-dir storybook-static --only-changed
         env:
           UIVERIFY_API_KEY: ${{ secrets.UIVERIFY_API_KEY }}
         # Playwright / Vitest instead (browsers aren't preinstalled on the runner): run
         #   "npx playwright install --with-deps && npx playwright test"  (or "npx vitest run"), then
-        #   "npx uiverify upload --static-dir uiverify-archive".
+        #   "npx uiverify upload --static-dir uiverify-archive" - add --only-changed for Vitest, not Playwright.
         # Screenshot upload (native / mobile / React Native): produce your PNGs (Detox, Maestro, etc.),
         #   then "npx uiverify upload --screenshots ./screenshots" in place of the build+upload steps.
 ```
 
-Locally the same thing is:
+Keep `--stats-json` on the build and `--only-changed` on the upload - they are the default, not a
+tuning step (see "Render only what the PR could have changed" below). Locally the same thing is:
 ```bash
-npm run build-storybook && UIVERIFY_API_KEY=uv_proj_… npx uiverify upload --static-dir storybook-static
+npm run build-storybook -- --stats-json && UIVERIFY_API_KEY=uv_proj_… npx uiverify upload --static-dir storybook-static
 # Playwright:  npx playwright test && npx uiverify upload --static-dir uiverify-archive
 # Vitest:      npx playwright install --with-deps && npx vitest run && npx uiverify upload --static-dir uiverify-archive
 ```
 
-**Optional — run only on PRs that can change the UI.** The workflow above fires on every PR, and the
-archive paths (Playwright/Vitest) always render in full, so on a busy repo scope it to UI-affecting
-changes. Two ways, and they differ on required checks:
+**Optional — run only on PRs that can change the UI.** The workflow above fires on every PR, and a
+Playwright archive has no dependency graph so it always renders in full (a Vitest or Storybook upload
+already scopes rendering with `--only-changed` — see below). On a busy repo, scope the job to
+UI-affecting changes. Two ways, and they differ on required checks:
 
 - **Plain `paths:` filter** — add `paths:` to the trigger. Simplest, but it skips the *whole job*, so it
   reports no status. If the UI Verify check is a **required** status check, a PR touching none of those
@@ -173,25 +175,21 @@ the workflow file itself** — and **don't exclude a mixed folder just because i
 over-runs, **split the UI-facing code onto its own path, then filter on that** — separate for granularity;
 never trade coverage for speed.
 
-**Optional, Storybook or Vitest — render only what the PR could have changed.** UI Verify can render just
-the stories your commit's changed files could affect and carry the rest of the baselines forward. To turn
-it on for **Storybook**, edit the two `- run:` steps in `.github/workflows/visual.yml` (the build and the
-upload) in place — add `-- --stats-json` to the build, and `--only-changed` to the upload:
+**Render only what the PR could have changed — on by default for Storybook and Vitest.** The Step 4
+workflow already does this: UI Verify renders just the stories your commit's changed files could affect
+and carries the rest of the baselines forward, so a PR's build time and bill track the size of the diff,
+not the size of the suite. It is safe to have on from the first run - when it can't prove a story is
+unaffected it renders it, and a first build has nothing to carry, so it renders everything anyway.
 
-```yaml
-      - run: npm run build-storybook -- --stats-json    # adds preview-stats.json to storybook-static
-      - run: npx uiverify upload --static-dir storybook-static --only-changed
-        env:
-          UIVERIFY_API_KEY: ${{ secrets.UIVERIFY_API_KEY }}
-```
+For **Storybook** it takes both halves, and an agent must not drop either: `--stats-json` on the build
+writes `preview-stats.json`, the dependency graph the server reads, and `--only-changed` on the upload
+turns the decision on. Without `--stats-json` every story renders even with the flag on (the CLI warns
+when it spots this); without `--only-changed` the graph is uploaded and ignored. If the repo already has a
+visual workflow, edit its build and upload steps in place rather than appending new ones, or the job
+builds Storybook twice and registers two builds per PR.
 
-Both edits are required, and they replace the existing steps — don't append them, or the job builds
-Storybook twice and registers two builds per PR. The decision runs server-side off the dependency graph
-in `preview-stats.json`, so without `--stats-json` every story renders even with the flag on (the CLI
-warns when it spots this).
-
-**Vitest** carries forward too, and needs no build flag: `@uiverify/vitest` **1.1+** writes the Vite
-module graph into the archive on its own, so you only add `--only-changed` to the upload:
+**Vitest** needs no build flag: `@uiverify/vitest` **1.1+** writes the Vite module graph into the archive
+on its own, so the upload only needs `--only-changed`:
 
 ```yaml
       - run: npx uiverify upload --static-dir uiverify-archive --only-changed
@@ -206,11 +204,12 @@ component (`SecurityPage.visual.test.tsx` beside `SecurityPage.tsx`) lets a one-
 other page; a single mega-test that imports half the app re-renders on every commit. It does nothing for
 the **Playwright** path — a Playwright archive has no dependency graph, so the flag is a no-op there.
 
-Check the Storybook major first - the flag is `--stats-json` on Storybook 8+, but `--webpack-stats-json`
-on 7.x, and passing the wrong one fails the build step before the upload ever runs.
+Check the Storybook major before you write the build step - the flag is `--stats-json` on Storybook 8+,
+but `--webpack-stats-json` on 7.x, and passing the wrong one fails the build step before the upload ever
+runs.
 
-Leave this off for the first few runs; turn it on once the check is green and you want the bill to track
-the size of the diff rather than the size of the suite.
+Keep `--only-changed` off the **local** upload above. The skip is decided from commits, so re-uploading
+an uncommitted edit on the same commit would carry every story forward and hide the change you made.
 
 ## Step 5 — the check gates every PR
 

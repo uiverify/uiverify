@@ -38,6 +38,8 @@ function aiVerdictSuffix(s: { aiVerdict: string | null; aiConfidence: string | n
   return s.aiVerdict === "regression" ? ` · AI: likely regression${conf}` : ` · AI: intended${conf}`;
 }
 
+const openNotes = (n: number) => `${n} open review comment${n === 1 ? "" : "s"}`;
+
 export function formatVerdictSummary(summary: BuildSummary, buildUrl: string, agent?: AgentHandoff): string[] {
   const lines: string[] = [];
 
@@ -59,7 +61,8 @@ export function formatVerdictSummary(summary: BuildSummary, buildUrl: string, ag
     lines.push("Changed stories:");
     for (const s of summary.changedStories) {
       const decision = s.decision ?? "awaiting review";
-      lines.push(`  ${storyPlainLabel(s)} · ${decision}${aiVerdictSuffix(s)}`);
+      const notes = s.comments?.unresolved ? ` · ${openNotes(s.comments.unresolved)}` : "";
+      lines.push(`  ${storyPlainLabel(s)} · ${decision}${aiVerdictSuffix(s)}${notes}`);
       if (s.aiSummary) lines.push(`      ${s.aiSummary}`);
     }
     const total = summary.changedStoriesTruncated?.total ?? summary.changedStories.length;
@@ -74,6 +77,14 @@ export function formatVerdictSummary(summary: BuildSummary, buildUrl: string, ag
     for (const s of shown) lines.push(`  ${storyPlainLabel(s)} - ${s.error}`);
     const overflow = summary.failedStories.length - shown.length;
     if (overflow > 0) lines.push(`  …and ${overflow} more`);
+  }
+
+  // A reviewer's open note is a request the change isn't done yet, and the MCP refuses to accept a story
+  // while one is open - say so here, where the agent that opened the PR reads its instructions.
+  const unresolved = summary.comments?.unresolved ?? 0;
+  if (unresolved > 0) {
+    lines.push("");
+    lines.push(`${openNotes(unresolved)} on this build. Read and address them before accepting.`);
   }
 
   lines.push("");
@@ -103,8 +114,12 @@ export function formatVerdictSummary(summary: BuildSummary, buildUrl: string, ag
     lines.push(`  Endpoint: ${agent.mcpUrl} (authenticate with your project API key)`);
     lines.push(`  1. get_build ${agent.selector} - the changed-story list, each with a diffResultId.`);
     lines.push(`  2. render_diff_image { "diffResultId": "...", "which": "diff" } - see the changed pixels.`);
+    if (unresolved > 0) {
+      lines.push(`  3. list_comments ${agent.selector} - read each note, address it, then resolve_comment its thread`);
+      lines.push("     (accepting a story is refused while its note is open).");
+    }
     if (summary.changedStories.length > 0) {
-      lines.push("  3. Decide intended-vs-regression, then act:");
+      lines.push(`  ${unresolved > 0 ? 4 : 3}. Decide intended-vs-regression, then act:`);
       lines.push('     - review_diff { "diffResultId": "...", "decision": "accept" | "deny" | "ignore" } - one story.');
       lines.push(`     - accept_build ${agent.selector} - accept every change at once (advances the baseline, greens the check).`);
     } else {

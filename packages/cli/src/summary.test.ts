@@ -156,6 +156,65 @@ describe("formatVerdictSummary", () => {
     expect(lines.some((l) => l.includes("**") || l.includes("]("))).toBe(false);
   });
 
+  /** Catches an agent reading the CI log and accepting over a reviewer's note it was never told about. */
+  it("points at open review comments per story, build-wide, and as a step before accepting", () => {
+    const summary: BuildSummary = {
+      aiReview: null,
+      comments: { total: 3, unresolved: 2 },
+      changedStories: [
+        {
+          storyId: "a",
+          title: "A",
+          name: "X",
+          decision: null,
+          aiVerdict: null,
+          aiConfidence: null,
+          aiSummary: null,
+          comments: { total: 2, unresolved: 2 },
+        },
+        {
+          storyId: "b",
+          title: "B",
+          name: "Y",
+          decision: null,
+          aiVerdict: null,
+          aiConfidence: null,
+          aiSummary: null,
+          comments: { total: 1, unresolved: 0 },
+        },
+      ],
+      changedStoriesTruncated: null,
+      failedStories: [],
+    };
+    const agent = { mcpUrl: "https://uiverify.example.com/api/mcp", selector: '{ "prNumber": 7 }' };
+
+    const lines = formatVerdictSummary(summary, BUILD_URL, agent);
+    expect(lines).toContain("  A › X · awaiting review · 2 open review comments");
+    expect(lines).toContain("  B › Y · awaiting review");
+    expect(lines).toContain("2 open review comments on this build. Read and address them before accepting.");
+    expect(lines).toContain(
+      '  3. list_comments { "prNumber": 7 } - read each note, address it, then resolve_comment its thread',
+    );
+    expect(lines).toContain("  4. Decide intended-vs-regression, then act:");
+  });
+
+  it("prints no comment lines when none are open or an older server sends no tally", () => {
+    const base: BuildSummary = {
+      aiReview: null,
+      changedStories: [
+        { storyId: "a", title: "A", name: "X", decision: null, aiVerdict: null, aiConfidence: null, aiSummary: null },
+      ],
+      changedStoriesTruncated: null,
+      failedStories: [],
+    };
+    const agent = { mcpUrl: "https://uiverify.example.com/api/mcp", selector: '{ "prNumber": 7 }' };
+    for (const summary of [base, { ...base, comments: { total: 1, unresolved: 0 } }]) {
+      const lines = formatVerdictSummary(summary, BUILD_URL, agent);
+      expect(lines.some((l) => l.includes("review comment") || l.includes("list_comments"))).toBe(false);
+      expect(lines).toContain("  3. Decide intended-vs-regression, then act:");
+    }
+  });
+
   it("the failure-only handoff points at fixing the story, not accepting a diff", () => {
     const summary: BuildSummary = {
       aiReview: null,

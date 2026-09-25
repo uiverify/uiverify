@@ -45,13 +45,13 @@ Tools it exposes:
 |---|---|---|
 | `list_builds` | Recent builds + gate status, to find the one to inspect | `branch?`, `status?`, `limit?` |
 | `get_build` | Lean triage of one build — the gate + `counts {total, changed, failed, unchanged}`, a build-wide `comments {total, unresolved}` review-comment tally, the AI tally, and the **first page (25)** of changed/failed stories (each with a `diffResultId`, diff %, and when AI review is on the judge's `aiVerdict`, `aiConfidence`, and for a regression `aiFlagReason` = its one-line "what looks unintended"), the page carrying a `nextCursor`. It does **not** dump the unchanged list — `counts.unchanged` is the signpost; page the rest with `list_build_stories`. `comments.unresolved > 0` means a human/agent left an open note — read it with `list_comments` before you accept | one of `commitSha` / `prNumber` / `buildId` |
-| `list_build_stories` | Page through one build's stories by status — the only way to browse the full changed / failed / **unchanged** set beyond `get_build`'s first page. `counts.unchanged` from `get_build` is the exact count it pages | selector, `status: changed \| unchanged \| failed`, `cursor?`, `limit?` (default 25, max 100) |
+| `list_build_stories` | Page through one build's stories by status — the only way to browse the full changed / failed / **unchanged** set beyond `get_build`'s first page. `counts.unchanged` from `get_build` is the exact count it pages. Every changed-story row (here and in `get_build`) carries its own `comments {total, unresolved}` | selector, `status: changed \| unchanged \| failed`, `cursor?`, `limit?` (default 25, max 100) |
 | `get_diff` | Per-story diff metrics + **presigned image URLs** (baseline / candidate / diff) you can download to a file or link straight into a PR; when AI review is on, the judge's full call: `aiVerdict`, `aiConfidence`, `aiSummary` (what changed), `aiReasoning` (why), `aiFlagReason`; and a per-story `comments {total, unresolved}` (same signpost as `get_build`, scoped to the one story). Pass `storyId` to pull one story **even if it didn't change** — you get its current baseline URL, so you can show "identical to baseline" on a passed build | same selector, optional `storyId` |
-| `render_diff_image` | The actual **pixels** of one image, inline for the vision model to look at (not a URL): `baseline` / `candidate` / `diff`, or `before_after` for a before-and-after crop zoomed to the changed region — one crop per region, stacked, when the story moved in several far-apart places (a header and a footer) | `diffResultId` (or `storyId` for a story that didn't change), `which` |
+| `render_diff_image` | The actual **pixels** of one image, inline for the vision model to look at (not a URL): `baseline` / `candidate` / `diff`, or `before_after` for a before-and-after crop zoomed to the changed region — one crop per region, stacked, when the story moved in several far-apart places (a header and a footer). When the story has an unresolved review comment, a text note saying so comes **before** the image | `diffResultId` (or `storyId` for a story that didn't change), `which` |
 | `get_pr_changeset` | The **cumulative** "This PR vs base" changeset: what the *whole pull request* did to the UI vs the branch it merges into — `new` / `changed` / `removed` stories, each with review status (and the judge's verdict when AI review is on), plus `counts {new, changed, removed, unchanged}` and the **first page (25)** of each list. **Distinct from `get_build`**, which is one commit's gate: this survives in-PR accepts **and** merge, and catches an added-then-accepted story and a **removed** one that no single build's diff can see | one of `commitSha` / `prNumber` / `buildId` |
 | `list_pr_stories` | Page one bucket of the PR-vs-base changeset beyond `get_pr_changeset`'s first page | selector, `kind: new \| changed \| removed`, `cursor?`, `limit?` |
-| `review_diff` | Record a decision on one story | `diffResultId`, `decision: accept \| deny \| ignore` |
-| `accept_build` | Accept **every** changed story in a build at once | same selector |
+| `review_diff` | Record a decision on one story. `accept` and `ignore` are **refused** while the story has an unresolved review comment; `deny` always works | `diffResultId`, `decision: accept \| deny \| ignore` |
+| `accept_build` | Accept **every** changed story in a build at once. **Refused, accepting nothing,** while any changed story has an unresolved review comment — the error names those stories | same selector |
 | `list_comments` | Read the review comments a designer/QA (or another agent) left on a build's diffs — every live comment across the build, each carrying its `diffResultId`, `authorType`, `body`, `side`, `parentId` (a reply's thread root), `anchor` (a point/region on the image), and `resolved`. This is the thing `get_build`/`get_diff`'s `comments` count points you to | one of `commitSha` / `prNumber` / `buildId` |
 | `post_comment` | Leave a comment (or a threaded reply) on one story's diff — e.g. reply to a reviewer's question, or flag a regression back to them. Authored as the **agent**; a new root comment is refused if a newer build exists on the branch (comment on the latest), but replies are always allowed | selector + `diffResultId`, `body`, `side?`, `anchor?`, `parentId?` (reply to a root's id) |
 | `resolve_comment` | Resolve (or reopen) a comment thread once its note is addressed | `commentId` (thread root), `resolved` |
@@ -82,8 +82,10 @@ before image, not in isolation:**
   `get_diff` story shows `comments`), a designer/QA or another agent has left a note on this build —
   `list_comments` reads them, each tied to its `diffResultId` so you can match a note to the story in your
   buckets. A comment is context the pixels don't carry ("this spacing is intentional, don't revert it" /
-  "the logo is wrong here"), so read it before you bucket the story, and never `accept_build` over an
-  **unresolved** comment.
+  "the logo is wrong here"), so read it before you bucket the story. You can't accept over one anyway:
+  `accept_build` and `review_diff` accept/ignore refuse a story with an **unresolved** comment. The loop is
+  read the note → do what it asks (often a code change and a new push) → `resolve_comment` → accept.
+  Never resolve a note just to unblock the accept; resolve it because you addressed it.
 
 Report in four buckets, with real story names and % deltas:
 
@@ -201,9 +203,10 @@ from the agent instead of making them chase you. Read the thread with `list_comm
   "why did this move?" with the diff you made, or to confirm "fixed in the next push."
 - **Flag a regression back** — `post_comment { diffResultId, body, anchor? }` as a new root, to point the
   reviewer at a story you're leaving for them (pair it with the ⚠️ bucket from Recipe 1).
-- **Resolve** — `resolve_comment { commentId, resolved: true }` once the note is addressed (e.g. you
-  accepted the intended change it was about, or answered the question). Only reach for this when the thread
-  is genuinely done; an open comment is the signal that stops a premature `accept_build`.
+- **Resolve** — `resolve_comment { commentId, resolved: true }` once the note is addressed (you made the
+  change it asked for, or answered the question). Resolve **before** you accept: an open thread makes
+  `accept_build` / `review_diff` refuse that story. Only reach for this when the thread is genuinely done;
+  the open comment is the signal that stops a premature accept.
 
 Your key authors comments as the **agent**, and can only edit/delete comments it authored — never touch a
 human's comment.
