@@ -1,7 +1,8 @@
 import type { Page, Response } from "@playwright/test";
 import {
-  type ArchivedResource,
   type ArchivedSnapshot,
+  type CapturedResource,
+  type CapturedSnapshot,
   type ArchivedSnapshotParams,
   writeSnapshot,
 } from "@uiverify/archive-core";
@@ -15,8 +16,8 @@ const PRODUCER = { name: pkg.name, version: pkg.version };
 /**
  * PlaywrightArchiver — the producer half of the E2E archive flow. It rides along a live Playwright
  * `page` during a test: it buffers the bytes of every resource the app loads, and on `capture()` it
- * serializes the current DOM (via rrweb, injected into the page) into a self-contained
- * {@link ArchivedSnapshot} written to disk. Those files are later assembled into a bundle by
+ * serializes the current DOM (via rrweb, injected into the page) into an {@link ArchivedSnapshot}
+ * written to disk, its resource bytes into the archive's shared `resources/` store. Those files are later assembled into a bundle by
  * `finalizeArchive` and replayed + diffed by UI Verify.
  *
  * Nothing here screenshots or diffs — capture is intentionally cheap and single-browser; the fidelity
@@ -47,7 +48,7 @@ export interface ArchiverOptions {
 }
 
 export class PlaywrightArchiver {
-  private readonly resources = new Map<string, ArchivedResource>();
+  private readonly resources = new Map<string, CapturedResource>();
   private readonly bodyJobs = new Set<Promise<void>>();
   private captureCount = 0;
 
@@ -143,7 +144,7 @@ export class PlaywrightArchiver {
       }))
       .catch(() => ({ deviceScaleFactor: undefined, colorScheme: undefined }));
     const id = name ? `${this.opts.idBase}::${name}` : this.opts.idBase;
-    const snapshot: ArchivedSnapshot = {
+    const snapshot: CapturedSnapshot = {
       id,
       title: this.opts.title,
       name,

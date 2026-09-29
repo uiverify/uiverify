@@ -64,14 +64,40 @@ describe("finalizeArchiveIfNeeded", () => {
     expect(index.entries["login.spec.ts::logs in"]).not.toHaveProperty("dom");
   });
 
-  it("is a no-op when index.json already exists (a Storybook static dir)", () => {
+  it("is a no-op for a Storybook static dir, even one that ships a snapshots/ asset dir", () => {
     const existing = { v: 1, entries: { "existing--story": { id: "existing--story" } } };
+    fs.writeFileSync(path.join(dir, "iframe.html"), "<html></html>");
     fs.writeFileSync(path.join(dir, "index.json"), JSON.stringify(existing));
     writeSnapshot("ignored-000.json", { id: "x", title: "x", name: "" });
 
     finalizeArchiveIfNeeded(dir);
 
     expect(JSON.parse(fs.readFileSync(path.join(dir, "index.json"), "utf8"))).toEqual(existing);
+  });
+
+  // A local re-run over the same archive dir: the manifest from the first upload must not hide the
+  // tests (and designs) the second run added.
+  it("rebuilds a manifest left by an earlier run from the snapshots now on disk", () => {
+    writeSnapshot("a.json", { id: "a", title: "t", name: "", dom: {}, resources: {} });
+    finalizeArchiveIfNeeded(dir);
+    writeSnapshot("b.json", { id: "b", title: "t", name: "", dom: {}, resources: {}, baselineImage: "design/abc.png" });
+
+    finalizeArchiveIfNeeded(dir);
+
+    const index = JSON.parse(fs.readFileSync(path.join(dir, "index.json"), "utf8"));
+    expect(Object.keys(index.entries).sort()).toEqual(["a", "b"]);
+    expect(index.entries.b.baselineImage).toBe("design/abc.png");
+  });
+
+  it("removes a leftover manifest when the snapshots dir is now empty, so the upload is refused", async () => {
+    writeSnapshot("a.json", { id: "a", title: "t", name: "", dom: {}, resources: {} });
+    finalizeArchiveIfNeeded(dir);
+    fs.rmSync(path.join(dir, "snapshots", "a.json"));
+
+    await expect(createBundle(dir, path.join(os.tmpdir(), `vt-empty-${process.pid}.tgz`))).rejects.toThrow(
+      /nothing to upload/,
+    );
+    expect(fs.existsSync(path.join(dir, "index.json"))).toBe(false);
   });
 
   it("does nothing when there is no snapshots dir", () => {
@@ -88,6 +114,18 @@ describe("finalizeArchiveIfNeeded", () => {
     finalizeArchiveIfNeeded(dir);
 
     expect(JSON.parse(fs.readFileSync(path.join(dir, "index.json"), "utf8")).producer).toEqual(producer);
+  });
+
+  // The zod schema strips unknown keys, so a field the CLI doesn't list silently never reaches UI Verify.
+  it("lifts a snapshot's design baseline into the manifest", () => {
+    writeSnapshot("a.json", { id: "a", title: "t", name: "", dom: {}, resources: {}, baselineImage: "design/abc.png" });
+    writeSnapshot("b.json", { id: "b", title: "t", name: "", dom: {}, resources: {} });
+
+    finalizeArchiveIfNeeded(dir);
+
+    const index = JSON.parse(fs.readFileSync(path.join(dir, "index.json"), "utf8"));
+    expect(index.entries.a.baselineImage).toBe("design/abc.png");
+    expect(index.entries.b).not.toHaveProperty("baselineImage");
   });
 
   it("omits producer when the snapshots carry none (a pre-stamp SDK)", () => {

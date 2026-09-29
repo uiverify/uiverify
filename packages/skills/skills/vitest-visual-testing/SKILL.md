@@ -7,7 +7,7 @@ description: Make @uiverify/vitest (Vitest browser-mode) captures deterministic 
 
 ## Mental model — component isolation already removed most of the flake
 
-`@uiverify/vitest` archives each **browser-mode test's final DOM + every resource the page loaded**; UI
+`@uiverify/vitest` archives each **browser-mode test's final DOM + every resource it uses**; UI
 Verify re-renders and pixel-diffs that archive server-side. Because a browser-mode component test renders
 an **isolated component** (no page scroll, no A/B / analytics / chat / consent scripts, no
 lazy-load-on-scroll races), you get the same head start Storybook gives you: the determinism work here is
@@ -29,8 +29,8 @@ export default defineConfig({
 });
 ```
 
-Every browser-mode test then archives its final DOM automatically; `takeSnapshot('name')` adds an
-intermediate checkpoint.
+Every browser-mode test then archives its final DOM automatically; a test that calls
+`takeSnapshot('name')` archives those named snapshots instead.
 
 **Load your app's global CSS + fonts once, in a setup file.** An isolated browser-mode test renders a
 single component — it does **not** import your app's entry/layout, so your global stylesheet and any
@@ -57,8 +57,9 @@ only wait for fonts the test actually loads; it can't declare one you never impo
 
 **UI Verify's capturer neutralizes these automatically — do NOT hand-fix them:** CSS animations &
 transitions (killed at render) and the Web Animations API (disabled); `prefers-reduced-motion: reduce`
-(**emulated**); `Math.random` (**seeded** before your app code runs); web fonts and `<img>` loading
-(**waited for** — the fonts your app actually loads; see the setup file above); **finite** JS animations
+(**emulated**); `Math.random` (**seeded** before your app code runs); web fonts, `<img>` and CSS
+background images (`::before`/`::after` included) (**waited for** — the fonts your app actually loads, see
+the setup file above; `loading="lazy"` images below the viewport are switched to eager so they load too); **finite** JS animations
 (captured at their settled final frame). And unlike a real
 page (`playwright-visual-testing`), a browser-mode test has **no SSR** — no server-rendered random pick
 to reconcile. So the checklist below is only the remainder — what lives *inside your app*.

@@ -2,7 +2,7 @@
 
 Vitest browser-mode capture SDK for [UI Verify](https://uiverify.ai) - visual regression testing for agent-written UI, and an alternative to Chromatic and Percy.
 
-Add one plugin to your Vitest config and every browser-mode test archives its final DOM (the serialized DOM plus the bytes of every resource the page loaded). UI Verify re-renders and pixel-diffs that archive in the cloud, so you get deterministic, cross-browser visual tests from the component tests you already have - no Storybook required.
+Add one plugin to your Vitest config and every browser-mode test archives its final DOM (the serialized DOM plus the bytes of every resource it uses). UI Verify re-renders and pixel-diffs that archive in the cloud, so you get deterministic, cross-browser visual tests from the component tests you already have - no Storybook required.
 
 ## Requirements
 
@@ -46,11 +46,18 @@ import { takeSnapshot, disableAutoSnapshot } from "@uiverify/vitest";
 test("menu", async () => {
   await render(<Menu />); // render() is async - await it so the DOM is committed before capture
   await takeSnapshot("closed"); // optional named checkpoint
-  // the final state is archived automatically at the end of the test
+});
+
+test("footer", async () => {
+  await render(<Footer />);
+  // no takeSnapshot(): the final state is archived automatically at the end of the test
 });
 ```
 
-- `takeSnapshot(name?)` - archive the current DOM as a named checkpoint mid-test.
+- `takeSnapshot(name?, { baselineImage? })` - archive the current DOM as a named checkpoint. A test that
+  calls it is not also auto-snapshotted at the end. `baselineImage` is a design PNG to compare against until
+  a render is accepted: an image import passed as-is (`import design from "./home.png"`), or a
+  `data:image/png;base64,...` string. `takeSnapshot("", { baselineImage })` keeps the test's usual snapshot id.
 - `disableAutoSnapshot()` - opt the current test out of the automatic end-of-test snapshot (or pass `disableAutoSnapshot: true` to `uiverifyPlugin()` to turn it off for every test).
 
 ## Upload
@@ -74,7 +81,7 @@ uiverifyPlugin({
 
 ## How it works
 
-In Vitest browser mode the test runs inside the page, so the DOM is serialized in the same realm with [`rrweb-snapshot`](https://www.npmjs.com/package/rrweb-snapshot); the resources the page loaded are fetched and base64-encoded; and the assembled archive is written to disk by a Vitest browser command. Nothing runs at runtime beyond your test - the archive is a plain JSON bundle the CLI uploads.
+In Vitest browser mode the test runs inside the page, so the DOM is serialized in the same realm with [`rrweb-snapshot`](https://www.npmjs.com/package/rrweb-snapshot); the resources that DOM uses (images, fonts, stylesheets and what they reference) are fetched; and a Vitest browser command writes the snapshot JSON to disk, each resource stored once per archive in its `resources/` folder however many snapshots share it. Nothing runs at runtime beyond your test - the CLI uploads the archive folder as is.
 
 ## License
 

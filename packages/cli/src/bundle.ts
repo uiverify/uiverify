@@ -67,22 +67,32 @@ const snapshotMeta = z.object({
   name: z.string(),
   producer: producerSchema.optional(),
   sourcePath: z.string().optional(),
+  baselineImage: z.string().optional(),
 });
 
 /**
- * A Playwright archive dir carries per-test `snapshots/*.json` but no `index.json` — the parallel test
- * workers can't safely co-write one shared manifest during the run. Assemble it here, at bundle time,
- * so `uiverify upload` is the only step the user runs (no separate finalize). No-op for a Storybook
- * static dir, which already ships an `index.json`.
+ * A Playwright/Vitest archive dir carries per-test `snapshots/*.json` but no `index.json` — the parallel
+ * test workers can't safely co-write one shared manifest during the run. Assemble it here, at bundle time,
+ * so `uiverify upload` is the only step the user runs (no separate finalize). Rebuilt on every upload, so a
+ * manifest left by an earlier run never hides the snapshots a re-run wrote. No-op for a Storybook static
+ * dir, which ships its own `index.json`.
  */
 export function finalizeArchiveIfNeeded(staticDir: string): void {
   const snapshotsDir = path.join(staticDir, "snapshots");
   const indexPath = path.join(staticDir, "index.json");
-  if (fs.existsSync(indexPath) || !fs.existsSync(snapshotsDir)) return;
+  if (isStorybookStaticDir(staticDir) || !fs.existsSync(snapshotsDir)) return;
 
   const entries: Record<
     string,
-    { id: string; type: "story"; title: string; name: string; snapshot: string; sourcePath?: string }
+    {
+      id: string;
+      type: "story";
+      title: string;
+      name: string;
+      snapshot: string;
+      sourcePath?: string;
+      baselineImage?: string;
+    }
   > = {};
   let producer: ArchiveProducer | undefined;
   for (const file of fs.readdirSync(snapshotsDir)) {
@@ -95,13 +105,16 @@ export function finalizeArchiveIfNeeded(staticDir: string): void {
       name: snap.name,
       snapshot: path.join("snapshots", file),
       ...(snap.sourcePath ? { sourcePath: snap.sourcePath } : {}),
+      ...(snap.baselineImage ? { baselineImage: snap.baselineImage } : {}),
     };
     // Every snapshot carries the same producer; take the first seen for the manifest.
     producer ??= snap.producer;
   }
-  // Nothing captured: write no manifest, so `createBundle` refuses the upload AND a later run that does
-  // capture isn't shadowed by a stale empty `index.json` (this function no-ops once one exists).
-  if (Object.keys(entries).length === 0) return;
+  // Nothing captured: leave no manifest, so `createBundle` refuses the upload.
+  if (Object.keys(entries).length === 0) {
+    fs.rmSync(indexPath, { force: true });
+    return;
+  }
   fs.writeFileSync(
     indexPath,
     JSON.stringify({ v: ARCHIVE_FORMAT_VERSION, entries, ...(producer ? { producer } : {}) }, null, 2),

@@ -9,6 +9,8 @@
 export type {
   ArchivedResource,
   ArchivedSnapshot,
+  CapturedResource,
+  CapturedSnapshot,
   ArchivedSnapshotParams,
   ArchiveIndex,
   ArchiveIndexEntry,

@@ -1,6 +1,6 @@
 ---
 name: implement-figma-design
-description: Implement a Figma design (a Figma frame link or an exported PNG) in code as a Storybook story and converge the render to it using UI Verify as the source of truth. Declare the design as the story's baseline (`parameters.uiVerify.baselineImage`), build, upload, then converge SECTION BY SECTION from the top of the page down - reading UI Verify's localized diff and measuring the baseline/candidate pixels (never your own screenshots), fixing one section per upload until it is locked, then moving down. Stop at the minimum WITHOUT accepting - accepting rebases the baseline off the design. Use when building a page/component to match a provided design image, e.g. "implement this Figma", "build this design", "match the mockup", "reproduce this landing page and make the diff go away", "close the design-baseline diff". Not for accept/deny triage of a normal regression build (that is triage-visual-changes).
+description: Implement a Figma design (a Figma frame link or an exported PNG) in code as a Storybook story (or a Vitest browser-mode test) and converge the render to it using UI Verify as the source of truth. Declare the design as the story's baseline (`parameters.uiVerify.baselineImage`), build, upload, then converge SECTION BY SECTION from the top of the page down - reading UI Verify's localized diff and measuring the baseline/candidate pixels (never your own screenshots), fixing one section per upload until it is locked, then moving down. Stop at the minimum WITHOUT accepting - accepting rebases the baseline off the design. Use when building a page/component to match a provided design image, e.g. "implement this Figma", "build this design", "match the mockup", "reproduce this landing page and make the diff go away", "close the design-baseline diff". Not for accept/deny triage of a normal regression build (that is triage-visual-changes).
 ---
 
 # Implement a Figma design with UI Verify (the design is the source of truth)
@@ -157,9 +157,10 @@ Once per project, before the first upload:
 
 - **The UI Verify MCP is connected** (setup: the `triage-visual-changes` skill, "Connect the MCP"). If its
   tools are not in your session, stop and tell the user; the MCP connects at session start.
-- **The story has never been accepted in this project.** UI Verify uses the declared design as the baseline
-  only when the story has no accepted baseline. If it was accepted before, use a new story id (or a fresh
-  project), or you will converge to an old render instead of the design.
+- **An existing story or test is fine.** You don't need a new story id or a fresh project: declaring a
+  design (or changing the image) makes it the baseline from that upload on, over any earlier accepted
+  render, until you accept again. Accepting is what hands the baseline back to your render (see "Do not
+  accept").
 - **You have the design's font files** (woff2). If you can't identify or get the font, tell the user: every
   line of text will differ and the run can't finish.
 
@@ -171,6 +172,14 @@ Then:
   Storybook (a `staticDirs` asset, e.g. `"design/hero.png"`), or a **`data:image/png;base64,...` URI**.
   **PNG only.** No `http(s)`/`file:` URLs, no absolute paths, no `..` - the image has to live inside the
   artifact you upload.
+- **In a Vitest browser-mode project instead** (`@uiverify/vitest` 1.3+, uploaded with `uiverify` 1.7+),
+  import the PNG next to the test and pass it to the snapshot:
+  `import design from "./design/hero.png"` then `await takeSnapshot("", { baselineImage: design })` (pass
+  the import as-is, even where it resolves to an object). The SDK ships the image inside the archive. The snapshot is the whole page at the browser viewport width, so set the Vitest browser
+  `viewport` to the design's canvas width. Each round is `rm -rf uiverify-archive && vitest run`, then
+  `uiverify upload --static-dir ./uiverify-archive` in place of the Storybook build + upload below
+  (clearing the archive matters: the SDK never deletes old files, so a test you renamed or removed would
+  still be uploaded from the previous round).
 - Mark an **explicitly excluded dynamic region** (a video, an autoplay animation, a live/random
   background) with the
   `data-uiverify-ignore` attribute. UI Verify blanks that box on both the design and your render, so its

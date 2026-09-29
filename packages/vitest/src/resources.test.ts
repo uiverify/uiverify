@@ -64,3 +64,109 @@ describe("archiveResources", () => {
     expect(archived[FONT_URL]?.contentType).toBe("font/woff2");
   });
 });
+
+describe("referencedUrls", () => {
+  /** Catches the page-accumulation bug: every test in a file shares one page, so the loaded-resource list
+   *  holds earlier tests' images; a snapshot must keep only what its own DOM references. */
+  it("keeps only the loaded URLs the serialized DOM references", async () => {
+    const { referencedUrls } = await loadWithPageFetch(serving({}));
+    const dom = JSON.stringify({
+      tagName: "img",
+      attributes: { src: "http://localhost:5173/blog/post-2/cover.webp" },
+      style: "@font-face{src:url(https://fonts.gstatic.com/s/geist/a.woff2)}",
+    });
+    const loaded = [
+      "http://localhost:5173/blog/post-1/cover.webp",
+      "http://localhost:5173/blog/post-2/cover.webp",
+      "https://fonts.gstatic.com/s/geist/a.woff2",
+    ];
+    expect([...referencedUrls(loaded, dom)]).toEqual([
+      "http://localhost:5173/blog/post-2/cover.webp",
+      "https://fonts.gstatic.com/s/geist/a.woff2",
+    ]);
+  });
+});
+
+describe("isModuleOrData", () => {
+  /** Catches the /@fs/ blanket skip: a font next/font/local serves through Vite's /@fs/ prefix must be
+   *  archived, or the replay falls back to a system font. Modules under the same prefix stay skipped. */
+  it("keeps a binary asset served under Vite's /@fs/ prefix, skips a module there", async () => {
+    const { isModuleOrData } = await loadWithPageFetch(serving({}));
+    expect(isModuleOrData("http://localhost:5173/@fs/Users/me/app/app/fonts/geist-latin.woff2")).toBe(false);
+    expect(isModuleOrData("http://localhost:5173/@fs/Users/me/app/src/Button.tsx?v=1")).toBe(true);
+    expect(isModuleOrData("http://localhost:5173/@fs/Users/me/app/node_modules/x/index.js")).toBe(true);
+    expect(isModuleOrData("http://localhost:5173/@fs/Users/me/app/src/logo.svg")).toBe(false);
+  });
+});
+
+describe("referencedUrls boundaries", () => {
+  it("does not count a URL that only prefixes a longer referenced one", async () => {
+    const { referencedUrls } = await loadWithPageFetch(serving({}));
+    const dom = JSON.stringify({ attributes: { src: "https://cdn.test/image.png?v=2" } });
+    expect([...referencedUrls(["https://cdn.test/image.png", "https://cdn.test/image.png?v=2"], dom)]).toEqual([
+      "https://cdn.test/image.png?v=2",
+    ]);
+  });
+});
+
+describe("archiveReferencedResources", () => {
+  const SHEET = "https://fonts.example.com/css2?family=Brand";
+  const PAGE_IMG = "http://localhost:5173/hero.png";
+  const OTHER_TEST_IMG = "http://localhost:5173/earlier-test.png";
+
+  /** Catches the linked-stylesheet regression: a cross-origin sheet rrweb can't inline stays a <link>, so
+   *  the fonts it loads appear only inside that sheet, never in the DOM - they must still be archived. */
+  it("archives the DOM's own resources plus what an archived stylesheet references, nothing else", async () => {
+    const { archiveReferencedResources } = await loadWithPageFetch(
+      serving({
+        [SHEET]: ["text/css", `@font-face{src:url(${FONT_URL})} .x{background:url("../img/bg.png")}`],
+        [FONT_URL]: ["font/woff2", FONT_BYTES],
+        ["https://fonts.example.com/img/bg.png"]: ["image/png", new Uint8Array([1])],
+        [PAGE_IMG]: ["image/png", new Uint8Array([2])],
+        [OTHER_TEST_IMG]: ["image/png", new Uint8Array([3])],
+      }),
+    );
+    const dom = JSON.stringify({ link: { href: SHEET }, img: { src: PAGE_IMG } });
+    const loaded = [SHEET, FONT_URL, "https://fonts.example.com/img/bg.png", PAGE_IMG, OTHER_TEST_IMG];
+    const archived = await archiveReferencedResources(loaded, dom);
+    expect(Object.keys(archived).sort()).toEqual(
+      [SHEET, FONT_URL, "https://fonts.example.com/img/bg.png", PAGE_IMG].sort(),
+    );
+  });
+});
+
+describe("archiveReferencedResources URL spellings", () => {
+  /** Catches the ways the DOM or a stylesheet spells a loaded URL differently from Resource Timing: an
+   *  SVG sprite's #fragment, an unencoded space or protocol-relative URL rrweb keeps in a url(), uppercase
+   *  CSS keywords, and an @import chain two sheets deep. Each one missed drops a loaded asset from the
+   *  archive. */
+  it("matches fragments, encoded spaces, protocol-relative URLs, uppercase CSS keywords, and nested @imports", async () => {
+    const base = "http://localhost:5173";
+    const png = ["image/png", new Uint8Array([1])] as const;
+    const { archiveReferencedResources } = await loadWithPageFetch(
+      serving({
+        [`${base}/sprite.svg`]: ["image/svg+xml", "<svg/>"],
+        [`${base}/hero%20image.png`]: [...png],
+        [`${base}/a.css`]: ["text/css", '@IMPORT "b.css";'],
+        [`${base}/b.css`]: ["text/css", ".i{background:URL(icons.png#x)}"],
+        [`${base}/icons.png`]: [...png],
+        ["http://cdn.test/pr.png"]: [...png],
+      }),
+    );
+    const dom = JSON.stringify({
+      use: { href: `${base}/sprite.svg#view` },
+      style: `.hero{background:url("${base}/hero image.png")} .cdn{background:url(//cdn.test/pr.png)}`,
+      link: { href: `${base}/a.css` },
+    });
+    const loaded = [
+      `${base}/sprite.svg`,
+      `${base}/hero%20image.png`,
+      `${base}/a.css`,
+      `${base}/b.css`,
+      `${base}/icons.png`,
+      "http://cdn.test/pr.png",
+    ];
+    const archived = await archiveReferencedResources(loaded, dom);
+    expect(Object.keys(archived).sort()).toEqual([...loaded].sort());
+  });
+});

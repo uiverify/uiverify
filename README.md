@@ -76,7 +76,7 @@ It renders only the stories you name (repeatable `--story`, globs or exact ids),
 |---|---|---|
 | **[`uiverify`](packages/cli)** | `npm i -D uiverify` | The CLI. `uiverify upload` is the CI uploader (Storybook bundle, Playwright/Vitest archive, or a directory of finished screenshots) - streams render progress and reflects the visual verdict in its exit code. `uiverify check` is the agent edit-loop check - renders just the stories you name against the real CI baseline, without posting a check or moving a baseline. |
 | **[`@uiverify/playwright`](packages/playwright)** | `npm i -D @uiverify/playwright` | The Playwright capture SDK. Swap `@playwright/test` for it and each test archives its final UI state (serialized DOM + resource bytes) for UI Verify to replay and diff. |
-| **[`@uiverify/vitest`](packages/vitest)** | `npm i -D @uiverify/vitest` | The Vitest capture SDK. Add `uiverifyPlugin()` to your Vitest config and each browser-mode test archives its final DOM (serialized DOM + resource bytes) for UI Verify to replay and diff; `takeSnapshot()` adds named checkpoints. |
+| **[`@uiverify/vitest`](packages/vitest)** | `npm i -D @uiverify/vitest` | The Vitest capture SDK. Add `uiverifyPlugin()` to your Vitest config and each browser-mode test archives its final DOM (serialized DOM + resource bytes) for UI Verify to replay and diff; `takeSnapshot()` takes named snapshots instead. |
 | **[`@uiverify/skills`](packages/skills)** | `npx skills add`, see below | Agent skills: `SKILL.md` workflows a coding agent runs in your repo to set up visual testing, author economical + deterministic stories, and triage builds. |
 
 ### Agent skills

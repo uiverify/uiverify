@@ -1,5 +1,5 @@
 import type { Plugin, ViteUserConfig } from "vitest/config";
-import { type ArchivedSnapshot, resolveOutDir, writeSnapshot } from "@uiverify/archive-core";
+import { type CapturedSnapshot, resolveOutDir, writeSnapshot } from "@uiverify/archive-core";
 import { graphReporter } from "./graph-reporter";
 import type { UiverifyPluginOptions } from "./options";
 
@@ -45,7 +45,7 @@ export function uiverifyPlugin(options: UiverifyPluginOptions = {}): Plugin {
       provide: { __uiverify: { disableAutoSnapshot: options.disableAutoSnapshot ?? false } },
       browser: {
         commands: {
-          __uiverifyWriteSnapshot: async (_ctx: unknown, snapshot: ArchivedSnapshot) => {
+          __uiverifyWriteSnapshot: async (_ctx: unknown, snapshot: CapturedSnapshot) => {
             writeSnapshot(outDir, snapshot);
           },
         },

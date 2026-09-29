@@ -7,8 +7,8 @@
  *   import { uiverifyPlugin } from "@uiverify/vitest/plugin";
  *   export default defineConfig({ plugins: [uiverifyPlugin()], test: { browser: { ... } } });
  *
- * In a test, `takeSnapshot("name")` adds an intermediate checkpoint; `disableAutoSnapshot()` opts the
- * current test out of the automatic end-of-test snapshot. After `vitest run`, `uiverify upload
+ * In a test, `takeSnapshot("name")` captures a named snapshot (and replaces that test's automatic
+ * end-of-test one); `disableAutoSnapshot()` opts the current test out of the automatic snapshot. After `vitest run`, `uiverify upload
  * --static-dir <dir>` ships the archive.
  */
 export { takeSnapshot, disableAutoSnapshot } from "./runtime";
