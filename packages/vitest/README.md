@@ -62,7 +62,7 @@ test("footer", async () => {
 
 ## Upload
 
-Archives are written to `./uiverify-archive` (override with `UIVERIFY_ARCHIVE_DIR` or the plugin's `outDir`). After your run, upload with the [`uiverify`](https://www.npmjs.com/package/uiverify) CLI:
+Archives are written to `./uiverify-archive` (override with `UIVERIFY_ARCHIVE_DIR` or the plugin's `outDir`). Each run first clears the previous run's archive there, so snapshots of deleted tests don't get uploaded; anything else in the folder is left alone. After your run, upload with the [`uiverify`](https://www.npmjs.com/package/uiverify) CLI:
 
 ```bash
 npx playwright install --with-deps   # one-time: browsers for Vitest browser mode

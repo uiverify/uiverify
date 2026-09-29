@@ -7,7 +7,7 @@ and each step of your user flow becomes a visual regression check. Docs:
 
 Unlike the [storybook](../storybook) and [vitest](../vitest) examples (which capture components in
 isolation), Playwright drives the **whole running app** — so this folder is the full
-[Shoppy](https://github.com/igrlk/shoppy) storefront, trimmed to just the Playwright capture path.
+Shoppy storefront, trimmed to just the Playwright capture path.
 
 ## How it works
 

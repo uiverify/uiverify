@@ -7,6 +7,19 @@ import { snapshotFileName } from "./snapshot-file";
 /** The archive's shared resource store: one file per distinct resource body, named by its SHA-256. */
 const RESOURCES_DIR = "resources";
 
+/** Everything a capture run writes into an archive dir. */
+const ARCHIVE_ENTRIES = ["snapshots", RESOURCES_DIR, "design", "index.json", "preview-stats.json"];
+
+/**
+ * Remove a previous run's output from `outDir`, so snapshots of since-deleted tests and resources nothing
+ * references any more don't ride along with the next upload. Only the entries a capture run writes are
+ * removed, never `outDir` itself, which may be a folder the user shares with other files. Call it once,
+ * before any snapshot of the run is written: it would delete a parallel writer's output.
+ */
+export function clearArchive(outDir: string): void {
+  for (const entry of ARCHIVE_ENTRIES) fs.rmSync(path.join(outDir, entry), { recursive: true, force: true });
+}
+
 /** Store `resource`'s bytes under their content hash (once per archive) and return the stored reference. */
 function storeResource(outDir: string, resource: CapturedResource): ArchivedResource {
   const bytes = Buffer.from(resource.body, "base64");

@@ -170,3 +170,56 @@ describe("archiveReferencedResources URL spellings", () => {
     expect(Object.keys(archived).sort()).toEqual([...loaded].sort());
   });
 });
+
+describe("stylesheetUrls", () => {
+  const SHEET = "https://cdn.test/css/site.css";
+
+  /** Catches the files a cross-origin sheet names in forms the url() regex missed: an escaped space or
+   *  paren, and image-set candidates written as bare strings. Each one missed is a font or image that
+   *  replays blank. */
+  it("resolves CSS escapes and bare-string image-set candidates", async () => {
+    const { stylesheetUrls } = await loadWithPageFetch(serving({}));
+    const css = [
+      "@font-face{src:url(Brand\\20 Regular.woff2)}",
+      '@font-face{src:url("Brand\\"Bold.woff2")}',
+      ".a{background:url(../img/a\\).png)}",
+      '.b{background-image:image-set("../img/b.png" 1x, url(../img/b@2x.png) 2x)}',
+      ".c{background-image:-webkit-image-set('../img/c.avif' type(\"image/avif\") 1x)}",
+    ].join("\n");
+    const urls = stylesheetUrls(css, SHEET);
+    expect(urls).toEqual(
+      expect.arrayContaining([
+        "https://cdn.test/css/Brand%20Regular.woff2",
+        "https://cdn.test/css/Brand%22Bold.woff2",
+        "https://cdn.test/img/a).png",
+        "https://cdn.test/img/b.png",
+        "https://cdn.test/img/b@2x.png",
+        "https://cdn.test/img/c.avif",
+      ]),
+    );
+  });
+});
+
+describe("referencedUrls token prefilter", () => {
+  /** Catches the file-name prefilter rejecting a URL the full scan would have matched: the spellings a
+   *  srcset candidate, a query string, a protocol-relative url() and a space in the file name produce. */
+  it("still finds URLs in srcset, with a query, protocol-relative, and with a space or paren in the file name", async () => {
+    const { referencedUrls } = await loadWithPageFetch(serving({}));
+    const dom = JSON.stringify({
+      img: { srcset: "http://app.test/a.png 1x, http://app.test/a@2x.png 2x" },
+      link: { href: "http://app.test/font.css?v=3" },
+      logo: { src: "http://app.test/logo(1).png" },
+      style: '.x{background:url(//cdn.test/b.png)} .y{background:url("http://app.test/hero image.png")}',
+    });
+    const loaded = [
+      "http://app.test/a.png",
+      "http://app.test/a@2x.png",
+      "http://app.test/font.css?v=3",
+      "http://cdn.test/b.png",
+      "http://app.test/hero%20image.png",
+      "http://app.test/logo(1).png",
+      "http://app.test/unused.png",
+    ];
+    expect([...referencedUrls(loaded, dom)].sort()).toEqual(loaded.slice(0, 6).sort());
+  });
+});

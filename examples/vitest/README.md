@@ -5,7 +5,7 @@ A runnable example of visual-testing [Vitest browser-mode](https://vitest.dev/gu
 each browser-mode test becomes a visual regression check. Docs:
 [Vitest quickstart](https://uiverify.ai/docs/quickstart-vitest).
 
-The components are a slice of [Shoppy](https://github.com/igrlk/shoppy), UI Verify's example storefront.
+The components are a slice of Shoppy, UI Verify's example storefront.
 
 ## How it works
 

@@ -41,14 +41,26 @@ class FakeImage {
   }
 }
 
-/** Install a minimal page: its `<img>` elements, and per-element computed `background-image`s keyed by
- *  pseudo-element (`null` for the element itself). */
-function stubPage(images: FakeImage[], backgrounds: Record<string, string>[]) {
-  const elements = backgrounds.map((_, i) => ({ i }));
+interface FakeElement {
+  background: Record<string, string>;
+  shadowRoot?: FakeRoot;
+}
+interface FakeRoot {
+  querySelectorAll: () => (FakeElement | FakeImage)[];
+}
+
+function root(children: (FakeElement | FakeImage)[]): FakeRoot {
+  return { querySelectorAll: () => children };
+}
+
+/** Install a minimal page from its elements: `<img>`s, and elements with per-pseudo-element computed
+ *  `background-image`s (`self` for the element itself), optionally hosting a shadow root. */
+function stubPage(children: (FakeElement | FakeImage)[]) {
   vi.stubGlobal("Image", FakeImage);
-  vi.stubGlobal("document", { images, querySelectorAll: () => elements });
-  vi.stubGlobal("getComputedStyle", (el: { i: number }, pseudo: string | null) => ({
-    backgroundImage: backgrounds[el.i]?.[pseudo ?? "self"] ?? "none",
+  vi.stubGlobal("HTMLImageElement", FakeImage);
+  vi.stubGlobal("document", root(children));
+  vi.stubGlobal("getComputedStyle", (el: FakeElement | FakeImage, pseudo: string | null) => ({
+    backgroundImage: ("background" in el ? el.background[pseudo ?? "self"] : undefined) ?? "none",
   }));
 }
 
@@ -63,7 +75,7 @@ describe("settle", () => {
   it("switches a pending lazy image to eager and waits for it", async () => {
     const lazy = new FakeImage();
     lazy.loading = "lazy";
-    stubPage([lazy], []);
+    stubPage([lazy]);
     setTimeout(() => lazy.load(), 5);
     await settle();
     expect(lazy.loading).toBe("eager");
@@ -73,7 +85,10 @@ describe("settle", () => {
   /** Catches settle ignoring CSS backgrounds (incl. ::before/::after): a background still loading at
    *  capture has no resource-timing entry yet, so it would be left out of the archive. */
   it("loads every element and pseudo-element background image before returning", async () => {
-    stubPage([], [{ self: 'url("/poster.jpg")' }, { "::before": "url(/icon.svg)", "::after": "none" }]);
+    stubPage([
+      { background: { self: 'url("/poster.jpg")' } },
+      { background: { "::before": "url(/icon.svg)", "::after": "none" } },
+    ]);
     FakeImage.created = [];
     await settle();
     const loaded = FakeImage.created.map((img) => ({ src: img.src, complete: img.complete }));
@@ -81,5 +96,19 @@ describe("settle", () => {
       { src: "/poster.jpg", complete: true },
       { src: "/icon.svg", complete: true },
     ]);
+  });
+
+  /** Catches settle stopping at shadow boundaries: `querySelectorAll` and `document.images` never enter a
+   *  shadow root, so a web component's lazy image or background would be captured before it loaded. */
+  it("waits for images and backgrounds inside open shadow roots", async () => {
+    const lazy = new FakeImage();
+    lazy.loading = "lazy";
+    stubPage([{ background: {}, shadowRoot: root([lazy, { background: { self: "url(/inner.png)" } }]) }]);
+    FakeImage.created = [];
+    setTimeout(() => lazy.load(), 5);
+    await settle();
+    expect(lazy.loading).toBe("eager");
+    expect(lazy.complete).toBe(true);
+    expect(FakeImage.created.map((img) => img.src)).toEqual(["/inner.png"]);
   });
 });

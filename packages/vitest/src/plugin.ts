@@ -1,5 +1,6 @@
 import type { Plugin, ViteUserConfig } from "vitest/config";
 import { type CapturedSnapshot, resolveOutDir, writeSnapshot } from "@uiverify/archive-core";
+import { clearOncePerRun } from "./clear-once";
 import { graphReporter } from "./graph-reporter";
 import type { UiverifyPluginOptions } from "./options";
 
@@ -15,7 +16,8 @@ const SETUP_MODULE = "@uiverify/vitest/browser-setup";
  *  - injects the setup file that auto-snapshots each test (`browser-setup`),
  *  - registers the `__uiverifyWriteSnapshot` browser command that writes each snapshot to disk (the
  *    browser has no filesystem, so the in-page capture hands the assembled snapshot to this Node command),
- *  - passes the global `disableAutoSnapshot` option through to the setup file via provide/inject.
+ *  - passes the global `disableAutoSnapshot` option through to the setup file via provide/inject,
+ *  - clears the previous run's archive when the run starts.
  *
  * The archive lands in the same `./uiverify-archive` directory the `uiverify` CLI uploads.
  */
@@ -56,5 +58,6 @@ export function uiverifyPlugin(options: UiverifyPluginOptions = {}): Plugin {
   return {
     name: "uiverify",
     config: () => config,
+    configureVitest: ({ vitest }) => clearOncePerRun(vitest, outDir),
   };
 }

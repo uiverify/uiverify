@@ -134,7 +134,7 @@ Complete, runnable projects under [`examples/`](examples) — one per capture pa
 | **[`examples/playwright`](examples/playwright)** | Playwright end-to-end tests with `@uiverify/playwright` |
 | **[`examples/react-native`](examples/react-native)** | Finished screenshots (native / mobile / React Native) with `upload --screenshots` |
 
-The first three capture a slice of the same [Shoppy](https://github.com/igrlk/shoppy) storefront; the React Native one is a small Expo app driven by Maestro. Each folder has its own CI workflow.
+The first three capture a slice of the same Shoppy storefront; the React Native one is a small Expo app driven by Maestro. Each folder has its own CI workflow.
 
 ## Development
 

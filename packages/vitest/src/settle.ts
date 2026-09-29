@@ -44,18 +44,31 @@ function loaded(img: HTMLImageElement): Promise<void> {
   });
 }
 
+/** Every element in `root`, descending into open shadow roots, which `querySelectorAll` and
+ *  `document.images` never enter. */
+function allElements(root: ParentNode): Element[] {
+  const out: Element[] = [];
+  for (const el of root.querySelectorAll("*")) {
+    out.push(el);
+    if (el.shadowRoot) out.push(...allElements(el.shadowRoot));
+  }
+  return out;
+}
+
 /** Wait for fonts, every `<img>`, and every CSS background image (`::before`/`::after` included) to finish
- *  loading, then return. Called by `capture()` right before the DOM is serialized. The archive is replayed
- *  as a full page, so an image anywhere on it counts: `loading="lazy"` ones below the test viewport would never start loading on their
- *  own, so they're switched to eager first. A background image is only archived once the browser has
- *  fetched it, so each is loaded through an `Image` (a cache hit when it already is). */
+ *  loading, then return, inside open shadow roots too. Called by `capture()` right before the DOM is
+ *  serialized. The archive is replayed as a full page, so an image anywhere on it counts: `loading="lazy"`
+ *  ones below the test viewport would never start loading on their own, so they're switched to eager first.
+ *  A background image is only archived once the browser has fetched it, so each is loaded through an
+ *  `Image` (a cache hit when it already is). */
 export async function settle(): Promise<void> {
   if (typeof document === "undefined") return;
   await preloadFonts();
-  const images = Array.from(document.images);
+  const elements = allElements(document);
+  const images = elements.filter((el): el is HTMLImageElement => el instanceof HTMLImageElement);
   for (const img of images) if (img.loading === "lazy" && !img.complete) img.loading = "eager";
   const backgrounds = new Set<string>();
-  for (const el of document.querySelectorAll("*")) {
+  for (const el of elements) {
     for (const pseudo of [null, "::before", "::after"]) {
       for (const url of backgroundImageUrls(getComputedStyle(el, pseudo).backgroundImage)) backgrounds.add(url);
     }

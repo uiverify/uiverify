@@ -67,7 +67,7 @@ function containsWholeUrl(text: string, url: string): boolean {
 /** Resource Timing reports a URL absolute and percent-encoded (`http://cdn/hero%20image.png`), while rrweb
  *  can keep a stylesheet `url()` as written - unencoded (`hero image.png`) or protocol-relative
  *  (`//cdn/hero.png`) - so each of those spellings counts too. */
-function containsUrl(text: string, url: string): boolean {
+function urlSpellings(url: string): Set<string> {
   let decoded = url;
   try {
     decoded = decodeURI(url);
@@ -76,32 +76,101 @@ function containsUrl(text: string, url: string): boolean {
   }
   const spellings = new Set([url, decoded]);
   for (const spelling of [url, decoded]) spellings.add(spelling.replace(/^https?:/, ""));
-  for (const spelling of spellings) if (containsWholeUrl(text, spelling)) return true;
-  return false;
+  return spellings;
+}
+
+/** Characters that split the serialized DOM into {@link domTokens}: every {@link URL_END} but the space,
+ *  plus the path and query separators. */
+const TOKEN_BREAK = /[/"'\\(),#?]/;
+
+/** Every run of text between {@link TOKEN_BREAK}s, and each whitespace-separated word of it, so a URL's last
+ *  path segment is one of them wherever the DOM spells that URL out. */
+function domTokens(serializedDom: string): Set<string> {
+  const tokens = new Set<string>();
+  for (const token of serializedDom.split(TOKEN_BREAK)) {
+    tokens.add(token);
+    for (const word of token.split(/\s+/)) tokens.add(word);
+  }
+  return tokens;
+}
+
+/** Whether `spelling` may occur in the DOM, by its last path segment alone. A segment the tokens can't
+ *  hold whole (empty, or containing a break or whitespace) always passes, to the full scan. */
+function mayOccur(tokens: Set<string>, spelling: string): boolean {
+  const path = spelling.split(/[?#]/)[0] ?? "";
+  const segment = path.slice(path.lastIndexOf("/") + 1);
+  if (!segment || /[\s"'\\(),]/.test(segment)) return true;
+  return tokens.has(segment);
 }
 
 /** The loaded URLs this snapshot's serialized DOM references. Every test in a Vitest file shares one page,
  *  and the Resource Timing buffer only grows, so "everything the page has loaded" is every earlier test's
  *  assets too - a file rendering one page per test archived each page with all the pages before it. rrweb
  *  writes each `src`/`href`/`srcset` and inlined stylesheet `url()` into the DOM, usually as the same
- *  absolute string the browser reports for the request; {@link containsUrl} also accepts the spellings it
- *  keeps as written. A stylesheet rrweb can't inline (cross-origin, no CORS read) stays a `<link>`, so
- *  what it references is added by {@link archiveReferencedResources}. */
+ *  absolute string the browser reports for the request; {@link urlSpellings} lists the ones it keeps as
+ *  written. The DOM is tokenized once so the full scan runs only for URLs whose file name it contains,
+ *  instead of once per URL the page has ever loaded. A stylesheet rrweb can't inline (cross-origin, no CORS
+ *  read) stays a `<link>`, so what it references is added by {@link archiveReferencedResources}. */
 export function referencedUrls(loadedUrls: Iterable<string>, serializedDom: string): Set<string> {
+  const tokens = domTokens(serializedDom);
   const out = new Set<string>();
-  for (const url of loadedUrls) if (containsUrl(serializedDom, url)) out.add(url);
+  for (const url of loadedUrls) {
+    for (const spelling of urlSpellings(url)) {
+      if (mayOccur(tokens, spelling) && containsWholeUrl(serializedDom, spelling)) {
+        out.add(url);
+        break;
+      }
+    }
+  }
   return out;
 }
 
-/** The absolute URLs a stylesheet's `url(...)` and `@import` point at, resolved against the sheet's own
- *  URL the way the browser resolves them. */
+/** A CSS string or unquoted `url()` with its escapes resolved: `\20 ` is a space, `\)` a paren. */
+function unescapeCss(value: string): string {
+  return value.replace(/\\([0-9a-f]{1,6})[ \t\n\r\f]?|\\(.)/gis, (_, hex: string | undefined, char: string | undefined) =>
+    hex ? String.fromCodePoint(Number.parseInt(hex, 16)) : (char ?? ""),
+  );
+}
+
+const CSS_STRING = String.raw`"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'`;
+const CSS_ESCAPE = String.raw`\\[0-9a-f]{1,6}[ \t\n\r\f]?|\\.`;
+const URL_REF = new RegExp(String.raw`url\(\s*(?:${CSS_STRING}|((?:${CSS_ESCAPE}|[^)\\\s])*))\s*\)`, "gi");
+const IMPORT_REF = new RegExp(String.raw`@import\s+(?:${CSS_STRING})`, "gi");
+const QUOTED = new RegExp(CSS_STRING, "g");
+
+/** The contents of each `image-set(...)` / `-webkit-image-set(...)`, whose candidates may be bare quoted
+ *  strings rather than `url()`s. */
+function imageSetBodies(css: string): string[] {
+  const bodies: string[] = [];
+  for (const match of css.matchAll(/image-set\(/gi)) {
+    const start = match.index + match[0].length;
+    let depth = 1;
+    let quote = "";
+    let i = start;
+    for (; i < css.length && depth; i++) {
+      const c = css[i];
+      if (quote) {
+        if (c === "\\") i++;
+        else if (c === quote) quote = "";
+      } else if (c === '"' || c === "'") quote = c;
+      else if (c === "(") depth++;
+      else if (c === ")") depth--;
+    }
+    bodies.push(css.slice(start, depth ? i : i - 1));
+  }
+  return bodies;
+}
+
+/** The absolute URLs a stylesheet's `url(...)`, `@import` and `image-set(...)` candidates point at,
+ *  resolved against the sheet's own URL the way the browser resolves them. */
 export function stylesheetUrls(css: string, sheetUrl: string): string[] {
   const refs = [
-    ...Array.from(css.matchAll(/url\(\s*(["']?)(.*?)\1\s*\)/gi), (m) => m[2] ?? ""),
-    ...Array.from(css.matchAll(/@import\s+(["'])(.*?)\1/gi), (m) => m[2] ?? ""),
+    ...Array.from(css.matchAll(URL_REF), (m) => m[1] ?? m[2] ?? m[3] ?? ""),
+    ...Array.from(css.matchAll(IMPORT_REF), (m) => m[1] ?? m[2] ?? ""),
+    ...imageSetBodies(css).flatMap((body) => Array.from(body.matchAll(QUOTED), (m) => m[1] ?? m[2] ?? "")),
   ];
   const out: string[] = [];
-  for (const ref of refs) {
+  for (const ref of refs.map(unescapeCss)) {
     if (!ref || ref.startsWith("data:")) continue;
     try {
       const url = new URL(ref, sheetUrl);

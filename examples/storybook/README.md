@@ -4,7 +4,7 @@ A runnable example of visual-testing [Storybook](https://storybook.js.org) stori
 [UI Verify](https://uiverify.ai). Copy this folder, add your API key, and every story becomes a visual
 regression check. Docs: [Storybook quickstart](https://uiverify.ai/docs/quickstart-storybook).
 
-The components are a slice of [Shoppy](https://github.com/igrlk/shoppy), UI Verify's example storefront —
+The components are a slice of Shoppy, UI Verify's example storefront —
 a button, product card, quantity stepper, rating, and product art, each with a few stories.
 
 ## How it works
