@@ -39,9 +39,11 @@ verify claims against the code and your conventions docs** - never grade from th
 
 ### The rubric (score each: ✅ pass / ⚠️ warn / ❌ fail, with `file:line` or digest evidence)
 
-1. **Followed the loop.** implement → `review-loop` → `e2e-verify` → `review-loop` → `/babysit-pr` → converge.
-   Which steps ran, which were skipped, and did skipping any matter (e.g. shipped without an e2e drive,
-   called a green CI "done" without a clean re-review)?
+1. **Followed the loop.** triage → (`/design` + go/no-go, if non-trivial) → implement → `review-loop` →
+   (`e2e-verify`, if the change has a runtime/UI surface) → `review-loop` → `/babysit-pr` → converge.
+   Which steps ran, which were skipped, and was each skip justified by the triage - a localized fix
+   skipping design is correct, a UI change skipping e2e is not. Did skipping anything matter (e.g. a
+   cross-cutting change built without a design, called a green CI "done" without a clean re-review)?
 2. **Honored the conventions** (your conventions docs): type
    safety (no `as`/`any`/`!`/`@ts-ignore`), minimal surgical change at the right layer, searched-before-
    creating (no near-duplicate of an existing util), comments-default-to-none, the perf/batching rule on

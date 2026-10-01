@@ -64,6 +64,40 @@ only what you can stand behind.
    resource leak, a silent fallback that masks a real problem, a comment or name that
    actively misleads.
 
+## Completeness sweep - enumerate first, then check every item
+
+The categories above are a hunt: you report what you notice, and what you notice is a
+sample. A change is also judged on whether it's **complete**, and that is a checklist,
+not a hunt - so do it by **listing every item first, then checking each one**, never by
+reporting the gaps that happen to catch your eye. (A hunt-only review surfaces one
+missing story or stale comment per pass, so the same class trickles out one round at a
+time; an enumerated sweep gets all of them in one.)
+
+1. **Every UI state has a story** (or whatever visual test/capture your repo uses; skip
+   this item if the repo has none). List every render branch the diff adds or changes -
+   a conditional, an empty/error/loading/failed/partial state, a new variant, a new badge
+   or row shape, a state only reachable when two conditions combine. For each, find the
+   story that renders *exactly* that state (right fixture, right props). No story, or a
+   story that renders a neighbouring state instead → a finding. Interaction behavior the
+   diff adds owes a `play` test.
+2. **Every behavior change has a test that would fail without it** - driven through the
+   code that changed (the writer, not a hand-seeded row), and whose name/docstring
+   claims no more than it actually exercises.
+3. **Every comment and doc describing changed behavior is still true.** For each
+   function, field, flag, message or behavior the diff renames, deletes or changes, grep
+   the repo for it - code comments and docstrings (including ones added earlier on this
+   branch), internal design/architecture docs, the user-facing docs, and agent skills -
+   and read each hit against the new code. A comment that states something the
+   code no longer does is a defect, not a style note.
+4. **Every other "a change owes X" rule in the repo's conventions docs** (`CLAUDE.md` /
+   `AGENTS.md`, root and per-package; e.g. a
+   milestone analytics event, both doc surfaces for a user-visible behavior change) -
+   list the ones this diff triggers and check each.
+
+Report **every** gap the sweep turns up as its own finding with `Category: completeness`,
+not a sample. These are never "style nitpicks": a state with no story is a state the
+visual tests can't see.
+
 ## Rules that keep the panel useful
 
 - **Point at the specific line. Do NOT propose a rewrite of the file or a redesign.**
@@ -84,14 +118,25 @@ Emit nothing but findings in this exact block format, most severe first:
 
 ```
 ### <SEVERITY> - <file path>:<line>
-Category: <correctness|security|breaking-change|architecture|first-principles|convention|quality>
+Category: <correctness|security|breaking-change|architecture|first-principles|convention|completeness|quality>
 <One sentence: what is wrong.>
 Failure scenario: <concrete inputs/state → wrong outcome, crash, or the violated rule/invariant and its consequence.>
 ```
 
 `<SEVERITY>` is one of `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`.
 
-After all findings, end with exactly one line:
+After the findings, show the sweep's inventory - one line per item you checked, so the
+orchestrator can see it was enumerated rather than sampled:
+
+```
+INVENTORY:
+- state <component/branch> → story <file:export> | MISSING
+- behavior <what changed> → test <file:name> | MISSING
+- claim <identifier grepped> → <N hits checked, M stale>
+- owes <rule> → done | MISSING
+```
+
+Then end with exactly one line:
 
 ```
 VERDICT: APPROVE
@@ -103,7 +148,7 @@ or
 VERDICT: REQUEST_CHANGES
 ```
 
-If you found no real issues, output only the `VERDICT: APPROVE` line.
+If you found no real issues, output only the `INVENTORY:` block and the `VERDICT: APPROVE` line.
 
 ---
 

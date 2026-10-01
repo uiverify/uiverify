@@ -37,8 +37,9 @@ The loop that takes a ticket to a merged PR.
 
 | Skill | When your agent runs it |
 |---|---|
-| **[factory](skills/factory)** | Say what you want; it implements, reviews, e2e-verifies, opens the PR, and reacts to CI, all the way to merge-ready. Never auto-merges. Composes the other agentic skills. |
-| **[review-loop](skills/review-loop)** | Review and fix until the diff is actually clean: a multi-model panel, applied fixes, re-review, until a clean confirming pass. |
+| **[factory](skills/factory)** | Say what you want; it triages the change, then designs (if non-trivial), implements, reviews, e2e-verifies (if there's a runtime surface), opens the PR, and reacts to CI, all the way to merge-ready. Never auto-merges. Composes the other agentic skills. |
+| **[design](skills/design)** | Get a design that survived critique before you build: draft it, have Claude and Codex critique it in parallel against a rubric, then one architect pass verifies each critique and revises, until a clean round. |
+| **[review-loop](skills/review-loop)** | Review and fix until the diff is actually clean: a multi-model panel, applied fixes, re-review, until a round finds nothing that matters. Completeness (missing stories, tests, stale comments) is swept in one pass, not dripped out one per round. |
 | **[review-multi-model](skills/review-multi-model)** | A second opinion on a diff: Claude and Codex review in parallel, every finding verified against the code, merged into one report. |
 | **[e2e-verify](skills/e2e-verify)** | Drive the real app with Playwright before you open a PR, so "done" means it works, not just green unit tests. |
 | **[babysit-pr](skills/babysit-pr)** | Open the PR, poll CI, and fix each failure until it's green and ready to merge. Never approves or merges. |

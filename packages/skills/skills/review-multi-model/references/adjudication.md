@@ -13,12 +13,18 @@ For every finding from every reviewer:
    roughly half of a model's "extra" findings do not reproduce.
 2. **Keep it only if it's a real, reproducible defect.** Drop: findings that misread
    the code, findings already handled elsewhere (a guard the reviewer missed), pure
-   style nitpicks, and vague "consider" suggestions with no concrete failure.
+   style nitpicks, and vague "consider" suggestions with no concrete failure. A
+   `completeness` finding (a state with no story, a behavior with no test, a comment
+   or doc the code now contradicts) is **not** a nitpick - verify it and keep it.
 3. If a finding is plausible but you cannot confirm it from the code, keep it
    **out of the counted Findings list** - it is not a verified defect. Drop it
    outright unless it is both consequential and cheap for a human to check, in
    which case surface it under the separate "Unverified" section of the report
    (which does not count toward the verified total) with what you'd need to check.
+4. **Check each reviewer's `INVENTORY:` block against the diff.** If it misses a state
+   or a changed behavior you can see in the diff, add the gap as a finding yourself
+   (tag it `[orchestrator]`) - the whole point of the sweep is that nothing in the
+   checklist is left for a later round to stumble on.
 
 ## Merge
 
@@ -26,7 +32,7 @@ For every finding from every reviewer:
   reviewers often anchor one defect to adjacent lines (a missing guard vs. the
   dereference it fails to protect). When both flagged the same real issue, collapse to
   one finding tagged `[both]`.
-- Tag single-source findings `[claude]` or `[codex]`.
+- Tag single-source findings `[claude]` or `[codex]` (or `[orchestrator]` for a gap you found in an inventory).
 - **Do not drop a verified finding just because only one model found it.** The
   complementary single-model catches are frequently the highest-value ones.
 - **Rank** Critical → High → Medium → Low. Within a tier, put `[both]` first.
