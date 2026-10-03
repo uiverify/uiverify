@@ -1,5 +1,6 @@
 import type { Plugin, ViteUserConfig } from "vitest/config";
 import { type CapturedSnapshot, resolveOutDir, writeSnapshot } from "@uiverify/archive-core";
+import { resolveBrowserApi } from "./browser-api";
 import { clearOncePerRun } from "./clear-once";
 import { graphReporter } from "./graph-reporter";
 import type { UiverifyPluginOptions } from "./options";
@@ -58,6 +59,13 @@ export function uiverifyPlugin(options: UiverifyPluginOptions = {}): Plugin {
   return {
     name: "uiverify",
     config: () => config,
+    resolveId: {
+      // Ahead of Vite's own resolver, which would fail the import on Vitest 3 before this hook ran.
+      order: "pre",
+      handler(id, importer, opts) {
+        return resolveBrowserApi(id, (target) => this.resolve(target, importer, opts));
+      },
+    },
     configureVitest: ({ vitest }) => clearOncePerRun(vitest, outDir),
   };
 }

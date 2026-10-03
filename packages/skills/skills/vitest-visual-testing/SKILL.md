@@ -1,6 +1,6 @@
 ---
 name: vitest-visual-testing
-description: Make @uiverify/vitest (Vitest browser-mode) captures deterministic so component visual tests stop coming back "changed" without a real change (flaky diffs). Use when setting up or debugging visual tests over Vitest browser-mode component tests. Focuses only on the run-to-run variation the capturer can't neutralize from outside your app — above all live/dynamic data, the highest-value step (freeze it with static fixtures and the whole content-noise class disappears), plus the clock, infinite JS animations, and non-Math.random randomness, and the one Vitest-specific trap - capturing before the component has settled.
+description: Make @uiverify/vitest (Vitest browser-mode) captures deterministic so component visual tests stop coming back "changed" without a real change (flaky diffs). Use when setting up or debugging visual tests over Vitest browser-mode component tests, or rendering whole pages (including Next.js App Router pages) in browser mode. Focuses only on the run-to-run variation the capturer can't neutralize from outside your app — above all live/dynamic data, the highest-value step (freeze it with static fixtures and the whole content-noise class disappears), plus the clock, infinite JS animations, and non-Math.random randomness, and the one Vitest-specific trap - capturing before the component has settled.
 ---
 
 # Deterministic Vitest captures (browser mode)
@@ -11,8 +11,9 @@ description: Make @uiverify/vitest (Vitest browser-mode) captures deterministic 
 Verify re-renders and pixel-diffs that archive server-side. Because a browser-mode component test renders
 an **isolated component** (no page scroll, no A/B / analytics / chat / consent scripts, no
 lazy-load-on-scroll races), you get the same head start Storybook gives you: the determinism work here is
-**narrow**. If you reach for scroll-settling or third-party stubbing, you're fighting a problem component
-isolation already removed (that's a real-page concern — see `playwright-visual-testing`).
+**narrow**. If you reach for scroll-settling or third-party stubbing in a component test, you're fighting
+a problem component isolation already removed. Whole pages rendered in browser mode bring some of it back;
+see "Testing whole pages" below.
 
 > Whatever the component **is at the end of the test** (or at your `takeSnapshot()` call) is baked into
 > the archive forever. Your job is to drive it to one canonical state before capture.
@@ -50,10 +51,19 @@ test: { setupFiles: ['./vitest.setup.ts'], browser: { /* … */ } }
 ```
 
 Import fonts from an npm package or a same-origin asset (not a CDN `<link>`), so Vite serves the bytes
-and the archive stays self-contained. The capturer then waits for these fonts like any other — but it can
-only wait for fonts the test actually loads; it can't declare one you never imported
-(`document.fonts.check('16px "bootstrap-icons"')` is `false` until the CSS is imported, which is the whole
-"icons render as boxes" bug).
+and the archive stays self-contained. If you must use a font CDN, add `crossorigin="anonymous"` to the
+`<link>` so its rules are readable and its font files can be archived. Keep images self-contained the same
+way: an image from a third-party service that sends no CORS headers (avatar generators, favicon services)
+renders in your test but not in the archive, so serve fixtures a local copy or a `data:` URI.
+
+The capturer then waits for these fonts like any other — but it can only wait for fonts the test actually
+loads; it can't declare one you never imported (`document.fonts.check('16px "bootstrap-icons"')` is `false`
+until the CSS is imported, which is the whole "icons render as boxes" bug).
+
+**Tailwind v4 in a monorepo.** Tailwind generates only the classes it finds in the files it scans, starting
+from where Vitest runs. When the visual tests run from another package than the app, add `@source` lines for
+the app's folders (`app/`, `components/`, `lib/`) to the CSS your setup imports; otherwise classes used only
+in those folders are missing and the capture differs from the real app with no error.
 
 **UI Verify's capturer neutralizes these automatically — do NOT hand-fix them:** CSS animations &
 transitions (killed at render) and the Web Animations API (disabled); `prefers-reduced-motion: reduce`
@@ -90,6 +100,15 @@ test('user card', async () => {
 
 This is the analog of a Playwright test's navigation + assertions: your `render` + waits *are* the
 determinism surface.
+
+Wait for **everything** the component loads, not only the part you assert on: a sidebar, a balance or an
+avatar that loads on its own request can still be loading when your assertion passes. With TanStack Query,
+wait until no query or mutation is in flight (`queryClient.isFetching() === 0 && queryClient.isMutating() ===
+0`); with other clients, until your fetch mock has answered every request. If a JS-driven layout keeps moving
+after the content shows (a chat that scrolls itself to the bottom, a measured highlight), also wait until
+element positions and scroll offsets stop changing for a few frames. Put these waits in one helper the tests
+share. If you turn the automatic snapshot off (`disableAutoSnapshot()`) and call `takeSnapshot()` at the end
+of that helper, every capture is guaranteed to come after the wait.
 
 ## The checklist (only what the tool can't do for you)
 
@@ -156,6 +175,9 @@ final frame — framer-motion pulsing dots, a Lottie loop, an autoplay spinner, 
 - **Preferred — honor reduced motion.** The capturer emulates `prefers-reduced-motion: reduce`, so make
   the component respect it (framer-motion: `<MotionConfig reducedMotion="user">`, or gate the loop with
   `useReducedMotion()`). One line, and it's good app behavior anyway.
+- **Test-only switch for Motion (framer-motion).** `MotionGlobalConfig.skipAnimations = true` (from
+  `motion/react` or `framer-motion`) in your setup file makes every Motion animation jump to its end
+  state, including height and scroll animations no CSS can stop. No app change needed.
 - **Escape hatch — detect the capture** and render the end state (for a `<canvas>` rAF loop:
   `if (isUIVerify()) drawOneStaticFrame(); else startRaf();` in the effect). The canonical helper reads
   two signals — a `UIVerify` `navigator.userAgent` marker and a `window.__UI_VERIFY__` global:
@@ -189,6 +211,31 @@ or a font registers late (an unusual setup) and you still see a sub-pixel shift,
 from `@uiverify/vitest` **before** `render()` to force it - settling after render can't undo a
 measurement already taken.
 
+## Testing whole pages
+
+Browser mode can render a whole page, not just a component: render the page's own component inside the
+same layouts and providers your app wraps it in (router, theme, data client), so the capture shows the real
+header, sidebar and layout. This works in any framework; you need no running app, dev server or database.
+Replace only the boundary, once, in the setup file, and keep everything inside it real:
+
+- **data**: answer the page's API calls (REST, GraphQL, tRPC) from per-test fixtures with a stubbed
+  `fetch` or a mock of your data module, failing loudly when a test hits a call it has no fixture for;
+- **the request**: the current path, search params, cookies and signed-in user, read from a small
+  per-test object by your router and auth doubles;
+- **what only runs on a server**: database clients and other server-only modules, and any framework API
+  that reads the incoming request.
+
+Then follow the rest of this skill as for components: fixtures for every piece of data, a frozen clock
+(`vi.useFakeTimers({ toFake: ['Date'] })`), the app's global CSS and fonts in the setup file, and the shared
+settle helper above. Capture each page in the sizes and themes your users see (for example desktop and
+mobile, light and dark), and skip a variant only where it looks identical to another one.
+
+**Next.js App Router.** Import the route's `page.tsx` and wrap it in its `layout.tsx` files. React 19
+renders an async server component on the client when it sits inside `<Suspense>` (it logs a console error
+per async component, which you can filter in the setup file). Replace `server-only`, `next/headers`
+(`cookies()`, `headers()`), `next/cache`, `next/navigation` and `next/link`, plus the data functions the
+route files call on the server, and load the fonts `next/font` provides in the app.
+
 ## Anti-patterns
 
 - **A test that fetches live data** → mock it (`vi.mock` / MSW).
@@ -197,4 +244,5 @@ measurement already taken.
 - **Disabling CSS animations / seeding `Math.random` / waiting on fonts by hand** → wasted effort; the
   capturer already does all three. Spend the effort on the clock, settling, and infinite loops.
 - **Unseeded `crypto`/`uuid`/faker or a bare `Date.now()`** → fixtures + freeze the clock.
-- **Reaching for scroll-settle / A-B stubbing** → wrong path; that's a real-page concern.
+- **Reaching for scroll-settle / A-B stubbing in a component test** → wrong path; that's a page concern.
+  Whole pages rendered in browser mode use the shared settle helper above.

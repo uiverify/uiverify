@@ -6,7 +6,7 @@ Add one plugin to your Vitest config and every browser-mode test archives its fi
 
 ## Requirements
 
-- Vitest 4 in **browser mode** on the Playwright provider (`@vitest/browser-playwright`) with Chromium.
+- Vitest 4 or 5 in **browser mode** on the Playwright provider (`@vitest/browser-playwright`) with Chromium.
 
 ## Install
 

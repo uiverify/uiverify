@@ -1,4 +1,4 @@
-import { commands } from "@vitest/browser/context";
+import { commands } from "vitest/browser";
 import { snapshot } from "rrweb-snapshot";
 import type { CapturedResource, CapturedSnapshot } from "@uiverify/archive-core";
 import { snapshotIds, type TaskLike } from "./snapshot-id";
@@ -19,8 +19,8 @@ const PRODUCER = { name: pkg.name, version: pkg.version };
  * writes it to disk. Nothing here touches the filesystem (there is none in the browser).
  */
 
-/** The Node-side command the plugin registers, added to the interface `@vitest/browser/context` reads
- *  its `commands` from, so `commands.__uiverifyWriteSnapshot` is typed. */
+/** The Node-side command the plugin registers, added to the interface `vitest/browser` reads its
+ *  `commands` from, so `commands.__uiverifyWriteSnapshot` is typed. */
 declare module "vitest/internal/browser" {
   interface BrowserCommands {
     __uiverifyWriteSnapshot: (snapshot: CapturedSnapshot) => Promise<void>;
