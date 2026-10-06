@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { GraphModuleLike } from "./preview-stats";
-import { buildStatsFromRun } from "./graph-reporter";
+import { buildStatsFromRun, ensureGraphReporter, graphReporter } from "./graph-reporter";
 
 /** A minimal fake of the Vitest shape `buildStatsFromRun` reads: a project whose browser Vite server
  *  exposes a `client` environment module graph via `idToModuleMap.forEach`. */
@@ -59,5 +59,29 @@ describe("buildStatsFromRun", () => {
   it("returns null when no project has a usable browser graph (safe full-render fallback)", () => {
     expect(buildStatsFromRun({ projects: [] }, undefined)).toBeNull();
     expect(buildStatsFromRun({ projects: [{ config: {}, testFilesList: null }] }, undefined)).toBeNull();
+  });
+});
+
+describe("ensureGraphReporter", () => {
+  /** Catches the plugin inside a Vitest `projects` entry shipping no graph: its project-level `reporters`
+   *  are ignored, so the root must gain the reporter from `configureVitest`. */
+  it("adds the graph reporter to root reporters that lack it", () => {
+    const vitest = { config: { reporters: ["default"] as unknown[] } };
+    ensureGraphReporter(vitest, "/out");
+    expect(vitest.config.reporters).toHaveLength(2);
+    expect(vitest.config.reporters[1]).toHaveProperty("onTestRunEnd");
+  });
+
+  it("does not add a second one when the plugin's own reporter already reached the root", () => {
+    const vitest = { config: { reporters: ["default", graphReporter("/out")] as unknown[] } };
+    ensureGraphReporter(vitest, "/out");
+    ensureGraphReporter(vitest, "/out");
+    expect(vitest.config.reporters).toHaveLength(2);
+  });
+
+  it("adds one per output directory", () => {
+    const vitest = { config: { reporters: [graphReporter("/a")] as unknown[] } };
+    ensureGraphReporter(vitest, "/b");
+    expect(vitest.config.reporters).toHaveLength(2);
   });
 });

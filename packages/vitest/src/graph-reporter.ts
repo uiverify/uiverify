@@ -107,9 +107,11 @@ export function emitModuleGraph(
   return true;
 }
 
+const graphReporterDirs = new WeakMap<object, string>();
+
 export function graphReporter(outDir: string) {
   let vitest: VitestLike | undefined;
-  return {
+  const reporter = {
     onInit(ctx: VitestLike) {
       vitest = ctx;
     },
@@ -121,4 +123,15 @@ export function graphReporter(outDir: string) {
       }
     },
   };
+  graphReporterDirs.set(reporter, outDir);
+  return reporter;
+}
+
+/** Vitest honours `reporters` only in the root config, so the one `uiverifyPlugin()` sets through its own
+ *  config never runs when the plugin sits inside a `projects` entry, and no graph ships. `configureVitest`
+ *  runs before Vitest builds the root reporters, so the plugin adds it there unless it's already present. */
+export function ensureGraphReporter(vitest: { config: { reporters: unknown[] } }, outDir: string): void {
+  const reporters = vitest.config.reporters;
+  const present = reporters.some((r) => typeof r === "object" && r !== null && graphReporterDirs.get(r) === outDir);
+  if (!present) reporters.push(graphReporter(outDir));
 }

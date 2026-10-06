@@ -45,3 +45,29 @@ describe("snapshotIds", () => {
     expect(snapshotIds(task, "open").id).toBe("src/Menu.test.tsx > Menu > shows items::open");
   });
 });
+
+describe("snapshotIds for tests that share a name path", () => {
+  /** A file of tests linked the way Vitest collects them: `tasks` in definition order, each test's `suite`
+   *  and `file` pointing back up. */
+  function file(name: string, tests: string[]): { file: TaskLike; tests: TaskLike[] } {
+    const fileTask: TaskLike = { name, type: "suite", tasks: [] };
+    fileTask.file = fileTask;
+    const testTasks = tests.map((t): TaskLike => ({ name: t, type: "test", suite: fileTask, file: fileTask }));
+    fileTask.tasks = testTasks;
+    return { file: fileTask, tests: testTasks };
+  }
+
+  /** Catches two tests with one title writing the same archive file, the later silently replacing the
+   *  earlier. */
+  it("numbers the later ones by where they're defined", () => {
+    const { tests } = file("a.test.ts", ["renders", "other", "renders", "renders"]);
+    expect(tests.map((t) => snapshotIds(t, "").id)).toEqual([
+      "a.test.ts > renders",
+      "a.test.ts > other",
+      "a.test.ts > renders (2)",
+      "a.test.ts > renders (3)",
+    ]);
+    const third = tests[2];
+    expect(third && snapshotIds(third, "open").id).toBe("a.test.ts > renders (2)::open");
+  });
+});

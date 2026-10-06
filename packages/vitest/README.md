@@ -60,6 +60,10 @@ test("footer", async () => {
   `data:image/png;base64,...` string. `takeSnapshot("", { baselineImage })` keeps the test's usual snapshot id.
 - `disableAutoSnapshot()` - opt the current test out of the automatic end-of-test snapshot (or pass `disableAutoSnapshot: true` to `uiverifyPlugin()` to turn it off for every test).
 
+On Vitest 4.1 and later the automatic snapshot is taken as soon as the test body finishes, before your `afterEach` hooks run, so a cleanup hook can't empty the page first (except for concurrent tests and with `sequence.hooks: "parallel"`, where hooks have no order). Wait for the page to settle inside the test; a wait in an `afterEach` comes too late unless that hook calls `takeSnapshot()` itself (or `disableAutoSnapshot()`). A failed test is captured too, so its UI shows up in the build instead of vanishing from it. Always `await takeSnapshot()`: a call still running when the test ends fails the test.
+
+Each snapshot's id is the test file, the `describe` names and the test name (plus `::name` for a named checkpoint). Tests that share all of those get ` (2)`, ` (3)` and so on by their order in the file, and a test that takes two snapshots with the same name gets ` #2` on the second. Ids don't include the Vitest project: running the same tests in several browser projects or `browser.instances` into one archive folder keeps one capture per test and prints a warning.
+
 ## Upload
 
 Archives are written to `./uiverify-archive` (override with `UIVERIFY_ARCHIVE_DIR` or the plugin's `outDir`). Each run first clears the previous run's archive there, so snapshots of deleted tests don't get uploaded; anything else in the folder is left alone. After your run, upload with the [`uiverify`](https://www.npmjs.com/package/uiverify) CLI:
@@ -81,7 +85,7 @@ uiverifyPlugin({
 
 ## How it works
 
-In Vitest browser mode the test runs inside the page, so the DOM is serialized in the same realm with [`rrweb-snapshot`](https://www.npmjs.com/package/rrweb-snapshot); the resources that DOM uses (images, fonts, stylesheets and what they reference) are fetched; and a Vitest browser command writes the snapshot JSON to disk, each resource stored once per archive in its `resources/` folder however many snapshots share it. Nothing runs at runtime beyond your test - the CLI uploads the archive folder as is.
+In Vitest browser mode the test runs inside the page, so the DOM is serialized in the same realm with [`rrweb-snapshot`](https://www.npmjs.com/package/rrweb-snapshot); the resources that DOM uses (images, fonts, stylesheets and what they reference) are fetched, from Node when the page can't read them (a cross-origin image with no CORS headers), with a warning naming any that still can't be archived; and a Vitest browser command writes the snapshot JSON to disk, each resource stored once per archive in its `resources/` folder however many snapshots share it. Nothing runs at runtime beyond your test - the CLI uploads the archive folder as is.
 
 ## License
 

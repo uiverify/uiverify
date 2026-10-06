@@ -2,8 +2,10 @@ import type { Plugin, ViteUserConfig } from "vitest/config";
 import { type CapturedSnapshot, resolveOutDir, writeSnapshot } from "@uiverify/archive-core";
 import { resolveBrowserApi } from "./browser-api";
 import { clearOncePerRun } from "./clear-once";
-import { graphReporter } from "./graph-reporter";
+import { fetchResource } from "./fetch-resource";
+import { ensureGraphReporter, graphReporter } from "./graph-reporter";
 import type { UiverifyPluginOptions } from "./options";
+import { sharedIdWarning } from "./shared-ids";
 
 /** The setup file is referenced by its package specifier (not an absolute path) so Vite resolves it
  *  through node_modules and serves it to the browser; an absolute path outside the project root is
@@ -17,6 +19,7 @@ const SETUP_MODULE = "@uiverify/vitest/browser-setup";
  *  - injects the setup file that auto-snapshots each test (`browser-setup`),
  *  - registers the `__uiverifyWriteSnapshot` browser command that writes each snapshot to disk (the
  *    browser has no filesystem, so the in-page capture hands the assembled snapshot to this Node command),
+ *    and `__uiverifyFetchResource`, which fetches a resource the page itself can't read,
  *  - passes the global `disableAutoSnapshot` option through to the setup file via provide/inject,
  *  - clears the previous run's archive when the run starts.
  *
@@ -41,16 +44,23 @@ export function uiverifyPlugin(options: UiverifyPluginOptions = {}): Plugin {
     test: {
       setupFiles: [SETUP_MODULE],
       // Emit Vite's module graph as `preview-stats.json` so `uiverify upload --only-changed` can skip
-      // unchanged snapshots. `"default"` is kept so the plugin doesn't silence Vitest's own output. If a
-      // user's own `reporters` config ends up displacing this, the only effect is that no graph ships and
-      // the server safely renders everything — add `graphReporter()` back to keep the skip savings.
+      // unchanged snapshots. `"default"` is kept so the plugin doesn't silence Vitest's own output. When
+      // this project-level setting is ignored (the plugin inside `projects`), `configureVitest` below adds
+      // the reporter to the root instead.
       reporters: ["default", graphReporter(outDir)],
       provide: { __uiverify: { disableAutoSnapshot: options.disableAutoSnapshot ?? false } },
       browser: {
         commands: {
-          __uiverifyWriteSnapshot: async (_ctx: unknown, snapshot: CapturedSnapshot) => {
+          __uiverifyWriteSnapshot: async (
+            ctx: { project?: { name?: string; vitest?: object } },
+            snapshot: CapturedSnapshot,
+          ) => {
+            const run = ctx.project?.vitest;
+            const warning = run && sharedIdWarning(run, outDir, ctx.project?.name ?? "", snapshot.id);
+            if (warning) console.warn(warning);
             writeSnapshot(outDir, snapshot);
           },
+          __uiverifyFetchResource: async (_ctx: unknown, url: string) => fetchResource(url),
         },
       },
     },
@@ -66,6 +76,9 @@ export function uiverifyPlugin(options: UiverifyPluginOptions = {}): Plugin {
         return resolveBrowserApi(id, (target) => this.resolve(target, importer, opts));
       },
     },
-    configureVitest: ({ vitest }) => clearOncePerRun(vitest, outDir),
+    configureVitest: ({ vitest }) => {
+      clearOncePerRun(vitest, outDir);
+      ensureGraphReporter(vitest, outDir);
+    },
   };
 }

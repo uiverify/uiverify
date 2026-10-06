@@ -16,6 +16,16 @@ function serving(routes: Record<string, [contentType: string | null, body: BodyI
   });
 }
 
+/** The real key function, for building the expected keys outside a test's freshly loaded module. */
+const { fontFaceKey: fontFaceKeyOf } = await import("./resources");
+
+/** A page `fetch` that can't read anything, the way it fails on a cross-origin response with no CORS headers. */
+function rejecting(): typeof fetch {
+  return vi.fn(async () => {
+    throw new TypeError("Failed to fetch");
+  });
+}
+
 /** Loads the module under a given page `fetch`, the way the setup file loads it before any test body. */
 async function loadWithPageFetch(pageFetch: typeof fetch) {
   vi.resetModules();
@@ -33,7 +43,7 @@ describe("archiveResources", () => {
       serving({ [FONT_URL]: ["binary/octet-stream", FONT_BYTES] }),
     );
     const archived = await archiveResources([FONT_URL]);
-    expect(archived[FONT_URL]?.body).toBe(Buffer.from(FONT_BYTES).toString("base64"));
+    expect(archived.resources[FONT_URL]?.body).toBe(Buffer.from(FONT_BYTES).toString("base64"));
   });
 
   it("archives fonts and images served as application/octet-stream or with no content type", async () => {
@@ -42,26 +52,81 @@ describe("archiveResources", () => {
     const { archiveResources } = await loadWithPageFetch(
       serving({ [png]: ["application/octet-stream", "png"], [ttf]: [null, "ttf"] }),
     );
-    expect(Object.keys(await archiveResources([png, ttf])).sort()).toEqual([ttf, png].sort());
+    expect(Object.keys((await archiveResources([png, ttf])).resources).sort()).toEqual([ttf, png].sort());
   });
 
   it("does not archive an HTML fallback page served for an asset url", async () => {
     const missing = "https://app.example.com/missing.png";
     const { archiveResources } = await loadWithPageFetch(serving({ [missing]: ["text/html", "<html></html>"] }));
-    expect(await archiveResources([missing])).toEqual({});
+    expect((await archiveResources([missing])).resources).toEqual({});
   });
 
   it("does not archive an octet-stream response whose url is not a known asset", async () => {
     const blob = "https://api.example.com/download";
     const { archiveResources } = await loadWithPageFetch(serving({ [blob]: ["application/octet-stream", "x"] }));
-    expect(await archiveResources([blob])).toEqual({});
+    expect((await archiveResources([blob])).resources).toEqual({});
   });
 
   it("fetches through the page's own fetch even after a test stubs fetch for its API mocks (would catch: assets archived as the mock's JSON, or dropped)", async () => {
     const { archiveResources } = await loadWithPageFetch(serving({ [FONT_URL]: ["font/woff2", FONT_BYTES] }));
     vi.stubGlobal("fetch", serving({ [FONT_URL]: ["application/json", "{}"] }));
     const archived = await archiveResources([FONT_URL]);
-    expect(archived[FONT_URL]?.contentType).toBe("font/woff2");
+    expect(archived.resources[FONT_URL]?.contentType).toBe("font/woff2");
+  });
+
+  /** Catches a cross-origin image served without CORS headers (Google's favicon service, avatar.vercel.sh)
+   *  being dropped: the page's fetch can't read an opaque response, so it must be fetched outside the page. */
+  it("archives what the page can't read by fetching it outside the page", async () => {
+    const favicon = "https://www.google.com/s2/favicons?domain=github.com";
+    const { archiveResources } = await loadWithPageFetch(rejecting());
+    const outside = vi.fn(async () => ({ resource: { contentType: "image/png", status: 200, body: "iVBO" } }));
+    const archived = await archiveResources([favicon], outside);
+    expect(outside).toHaveBeenCalledWith(favicon);
+    expect(archived.resources[favicon]?.body).toBe("iVBO");
+    expect(archived.missing).toEqual([]);
+  });
+
+  /** Catches a font the page loaded but the capture's re-fetch got a server error for being silently left
+   *  out (the replay then falls back to a system font with no warning). */
+  it("hands a 5xx to the outside fetch and reports what still fails", async () => {
+    const { archiveResources } = await loadWithPageFetch(
+      vi.fn(async () => new Response("busy", { status: 503, headers: { "content-type": "text/html" } })),
+    );
+    const archived = await archiveResources([FONT_URL], async () => ({ error: "HTTP 503" }));
+    expect(archived.resources).toEqual({});
+    expect(archived.missing).toEqual([{ url: FONT_URL, reason: "HTTP 503" }]);
+  });
+
+  /** Catches a rate-limited re-fetch in the page being given up on instead of retried outside it. */
+  it("hands a 429 to the outside fetch, even with an image body", async () => {
+    const { archiveResources } = await loadWithPageFetch(
+      vi.fn(async () => new Response("png", { status: 429, headers: { "content-type": "image/png" } })),
+    );
+    const outside = vi.fn(async () => ({ resource: { contentType: "image/png", status: 200, body: "cG5n" } }));
+    const archived = await archiveResources([FONT_URL], outside);
+    expect(outside).toHaveBeenCalledWith(FONT_URL);
+    expect(archived.resources[FONT_URL]?.status).toBe(200);
+  });
+
+  /** Catches an avatar service rate-limiting the capture's re-fetch: the image vanishes from the replay
+   *  with no warning, because the error body isn't an image. */
+  it("reports an error response that isn't a visual asset", async () => {
+    const avatar = "https://avatar.example.com/42";
+    const { archiveResources } = await loadWithPageFetch(rejecting());
+    const archived = await archiveResources([avatar], async () => ({
+      resource: { contentType: "application/json", status: 429, body: "e30=" },
+    }));
+    expect(archived.missing).toEqual([{ url: avatar, reason: "HTTP 429" }]);
+  });
+
+  it("skips a resource over the size cap and reports it", async () => {
+    const { archiveResources, MAX_RESOURCE_BYTES } = await loadWithPageFetch(rejecting());
+    const body = Buffer.alloc(MAX_RESOURCE_BYTES + 3).toString("base64");
+    const archived = await archiveResources([FONT_URL], async () => ({
+      resource: { contentType: "font/woff2", status: 200, body },
+    }));
+    expect(archived.resources).toEqual({});
+    expect(archived.missing).toEqual([{ url: FONT_URL, reason: "larger than the 10 MB per-resource limit" }]);
   });
 });
 
@@ -129,9 +194,107 @@ describe("archiveReferencedResources", () => {
     const dom = JSON.stringify({ link: { href: SHEET }, img: { src: PAGE_IMG } });
     const loaded = [SHEET, FONT_URL, "https://fonts.example.com/img/bg.png", PAGE_IMG, OTHER_TEST_IMG];
     const archived = await archiveReferencedResources(loaded, dom);
-    expect(Object.keys(archived).sort()).toEqual(
+    expect(Object.keys(archived.resources).sort()).toEqual(
       [SHEET, FONT_URL, "https://fonts.example.com/img/bg.png", PAGE_IMG].sort(),
     );
+  });
+});
+
+describe("archiveReferencedResources from a cross-origin stylesheet", () => {
+  const PAGE = "http://localhost:5173";
+  const SHEET = "https://fonts.googleapis.com/css2?family=Geist";
+  const LATIN = "https://fonts.gstatic.com/geist-latin.woff2";
+  const CYRILLIC = "https://fonts.gstatic.com/geist-cyrillic.woff2";
+  const css = [
+    `@font-face { font-family: 'Geist'; font-weight: 400; src: url(${CYRILLIC}) format('woff2'); unicode-range: U+0400-045F; }`,
+    `@font-face { font-family: 'Geist'; font-weight: 400; src: url(${LATIN}) format('woff2'); unicode-range: U+0000-00FF, U+0131; }`,
+  ].join("\n");
+  /** The FontFace the browser built from the latin rule, as Chromium reports its descriptors. */
+  const loadedLatin = fontFaceKeyOf({ family: "Geist", style: "normal", weight: "400", unicodeRange: "U+0-FF, U+131" });
+
+  async function load() {
+    return loadWithPageFetch(serving({ [SHEET]: ["text/css", css], [LATIN]: ["font/woff2", FONT_BYTES] }));
+  }
+
+  /** Catches Google Fonts loaded by a `<link>` without `crossorigin` archiving the sheet but not its font
+   *  files: Chromium leaves what such a sheet loaded out of Resource Timing, so the replay fell back to serif. */
+  it("archives the font files of the faces the page loaded, though Resource Timing lists none of them", async () => {
+    const { archiveReferencedResources } = await load();
+    const archived = await archiveReferencedResources([SHEET], JSON.stringify({ link: { href: SHEET } }), {
+      pageOrigin: PAGE,
+      loadedFontFaces: new Set([loadedLatin]),
+    });
+    expect(Object.keys(archived.resources).sort()).toEqual([SHEET, LATIN].sort());
+    // The cyrillic subset was never loaded, so it is neither fetched nor reported.
+    expect(archived.missing).toEqual([]);
+  });
+
+  /** Catches a sheet a cross-origin `<link>` imports being dropped: its request is hidden from Resource
+   *  Timing too, and with it every font it names. */
+  it("follows the sheet's @imports, which Resource Timing doesn't list either", async () => {
+    const outer = "https://cdn.test/outer.css";
+    const inner = "https://cdn.test/inner.css";
+    const more = "https://cdn.test/more.css";
+    const { archiveReferencedResources } = await loadWithPageFetch(
+      serving({
+        [outer]: ["text/css", '@import "inner.css"; @import url(more.css) layer(base);'],
+        [inner]: ["text/css", css],
+        [more]: ["text/css", ".x{}"],
+        [LATIN]: ["font/woff2", FONT_BYTES],
+      }),
+    );
+    const archived = await archiveReferencedResources([outer], JSON.stringify({ link: { href: outer } }), {
+      pageOrigin: PAGE,
+      loadedFontFaces: new Set([loadedLatin]),
+    });
+    expect(Object.keys(archived.resources).sort()).toEqual([outer, inner, more, LATIN].sort());
+  });
+
+  it("follows no font file from a same-origin sheet the page didn't list as loaded", async () => {
+    const sheet = `${PAGE}/site.css`;
+    const { archiveReferencedResources } = await loadWithPageFetch(
+      serving({ [sheet]: ["text/css", css], [LATIN]: ["font/woff2", FONT_BYTES] }),
+    );
+    const archived = await archiveReferencedResources([sheet], JSON.stringify({ link: { href: sheet } }), {
+      pageOrigin: PAGE,
+      loadedFontFaces: new Set([loadedLatin]),
+    });
+    expect(Object.keys(archived.resources)).toEqual([sheet]);
+  });
+});
+
+describe("fontFaceRules", () => {
+  /** Catches a CSS rule and the FontFace built from it producing different keys, which would leave a used
+   *  font unarchived. */
+  it("keys a rule the way the browser reports its FontFace, and picks the first file Chromium reads", async () => {
+    const { fontFaceRules, fontFaceKey } = await loadWithPageFetch(serving({}));
+    const css = `@font-face {
+      font-family: "Brand Sans"; font-style: italic; font-weight: 100 900;
+      src: url(brand.eot?#iefix) format("embedded-opentype"), url("brand.woff2") format("woff2"), url(brand.woff);
+      unicode-range: U+4??, U+0025-00FF;
+    }`;
+    expect(fontFaceRules(css, "https://cdn.test/css/site.css")).toEqual([
+      {
+        key: fontFaceKey({ family: "Brand Sans", style: "italic", weight: "100 900", unicodeRange: "U+400-4FF, U+25-FF" }),
+        file: "https://cdn.test/css/brand.woff2",
+      },
+    ]);
+  });
+
+  it("skips a src in a format Chromium doesn't load", async () => {
+    const { fontFaceRules } = await loadWithPageFetch(serving({}));
+    const css = '@font-face{font-family:A;src:url(a.woff3) format("woff3"), url(a.woff2) format("woff2")}';
+    expect(fontFaceRules(css, "https://cdn.test/")[0]?.file).toBe("https://cdn.test/a.woff2");
+  });
+
+  it("defaults the descriptors a rule leaves out", async () => {
+    const { fontFaceRules, fontFaceKey } = await loadWithPageFetch(serving({}));
+    expect(fontFaceRules("@font-face{font-family:Icons;src:url(i.ttf)}", "https://cdn.test/")).toEqual([
+      {
+        key: fontFaceKey({ family: "Icons", style: "normal", weight: "normal", unicodeRange: "U+0-10FFFF" }),
+        file: "https://cdn.test/i.ttf",
+      },
+    ]);
   });
 });
 
@@ -167,7 +330,7 @@ describe("archiveReferencedResources URL spellings", () => {
       "http://cdn.test/pr.png",
     ];
     const archived = await archiveReferencedResources(loaded, dom);
-    expect(Object.keys(archived).sort()).toEqual([...loaded].sort());
+    expect(Object.keys(archived.resources).sort()).toEqual([...loaded].sort());
   });
 });
 

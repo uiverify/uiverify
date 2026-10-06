@@ -83,10 +83,17 @@ export const test = base.extend<UiVerifyFixtures, UiVerifyWorkerFixtures>({
         },
       });
 
-      // Auto-snapshot the final state — but only for a test that PASSED and didn't already snapshot, so
-      // we never baseline a broken/aborted UI or double-capture a test that called snapshot() itself.
-      if (auto && archiver.count === 0 && testInfo.status === testInfo.expectedStatus) {
-        await archiver.capture();
+      // Auto-snapshot the final state unless the test already snapshotted itself. A failed test is captured
+      // too: its own report says it failed, while a snapshot that vanished from the build would hide that its
+      // UI changed. A test that timed out or was interrupted is not: its page may be stuck, and a capture
+      // that never returns would hold up the teardown. When a failed test leaves no page to capture (a
+      // crash, a closed page), that capture error is left out of its report.
+      if (auto && archiver.count === 0 && (testInfo.status === "passed" || testInfo.status === "failed")) {
+        try {
+          await archiver.capture();
+        } catch (err) {
+          if (testInfo.status === "passed") throw err;
+        }
       }
     },
     { auto: true },

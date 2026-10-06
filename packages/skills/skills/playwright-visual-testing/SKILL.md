@@ -14,7 +14,8 @@ archive; UI Verify re-renders and pixel-diffs that archive server-side. So:
 > drive the page to one canonical state before the snapshot. UI Verify can't un-see a random A/B variant,
 > a live feed, or a piece of lazy content that never loaded.
 
-The snapshot fires automatically when the test passes, so your `beforeEach` + navigation *is* the
+The snapshot fires automatically at the end of every test that passes or fails (a failed one too, so a broken
+page shows up as a visual change rather than vanishing from the build; a test that times out is skipped), so your `beforeEach` + navigation *is* the
 determinism surface. Integration is one import:
 
 ```diff

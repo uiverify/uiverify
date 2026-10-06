@@ -51,10 +51,11 @@ test: { setupFiles: ['./vitest.setup.ts'], browser: { /* … */ } }
 ```
 
 Import fonts from an npm package or a same-origin asset (not a CDN `<link>`), so Vite serves the bytes
-and the archive stays self-contained. If you must use a font CDN, add `crossorigin="anonymous"` to the
-`<link>` so its rules are readable and its font files can be archived. Keep images self-contained the same
-way: an image from a third-party service that sends no CORS headers (avatar generators, favicon services)
-renders in your test but not in the archive, so serve fixtures a local copy or a `data:` URI.
+and the archive stays self-contained. A font CDN or a third-party image (avatar generators, favicon
+services) is archived too, but it is downloaded again at every capture, so an outage or a rate limit
+becomes a missing font or image in that build. The test output then shows a `[uiverify] … could not
+archive …` warning naming it. Serve fixtures a local copy or a `data:` URI to keep the archive independent
+of those services.
 
 The capturer then waits for these fonts like any other — but it can only wait for fonts the test actually
 loads; it can't declare one you never imported (`document.fonts.check('16px "bootstrap-icons"')` is `false`
@@ -82,8 +83,8 @@ highest-value determinism step here — do it first (step 1), and most component
 
 ## The one Vitest-specific trap: capture before the component settled
 
-The auto-snapshot fires at the **end of a passing test**, and `takeSnapshot()` fires **the moment you
-call it**. If the component is still resolving a promise, running a transition, or hasn't rendered its
+The auto-snapshot fires at the **end of every test** (a failed one too, so a broken component shows up as a
+visual change rather than vanishing from the build), and `takeSnapshot()` fires **the moment you call it**. If the component is still resolving a promise, running a transition, or hasn't rendered its
 data yet, you archive a half-rendered frame. Drive it to its final state first — await your render
 helper, wait for the content to appear, then let the test end (or call `takeSnapshot()`):
 
@@ -107,8 +108,10 @@ wait until no query or mutation is in flight (`queryClient.isFetching() === 0 &&
 0`); with other clients, until your fetch mock has answered every request. If a JS-driven layout keeps moving
 after the content shows (a chat that scrolls itself to the bottom, a measured highlight), also wait until
 element positions and scroll offsets stop changing for a few frames. Put these waits in one helper the tests
-share. If you turn the automatic snapshot off (`disableAutoSnapshot()`) and call `takeSnapshot()` at the end
-of that helper, every capture is guaranteed to come after the wait.
+share. On Vitest 4.1 and later the automatic snapshot is taken as soon as the test body finishes, before any
+`afterEach` hook (except for concurrent tests and with `sequence.hooks: "parallel"`), so a wait in an `afterEach` comes too late: call the helper from the test (or have that hook
+call `takeSnapshot()` itself). If you turn the automatic snapshot off (`disableAutoSnapshot()`) and call
+`takeSnapshot()` at the end of that helper, every capture is guaranteed to come after the wait.
 
 ## The checklist (only what the tool can't do for you)
 

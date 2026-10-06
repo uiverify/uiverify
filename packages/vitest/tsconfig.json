@@ -5,5 +5,5 @@
       "@uiverify/archive-core": ["../archive-core/src/index.ts"]
     }
   },
-  "include": ["src/**/*.ts", "tsup.config.ts"]
+  "include": ["src/**/*.ts", "e2e/*.ts", "tsup.config.ts"]
 }

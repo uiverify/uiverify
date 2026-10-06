@@ -1,9 +1,17 @@
 import { commands } from "vitest/browser";
 import { snapshot } from "rrweb-snapshot";
-import type { CapturedResource, CapturedSnapshot } from "@uiverify/archive-core";
-import { snapshotIds, type TaskLike } from "./snapshot-id";
+import type { CapturedSnapshot } from "@uiverify/archive-core";
+import type { TaskLike } from "./snapshot-id";
+import { inlineBlobImages } from "./blob-urls";
 import { type DesignImage, designDataUri } from "./design";
-import { archiveReferencedResources, isModuleOrData } from "./resources";
+import {
+  archiveReferencedResources,
+  type FetchedResource,
+  fontFaceKey,
+  isModuleOrData,
+  MAX_RESOURCE_BYTES,
+  nativeFetch,
+} from "./resources";
 import { settle } from "./settle";
 import pkg from "../package.json";
 
@@ -19,32 +27,65 @@ const PRODUCER = { name: pkg.name, version: pkg.version };
  * writes it to disk. Nothing here touches the filesystem (there is none in the browser).
  */
 
-/** The Node-side command the plugin registers, added to the interface `vitest/browser` reads its
- *  `commands` from, so `commands.__uiverifyWriteSnapshot` is typed. */
+/** The Node-side commands the plugin registers, added to the interface `vitest/browser` reads its
+ *  `commands` from, so they are typed. */
 declare module "vitest/internal/browser" {
   interface BrowserCommands {
     __uiverifyWriteSnapshot: (snapshot: CapturedSnapshot) => Promise<void>;
+    __uiverifyFetchResource: (url: string) => Promise<FetchedResource>;
   }
 }
+
+/** Resource Timing, read through the real `performance` captured at module load: the automatic snapshot
+ *  runs before the test's `afterEach` hooks, so while `vi.useFakeTimers()` is still installed, and its fake
+ *  `performance` lists no resources. */
+const resourceEntries = performance.getEntriesByType.bind(performance, "resource");
 
 /** Archive the visual resources the page loaded (rediscovered via the Resource Timing API) that this
- *  snapshot uses. */
-async function collectResources(dom: CapturedSnapshot["dom"]): Promise<Record<string, CapturedResource>> {
+ *  snapshot uses, warning about each one that could not be archived: the replay is hermetic, so it renders
+ *  without it (a fallback font, a broken image) and the capture comes back "changed" for no visible reason. */
+async function collectResources(id: string, dom: CapturedSnapshot["dom"]): Promise<CapturedSnapshot["resources"]> {
   const loaded = new Set<string>();
-  for (const entry of performance.getEntriesByType("resource")) {
+  for (const entry of resourceEntries()) {
     if (/^https?:/.test(entry.name) && !isModuleOrData(entry.name)) loaded.add(entry.name);
   }
-  return archiveReferencedResources(loaded, JSON.stringify(dom));
+  const loadedFontFaces = new Set(
+    Array.from(document.fonts)
+      .filter((face) => face.status === "loaded")
+      .map(fontFaceKey),
+  );
+  const { resources, missing } = await archiveReferencedResources(loaded, JSON.stringify(dom), {
+    pageOrigin: location.origin,
+    loadedFontFaces,
+    fetchOutsidePage: (url) => commands.__uiverifyFetchResource(url),
+  });
+  for (const { url, reason } of missing) warnNotArchived(id, url, reason);
+  return resources;
 }
 
-/** Serialize the page's current DOM into a {@link CapturedSnapshot} and write it via the Node command.
- *  `name` distinguishes multiple captures within one test; omit it for a test's single auto-snapshot. */
+function warnNotArchived(id: string, url: string, reason: string): void {
+  console.warn(`[uiverify] "${id}": could not archive ${url} (${reason}). UI Verify will replay this snapshot without it.`);
+}
+
+async function blobToDataUri(blobUrl: string): Promise<string> {
+  const blob = await (await nativeFetch(blobUrl)).blob();
+  if (blob.size > MAX_RESOURCE_BYTES) throw new Error("larger than the per-resource limit");
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => (typeof reader.result === "string" ? resolve(reader.result) : reject(reader.error));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+/** Serialize the page's current DOM into a {@link CapturedSnapshot}, ready for {@link writeCaptured}.
+ *  `name` distinguishes multiple captures within one test; it is empty for a test's single auto-snapshot. */
 export async function capture(
   task: TaskLike,
+  { id, title }: { id: string; title: string },
   name: string,
   options: { baselineImage?: DesignImage } = {},
-): Promise<string> {
-  const { id, title } = snapshotIds(task, name);
+): Promise<CapturedSnapshot> {
   // Checked by key, not value: `baselineImage: design.src` is undefined when the import is already a string,
   // and that must fail loudly rather than silently capture with no design.
   const design =
@@ -69,10 +110,11 @@ export async function capture(
   }
   if (!dom) throw new Error(`@uiverify/vitest: rrweb failed to serialize the DOM for "${id}"`);
 
-  const resources = await collectResources(dom);
+  for (const url of await inlineBlobImages(dom, blobToDataUri)) warnNotArchived(id, url, "the blob: URL can't be read");
+  const resources = await collectResources(id, dom);
   const deviceScaleFactor = window.devicePixelRatio || undefined;
   const colorScheme = matchMedia("(prefers-color-scheme: dark)").matches ? ("dark" as const) : ("light" as const);
-  const archived: CapturedSnapshot = {
+  return {
     id,
     title,
     name,
@@ -88,7 +130,9 @@ export async function capture(
     ...(task.file?.name ? { sourcePath: task.file.name } : {}),
     ...(design ? { baselineImage: design } : {}),
   };
+}
 
-  await commands.__uiverifyWriteSnapshot(archived);
-  return id;
+/** Hand a captured snapshot to the Node command that writes it into the archive. */
+export function writeCaptured(snapshot: CapturedSnapshot): Promise<void> {
+  return commands.__uiverifyWriteSnapshot(snapshot);
 }
