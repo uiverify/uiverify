@@ -17,7 +17,7 @@ import type { BuildSummary } from "./client";
 export interface AgentHandoff {
   /** UI Verify's MCP endpoint (`${appUrl}/api/mcp`), driven with the project's API key. */
   mcpUrl: string;
-  /** The MCP selector that addresses this build - its PR if it has one, else its commit. */
+  /** The MCP selector that addresses this build - its id for a preview check, else its PR, else its commit. */
   selector: string;
 }
 

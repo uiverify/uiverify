@@ -387,6 +387,32 @@ describe("runUpload", () => {
     expect(lines).toContain("Review: https://uiverify.example.com/builds/b1");
   });
 
+  it("hands the agent a buildId selector for a preview check, since a PR or commit resolves the CI build", async () => {
+    const changed: FakeStatus = {
+      status: "changed",
+      total: 1,
+      changed: 1,
+      failed: 0,
+      summary: {
+        aiReview: { regressions: 0, intended: 0, reviewed: 0 },
+        changedStories: [],
+        changedStoriesTruncated: { shown: 0, total: 1 },
+        failedStories: [],
+      },
+    };
+    const previewLines: string[] = [];
+    await runUpload(
+      { staticDir: "/sb", appUrl: "https://uiverify.example.com", preview: true, previewTargets: ["pages-profile--default"] },
+      deps({ statusPolls: 0 }, [changed], previewLines),
+    );
+    expect(previewLines).toContain('  1. get_build { "buildId": "b1" } - the changed-story list, each with a diffResultId.');
+    expect(previewLines.some((l) => l.includes('"prNumber"'))).toBe(false);
+
+    const uploadLines: string[] = [];
+    await runUpload({ staticDir: "/sb", appUrl: "https://uiverify.example.com" }, deps({ statusPolls: 0 }, [changed], uploadLines));
+    expect(uploadLines).toContain('  1. get_build { "prNumber": 9 } - the changed-story list, each with a diffResultId.');
+  });
+
   it("treats blocked as terminal — stops polling and reports the quota/payment block", async () => {
     const log: CallLog = { statusPolls: 0 };
     const lines: string[] = [];

@@ -228,7 +228,7 @@ as blocks a shell can't render. One command for Claude Code:
 
 ```sh
 claude mcp add --transport http uiverify https://uiverify.ai/api/mcp \
-  --header "Authorization: Bearer $UIVERIFY_API_KEY"
+  --header 'Authorization: Bearer ${UIVERIFY_API_KEY}'
 ```
 
 Then hand the review loop to **`triage-visual-changes`** (it has the per-client setup and the recipes:

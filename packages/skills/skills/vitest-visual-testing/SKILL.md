@@ -91,10 +91,12 @@ helper, wait for the content to appear, then let the test end (or call `takeSnap
 ```ts
 import { render } from 'vitest-browser-react'; // or your framework's browser render helper
 import { takeSnapshot } from '@uiverify/vitest';
+import { expect, test } from 'vitest';
 
 test('user card', async () => {
   const screen = await render(<UserCard id="u_1" />); // render() is async - await it, or `screen` is a Promise
-  await screen.getByText('Ada Lovelace').query(); // wait for the settled state, THEN archive
+  // expect.element retries until the content shows; a bare .query() checks once and does not wait.
+  await expect.element(screen.getByText('Ada Lovelace')).toBeVisible();
   await takeSnapshot();
 });
 ```
@@ -233,9 +235,11 @@ Then follow the rest of this skill as for components: fixtures for every piece o
 settle helper above. Capture each page in the sizes and themes your users see (for example desktop and
 mobile, light and dark), and skip a variant only where it looks identical to another one.
 
-**Next.js App Router.** Import the route's `page.tsx` and wrap it in its `layout.tsx` files. React 19
-renders an async server component on the client when it sits inside `<Suspense>` (it logs a console error
-per async component, which you can filter in the setup file). Replace `server-only`, `next/headers`
+**Next.js App Router.** Import the route's `page.tsx` and wrap it in its `layout.tsx` files. React does not
+officially support async components on the client, but React 19 still renders an async server component
+there when it sits inside `<Suspense>`, logging a console error per async component (filter those in the
+setup file). Because the client re-runs the component on every retry, keep its awaited work settling: return
+the same promise or cached data on each run rather than starting a new request. Replace `server-only`, `next/headers`
 (`cookies()`, `headers()`), `next/cache`, `next/navigation` and `next/link`, plus the data functions the
 route files call on the server, and load the fonts `next/font` provides in the app.
 

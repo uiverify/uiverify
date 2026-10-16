@@ -194,7 +194,7 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
       // `summary` is absent on an older server, so this no-ops there. Exit code is unchanged.
       if (s.summary && (s.status === "changed" || s.status === "failed")) {
         const agent = opts.appUrl
-          ? { mcpUrl: `${opts.appUrl.replace(/\/$/, "")}/api/mcp`, selector: agentSelector(meta) }
+          ? { mcpUrl: `${opts.appUrl.replace(/\/$/, "")}/api/mcp`, selector: agentSelector(meta, buildId, opts.preview ?? false) }
           : undefined;
         for (const line of formatVerdictSummary(s.summary, buildUrl, agent)) deps.log(line);
       }
@@ -205,8 +205,10 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
   throw new Error(`timed out waiting for build ${buildId}`);
 }
 
-/** The MCP selector that addresses this build - its PR if it has one, else its commit. */
-function agentSelector(meta: GitMeta): string {
+/** The MCP selector that addresses this build - its PR if it has one, else its commit. A preview build is
+ *  addressable only by its id: the server resolves a PR or commit to the CI build, never a preview one. */
+function agentSelector(meta: GitMeta, buildId: string, preview: boolean): string {
+  if (preview) return `{ "buildId": "${buildId}" }`;
   return meta.prNumber !== null ? `{ "prNumber": ${meta.prNumber} }` : `{ "commitSha": "${meta.commitSha}" }`;
 }
 

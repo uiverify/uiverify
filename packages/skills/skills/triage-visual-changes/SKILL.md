@@ -19,8 +19,11 @@ can't render, so the pixels are useless to a script; a native client shows them 
 **Claude Code:**
 ```sh
 claude mcp add --transport http uiverify https://uiverify.ai/api/mcp \
-  --header "Authorization: Bearer $UIVERIFY_API_KEY"
+  --header 'Authorization: Bearer ${UIVERIFY_API_KEY}'
 ```
+
+Single quotes keep `${UIVERIFY_API_KEY}` a reference that Claude Code expands each time it connects, so the
+key itself is never written into its MCP config.
 
 **Cursor** — add to `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global):
 ```json

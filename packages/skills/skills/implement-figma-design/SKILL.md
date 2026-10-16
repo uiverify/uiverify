@@ -11,7 +11,8 @@ the design, and hands you back the delta. You converge until the delta is gone, 
 NOT accept** - accepting would rebase the baseline off the design (see "Do not accept" below).
 
 **The flow: get the design PNG -> declare it as the story's baseline -> build the whole page once -> then
-sweep top-to-bottom, locking one section at a time -> stop at the minimum.**
+sweep top-to-bottom, locking one section at a time -> stop at the minimum.** Every round renders only the
+story you are building (`uiverify check --target`), never the whole Storybook.
 
 Read "The section sweep" below before your second upload. It is the whole method. Four previous agents
 failed this task, all in the same way: they treated convergence as *tuning a number* instead of *locking
@@ -22,7 +23,9 @@ sections*, and all four stalled between 2.5% and 5% and declared a floor that wa
 These qualifications apply to the sweep and the historical examples below:
 
 - Record the commit, build ID, diff ID, baseline image hash, candidate image hash, dimensions, and mask
-  scope for each round. Concurrent runs can share the server's `branch` value; resolve builds by commit.
+  scope for each round. Resolve each round's build by the `buildId` that `uiverify check` prints
+  (`Registered build <id>`). A check build is addressable only by its id: `commitSha` and `prNumber`
+  resolve the branch's CI build, not your round.
 - `metrics.changedPct` is a **fraction**. Display `100 * changedPct` followed by `%`, alongside changed
   pixels and canvas dimensions. For example, `0.01581616` means `1.581616%`. The denominator includes
   ignored areas and empty space; this is not a visual-similarity score or a ranking between designs.
@@ -176,10 +179,12 @@ Then:
   import the PNG next to the test and pass it to the snapshot:
   `import design from "./design/hero.png"` then `await takeSnapshot("", { baselineImage: design })` (pass
   the import as-is, even where it resolves to an object). The SDK ships the image inside the archive. The snapshot is the whole page at the browser viewport width, so set the Vitest browser
-  `viewport` to the design's canvas width. Each round is `rm -rf uiverify-archive && vitest run`, then
-  `uiverify upload --static-dir ./uiverify-archive` in place of the Storybook build + upload below
-  (clearing the archive matters: the SDK never deletes old files, so a test you renamed or removed would
-  still be uploaded from the previous round).
+  `viewport` to the design's canvas width. Each round is
+  `rm -rf uiverify-archive && vitest run <the design's test file>`, then
+  `uiverify check --static-dir ./uiverify-archive` in place of the Storybook build + check below. Running
+  only that test file makes the archive the render set, so it needs no `--target` (clearing the archive
+  matters: the SDK never deletes old files, so a test you renamed or removed, or one an earlier full run
+  captured, would still be uploaded from the previous round).
 - Mark an **explicitly excluded dynamic region** (a video, an autoplay animation, a live/random
   background) with the
   `data-uiverify-ignore` attribute. UI Verify blanks that box on both the design and your render, so its
@@ -187,14 +192,24 @@ Then:
 - Match the design's **canvas width** and **fonts**. If the design was drawn at 1200px, build at 1200px; if
   it uses a specific font, self-host it (ship the woff2 in the bundle) so text metrics match. Without the
   exact font, every line of copy diffs.
-- **Each round is a commit plus an upload.** Builds are keyed by commit SHA, so commit first, then build
-  Storybook and upload it. This is a local loop; it needs no pull request and no CI:
+- **Each round is a commit plus a `check` that renders only the story you are building.** Commit first so
+  the round log can name the commit, build Storybook, then run `uiverify check` with `--target` set to the
+  design story's id. Each check is one upload in the budget below. This is a local loop; it needs no pull
+  request and no CI:
 
   ```sh
   git add -A && git commit -qm "attempt N: <block>: <change>"
   npx storybook build -o storybook-static   # or your repo's build script
-  UIVERIFY_API_KEY=uv_proj_... npx -y uiverify@latest upload --static-dir ./storybook-static
+  UIVERIFY_API_KEY=uv_proj_... npx -y uiverify@latest check --static-dir ./storybook-static --target 'pages-profile--default'
   ```
+
+  The story id is in `storybook-static/index.json` (a target that matches nothing fails the check and
+  lists the valid ids). For a design with several frames (desktop and mobile stories), pass `--target`
+  once per story, or one glob over just that component (`'pages-profile--*'`). **Never `uiverify upload`
+  the whole Storybook per round:** it re-renders every other story in the project (every button variant,
+  every unrelated page) each time, so each round waits on renders that say nothing about the design. A
+  check still diffs against the declared design, posts no GitHub check, and never moves a CI baseline; the
+  full `uiverify upload` runs in CI on the pull request.
 
 ## THE RULE - UI Verify is the only source of truth
 
@@ -416,17 +431,18 @@ within the budget, or report incomplete with the remaining discrepancies and any
 ## Do not accept - it rebases the baseline off the design
 
 **Never call `accept_build` (or `review_diff` with an accept) on this task.** UI Verify diffs against the
-design only while the design is the baseline. Accepting replaces the baseline with *your render*, which (a)
+design only while the design is the baseline. Accepting replaces the baseline with *your render* (accepting
+a check build does it too, for every later check on the branch), which (a)
 hides every remaining design delta forever and (b) makes every later upload diff against your render, not the
 design. A prior run accepted at ~2.8%, then a fresh session re-uploaded against that accepted render, saw
 ~13% "drift", and spent 20 rounds polishing a phantom against its own snapshot instead of the design. Leave
 the build `changed` at its floor - that is the finished state, and it keeps the project reusable without
 recreating it.
 
-**Confirm you are still diffing the DESIGN, every round.** `get_build` must show the design as the baseline
-(`hadBaseline: true`, baseline origin `design`). If it ever shows origin `render` or `hadBaseline: false`,
-STOP and tell the user - the branch was accepted or the baseline failed to resolve, and the number is now
-measuring your render against itself.
+**Confirm you are still diffing the DESIGN, every round.** `get_diff` must report `hadBaseline: true`, and
+`render_diff_image which:"baseline"` must still show the design, not an earlier render of yours. If either
+fails, STOP and tell the user - the branch was accepted or the baseline failed to resolve, and the number
+is now measuring your render against itself.
 
 ## The MCP tools you use (UI Verify)
 
@@ -435,8 +451,9 @@ are not available in your session, stop and tell the user.** Do not fall back to
 endpoint: the MCP connects at session start, and the fix is connecting it and starting a fresh session.
 (Downloading the PNG URLs that `get_diff` returns is fine - that is how you measure.)
 
-- **`get_build { commitSha }`** - the build's changed stories, each with a `diffResultId` and `changedPct`.
-  The number only. Never your last call before a decision.
+- **`get_build { buildId }`** - the build's changed stories, each with a `diffResultId` and `changedPct`.
+  The number only. Never your last call before a decision. Use the id `check` printed (see "Evidence
+  integrity").
 - **`render_diff_image { diffResultId, which: "baseline" | "candidate", pxPagination: {offset, height} }`** -
   **your primary pair.** The design and your render at the identical window. This is what you measure, and
   it is the only view that is honest about low-contrast geometry.
@@ -445,7 +462,7 @@ endpoint: the MCP connects at session start, and the fix is connecting it and st
 - **`render_diff_image { diffResultId, which: "before_after" }`** - baseline and candidate side by side,
   auto-cropped to each changed region. Excellent for a fast survey - use it after every upload, not just the
   first few. (Both recent runs used it 4 times out of ~40-50 image calls, and never after round 10.)
-- **`get_diff { commitSha }`** - presigned URLs for the baseline/candidate/diff PNGs. Download these when you
+- **`get_diff { buildId }`** - presigned URLs for the baseline/candidate/diff PNGs. Download these when you
   want to measure spans with a script.
 - **`accept_build` / `review_diff`** - **do NOT use these on this task.** Accepting rebases the baseline off
   the design (see "Do not accept"); this is converge-and-stop, not accept.
@@ -488,4 +505,7 @@ endpoint: the MCP connects at session start, and the fix is connecting it and st
   is wrong.
 - **Measuring your own served page / DOM** instead of UI Verify's candidate.
 - Looking at the diff **once** and then iterating on the number plus screenshots of your own page.
+- **Uploading the whole Storybook every round** with `uiverify upload`. One run re-rendered 16 stories per
+  round, 12 of them button variants nobody was touching, for ten rounds straight. `check --target` the
+  design's story.
 - Misreading a headline halo as a missing `font-weight` and quitting at a plateau.
