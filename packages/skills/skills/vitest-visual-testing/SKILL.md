@@ -207,7 +207,7 @@ fixed fixtures for anything that reaches the DOM (an id, a faker name), or set a
 
 A JS-measured layout that reflows or reorders on its own (packing driven by measured size, a shuffled
 list) can vary run-to-run even with identical content. Force a deterministic variant (a fixed
-order/size), or mask the region.
+order/size), or mask the region (step 6).
 
 One measured-layout case the SDK already handles: a component that measures text width **on mount** (a
 sliding tab or switch highlight) can bake a 1px-shifted position if the font wasn't ready at that first
@@ -215,6 +215,17 @@ layout. The SDK preloads fonts before each test so the first measurement uses re
 or a font registers late (an unusual setup) and you still see a sub-pixel shift, call `preloadFonts()`
 from `@uiverify/vitest` **before** `render()` to force it - settling after render can't undo a
 measurement already taken.
+
+### 6. Mask what you can't pin
+
+Last resort for content that is supposed to differ and can't be pinned at the source (a third-party
+embed, a map, an ad slot, a live feed): add **`data-uiverify-ignore`** to the element. UI Verify paints
+its box solid black on every capture, so its content never reaches the diff. The box's size and position
+still diff (give it a fixed size), and nothing inside it is checked, so mask only what you can't pin and
+fix what you own. [Docs](https://uiverify.ai/docs/ignore-regions).
+```tsx
+<aside data-uiverify-ignore style={{ width: 320, height: 256 }}><AdSlot /></aside>
+```
 
 ## Testing whole pages
 

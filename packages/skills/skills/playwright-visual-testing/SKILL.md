@@ -100,14 +100,20 @@ await page.evaluate(async () => {
 });
 ```
 
-**6. Neutralize what can't be pinned** — there's no separate mask step; UI Verify diffs the
-*archived DOM*, so hide the unstable element in the DOM before the snapshot and its varying
-content never lands in the archive:
+**6. Mask what can't be pinned.** Last resort for content that is supposed to differ and can't be
+pinned at the source (a third-party embed, a map, an ad slot, a live feed): add **`data-uiverify-ignore`**
+to the element. UI Verify paints its box solid black on every capture, so its content never reaches the
+diff. The box's size and position still diff (give it a fixed size), and nothing inside it is checked, so
+mask only what you can't pin and fix what you own. [Docs](https://uiverify.ai/docs/ignore-regions).
+```tsx
+<aside data-uiverify-ignore style={{ width: 320, height: 256 }}><AdSlot /></aside>
+```
+On a page you don't own, set the attribute from the test before the snapshot; the archive keeps it and
+replay masks the box:
 ```ts
-// target the container that reflows or reorders between runs
 await page
   .locator('[data-testid="dynamic-region"]')
-  .evaluateAll((els) => els.forEach((el) => (el.style.visibility = "hidden")));
+  .evaluateAll((els) => els.forEach((el) => el.setAttribute('data-uiverify-ignore', '')));
 ```
 
 **7. Freeze an app-driven JS animation** the capturer can't reach — an infinite charting-library loop, a `<canvas>` spinner with no final frame. Detect the capture *in the component* and render the end state. `@uiverify/playwright` sets a `UIVerify` user-agent marker and a `window.__UI_VERIFY__` global at record time, so a client-side branch works on its own; if the component decides this during **server-side rendering** (no `window` yet), also set a `UI_VERIFY` env var when you boot the app for the record run and check it:

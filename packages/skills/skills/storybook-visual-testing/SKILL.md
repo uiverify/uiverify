@@ -138,7 +138,18 @@ seed.
 
 A JS-measured layout that reflows or reorders on its own (packing driven by measured size, a shuffled
 list) can vary run-to-run even with identical content. Force a deterministic variant in the story (a
-fixed order/size), or mask the region.
+fixed order/size), or mask the region (step 6).
+
+### 6. Mask what you can't pin
+
+Last resort for content that is supposed to differ and can't be pinned at the source (a third-party
+embed, a map, an ad slot, a live feed): add **`data-uiverify-ignore`** to the element. UI Verify paints
+its box solid black on every capture, so its content never reaches the diff. The box's size and position
+still diff (give it a fixed size), and nothing inside it is checked, so mask only what you can't pin and
+fix what you own. [Docs](https://uiverify.ai/docs/ignore-regions).
+```tsx
+<aside data-uiverify-ignore style={{ width: 320, height: 256 }}><AdSlot /></aside>
+```
 
 ## Anti-patterns
 
