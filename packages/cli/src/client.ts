@@ -144,7 +144,8 @@ export interface IngestClient {
   upload(uploadUrl: string, tgzPath: string): Promise<void>;
   /** `ancestorShas`: the confirmed-ancestor subset of the register response's `baselineCommits`, used
    *  to gate baseline inheritance against true git ancestry. Empty when the checkout was shallow.
-   *  `changedFiles`: the advisory skip-unchanged delta (`deltaFor`), omitted when there is none. */
+   *  `changedFiles`: the skip-unchanged delta (`deltaFor`), the server's only source of changed files;
+   *  omitted when there is none, and then nothing is carried from an earlier commit. */
   markUploaded(buildId: string, ancestorShas: string[], changedFiles?: Record<string, ClientDeltaEntry>): Promise<void>;
   getStatus(buildId: string): Promise<BuildStatus>;
 }

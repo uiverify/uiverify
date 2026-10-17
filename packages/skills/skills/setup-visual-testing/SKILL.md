@@ -208,8 +208,9 @@ Check the Storybook major before you write the build step - the flag is `--stats
 but `--webpack-stats-json` on 7.x, and passing the wrong one fails the build step before the upload ever
 runs.
 
-Keep `--only-changed` off the **local** upload above. The skip is decided from commits, so re-uploading
-an uncommitted edit on the same commit would carry every story forward and hide the change you made.
+Keep `--only-changed` off the **local** upload above. Stories already checked at a commit count as
+unchanged there, so re-uploading an uncommitted edit on the same commit would carry them forward and hide
+the change you made.
 
 ## Step 5 — the check gates every PR
 

@@ -183,3 +183,170 @@ describe("deltaFor (real git)", () => {
     expect(deltaFor([], head, dir)).toEqual({});
   });
 });
+
+describe("deltaFor uncommitted edits (real git)", () => {
+  let dir: string;
+  let base: string;
+  let head: string;
+  const sha = (rev: string): string => execFileSync("git", ["rev-parse", rev], { cwd: dir, encoding: "utf8" }).trim();
+  const git = (...args: string[]): void => {
+    execFileSync("git", args, { cwd: dir, stdio: "ignore" });
+  };
+  const write = (name: string, content: string): void => {
+    fs.mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
+    fs.writeFileSync(path.join(dir, name), content);
+  };
+
+  beforeAll(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "uiverify-dirty-test-"));
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "t@t.t");
+    git("config", "user.name", "t");
+    write(".gitignore", "ignored.log\n");
+    write("Button.tsx", "1");
+    write("Card.tsx", "1");
+    write("staged.tsx", "1");
+    git("add", "-A");
+    git("commit", "-q", "-m", "base");
+    base = sha("HEAD");
+    write("committed.tsx", "1");
+    git("add", "-A");
+    git("commit", "-q", "-m", "head");
+    head = sha("HEAD");
+    // Uncommitted on top of head: an unstaged edit, a staged edit, an untracked file, an ignored file, and
+    // an untracked upload dir.
+    write("Button.tsx", "2");
+    write("staged.tsx", "2");
+    git("add", "staged.tsx");
+    write("New.tsx", "1");
+    write("ignored.log", "x");
+    write("storybook-static/iframe.html", "<html>");
+  });
+  afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  /** Would catch: the delta diffing commit against commit only, so a story changed by an edit that isn't
+   *  committed yet is carried forward from a baseline that predates the edit. */
+  it("adds staged, unstaged and untracked edits to every base's list", () => {
+    const out = deltaFor([base, head], head, dir, { exclude: path.join(dir, "storybook-static"), env: {} });
+    expect(out[base]?.truncated).toBe(false);
+    expect([...(out[base]?.files ?? [])].sort()).toEqual(["Button.tsx", "New.tsx", "committed.tsx", "staged.tsx"]);
+    expect([...(out[head]?.files ?? [])].sort()).toEqual(["Button.tsx", "New.tsx", "staged.tsx"]);
+  });
+
+  it("leaves out ignored files and the upload dir", () => {
+    const files = deltaFor([base], head, dir, { exclude: path.join(dir, "storybook-static"), env: {} })[base]?.files ?? [];
+    expect(files).not.toContain("ignored.log");
+    expect(files.some((f) => f.startsWith("storybook-static/"))).toBe(false);
+  });
+
+  /** Would catch: the upload dir excluded as a glob, so a bracket in its name would also drop unrelated
+   *  edits (`dist[prod]` matching a root file named `distp`). */
+  it("excludes the upload dir literally, not as a pattern", () => {
+    write("dist[prod]/iframe.html", "<html>");
+    write("distp", "1");
+    try {
+      const files = deltaFor([base], head, dir, { exclude: path.join(dir, "dist[prod]"), env: {} })[base]?.files ?? [];
+      expect(files).toContain("distp");
+      expect(files.some((f) => f.startsWith("dist[prod]/"))).toBe(false);
+    } finally {
+      fs.rmSync(path.join(dir, "dist[prod]"), { recursive: true, force: true });
+      fs.rmSync(path.join(dir, "distp"), { force: true });
+    }
+  });
+
+  it("lists an untracked upload dir when no exclude is given", () => {
+    expect(deltaFor([base], head, dir, { env: {} })[base]?.files).toContain("storybook-static/iframe.html");
+  });
+
+  /** Would catch: a CI run listing what its own steps left behind (an un-ignored failure screenshot), which
+   *  the server can't map to a story and answers with a full render on every build. */
+  it.each([{ CI: "true" }, { TF_BUILD: "True" }, { JENKINS_URL: "https://ci" }, { TEAMCITY_VERSION: "2024.1" }])(
+    "adds no uncommitted files in CI (%o)",
+    (env) => {
+      const out = deltaFor([base], head, dir, { exclude: path.join(dir, "storybook-static"), env });
+      expect(out[base]).toEqual({ files: ["committed.tsx"], truncated: false });
+    },
+  );
+
+  /** Would catch: the working tree compared to HEAD rather than to `head`, so with a `COMMIT_SHA` that names
+   *  an earlier commit, what changed between that commit and the checkout was in neither list. */
+  it("covers what changed between `head` and the checked-out commit", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "uiverify-override-"));
+    const g = (...args: string[]): string => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+    try {
+      g("init", "-q", "-b", "main");
+      g("config", "user.email", "t@t.t");
+      g("config", "user.name", "t");
+      fs.writeFileSync(path.join(repo, "a.ts"), "1");
+      g("add", "-A");
+      g("commit", "-q", "-m", "base");
+      const b = g("rev-parse", "HEAD");
+      fs.writeFileSync(path.join(repo, "named.ts"), "1");
+      g("add", "-A");
+      g("commit", "-q", "-m", "the commit COMMIT_SHA names");
+      const named = g("rev-parse", "HEAD");
+      fs.writeFileSync(path.join(repo, "later.ts"), "1");
+      g("add", "-A");
+      g("commit", "-q", "-m", "the checked-out commit");
+      expect([...(deltaFor([b], named, repo, { env: {} })[b]?.files ?? [])].sort()).toEqual(["later.ts", "named.ts"]);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("deltaFor without a checkout (real git)", () => {
+  let src: string;
+  let dir: string;
+  let base: string;
+  let head: string;
+  const run = (cwd: string, ...args: string[]): string => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+
+  beforeAll(() => {
+    src = fs.mkdtempSync(path.join(os.tmpdir(), "uiverify-nocheckout-src-"));
+    run(src, "init", "-q", "-b", "main");
+    run(src, "config", "user.email", "t@t.t");
+    run(src, "config", "user.name", "t");
+    fs.writeFileSync(path.join(src, "a.ts"), "1");
+    fs.writeFileSync(path.join(src, "package.json"), "{}");
+    run(src, "add", "-A");
+    run(src, "commit", "-q", "-m", "base");
+    base = run(src, "rev-parse", "HEAD");
+    fs.writeFileSync(path.join(src, "y.ts"), "1");
+    run(src, "add", "-A");
+    run(src, "commit", "-q", "-m", "head");
+    head = run(src, "rev-parse", "HEAD");
+    // The documented fork-PR upload: commits fetched as objects, HEAD pointed at them, nothing checked out.
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "uiverify-nocheckout-"));
+    run(dir, "init", "-q");
+    run(dir, "fetch", "-q", src, "main");
+    run(dir, "update-ref", "HEAD", head);
+  });
+  afterAll(() => {
+    fs.rmSync(src, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** Would catch: an empty index read as "every tracked file deleted", which put the whole repo (and its
+   *  lockfile) into every base's list and made every fork PR render in full. */
+  it("adds nothing for an empty index, where no checkout exists to have edits", () => {
+    expect(deltaFor([base], head, dir, { env: {} })[base]).toEqual({ files: ["y.ts"], truncated: false });
+  });
+
+  /** Would catch: an empty index read as "no edits" when files are on disk — a checkout unstaged wholesale
+   *  (`git rm -r --cached .`), where a file deleted since can't be seen at all. */
+  it("reports every base unreadable for an empty index with files on disk", () => {
+    const unstaged = fs.mkdtempSync(path.join(os.tmpdir(), "uiverify-unstaged-"));
+    try {
+      run(unstaged, "init", "-q");
+      run(unstaged, "fetch", "-q", src, "main");
+      run(unstaged, "update-ref", "HEAD", head);
+      run(unstaged, "reset", "-q", "--hard", "HEAD");
+      run(unstaged, "rm", "-r", "-q", "--cached", ".");
+      fs.rmSync(path.join(unstaged, "a.ts"));
+      expect(deltaFor([base], head, unstaged, { env: {} })[base]).toEqual({ files: [], truncated: true, reason: "git-error" });
+    } finally {
+      fs.rmSync(unstaged, { recursive: true, force: true });
+    }
+  });
+});

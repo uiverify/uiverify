@@ -59,7 +59,7 @@ Exit codes: `0` success (or an operational failure under `--no-strict`), `1` the
 
 ## Only changed stories
 
-`--only-changed` renders just the stories your commit could have affected and carries every other baseline forward at a fraction of a snapshot each, so a one-component PR costs far less than a full suite. It works for **Storybook and Vitest** uploads — both ship a dependency graph UI Verify resolves server-side. A **Playwright archive has no graph**, so those uploads (and screenshot uploads) always render in full and the flag is ignored.
+`--only-changed` renders just the stories your commit could have affected and carries every other baseline forward at a fraction of a snapshot each, so a one-component PR costs far less than a full suite. It works for **Storybook and Vitest** uploads — both ship a dependency graph UI Verify resolves server-side. The CLI works out which files changed with `git diff` in your checkout (outside CI, uncommitted edits included) and sends only the paths. A **Playwright archive has no graph**, so those uploads (and screenshot uploads) always render in full and the flag is ignored.
 
 Storybook builds the graph only when you pass `--stats-json`:
 

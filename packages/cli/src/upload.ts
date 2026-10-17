@@ -139,12 +139,12 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
   }
 
   // Skip-unchanged: for a graph-carrying `--only-changed` upload, diff the base commits the server named
-  // against HEAD with local git and send the file lists with the upload. `UIVERIFY_NO_DELTA=1` opts a
-  // runner out entirely. Never fails the upload — `deltaFor` turns every git error into a truncated entry.
+  // against this build's commit and the working tree with local git, and send the file lists with the
+  // upload. `UIVERIFY_NO_DELTA=1` sends none, and then nothing is carried from an earlier commit. Never fails the upload — `deltaFor` turns every git error into a truncated entry.
   let changedFiles: Record<string, ClientDeltaEntry> | undefined;
   if (opts.onlyChanged && opts.bundleHasGraph && deltaBases.length > 0) {
     if (process.env.UIVERIFY_NO_DELTA === "1") {
-      deps.log("Skipping changed-file delta (UIVERIFY_NO_DELTA=1)");
+      deps.log("Skipping changed-file delta (UIVERIFY_NO_DELTA=1): nothing will be carried from earlier commits");
     } else {
       changedFiles = deps.deltaFor(deltaBases, meta.commitSha);
       const entries = Object.values(changedFiles);

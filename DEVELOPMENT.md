@@ -54,11 +54,13 @@ flag that exited 0 would leave CI green with nothing uploaded and no visual gate
 ### Skip-unchanged (`--only-changed`)
 
 UI Verify's TurboSnap-equivalent renders only the stories a commit's changed files could affect and
-carries the rest forward — computed **server-side**, opt-in per build with `--only-changed`. Leave it off
+carries the rest forward — decided **server-side** from the changed files the CLI diffs locally (each
+baseline commit against your checkout; outside CI, uncommitted edits included), opt-in per build with `--only-changed`. Leave it off
 and every story renders as before. The flag is the only thing that turns skipping on: no env var, no
 negative form, and no server-side toggle in either direction, so what a step passes is what that build
-does. Storybook only: an archive-replay (Playwright) build has no dependency graph, so it always renders
-in full and the flag is a no-op.
+does. (`UIVERIFY_NO_DELTA=1` stops the CLI sending its changed files, which leaves the server nothing to
+skip against, so it can only turn skipping off.) Storybook and Vitest: a Vitest archive carries the Vite module graph; a Playwright archive has no
+dependency graph, so it always renders in full and the flag is a no-op.
 
 It needs the Storybook **dependency graph**, which only exists if you build with Storybook's
 `--stats-json` flag (it writes `preview-stats.json` into `storybook-static`):

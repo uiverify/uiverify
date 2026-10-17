@@ -212,7 +212,7 @@ function uploadDepsFor(ctx: CommonContext): UploadDeps {
     client: httpIngestClient(ctx.apiUrl, ctx.apiKey),
     gitMeta: () => collectGitMeta(ctx.cwd),
     confirmAncestors: (candidates, headSha) => confirmAncestors(candidates, headSha, ctx.cwd),
-    deltaFor: (bases, headSha) => deltaFor(bases, headSha, ctx.cwd),
+    deltaFor: (bases, headSha) => deltaFor(bases, headSha, ctx.cwd, { exclude: ctx.staticDir }),
     createBundle: ctx.isScreenshots ? createScreenshotBundle : createBundle,
     bundleContentHash,
     readProducer: ctx.isScreenshots ? () => null : readArchiveProducer,
