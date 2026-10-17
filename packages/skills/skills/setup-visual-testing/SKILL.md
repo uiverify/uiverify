@@ -225,12 +225,16 @@ check — loop back to the determinism skill (Step 3) to remove the flake at its
 The check gates the PR; the **MCP** is how your coding agent reviews it without leaving the terminal —
 list builds, look at the actual before/after pixels, post them to the PR, accept baselines. Add it as a
 real MCP server (Claude Code, Cursor, Codex, …) — don't hand-roll `curl`, or the image tools come back
-as blocks a shell can't render. One command for Claude Code:
+as blocks a shell can't render. One command for Claude Code, run in the project root:
 
 ```sh
-claude mcp add --transport http uiverify https://uiverify.ai/api/mcp \
-  --header 'Authorization: Bearer ${UIVERIFY_API_KEY}'
+claude mcp add --scope project --transport http uiverify https://uiverify.ai/mcp
 ```
+
+Then restart Claude Code, run `/mcp`, pick `uiverify`, and log in to UI Verify in the browser. That one
+login reaches every project in every team the user belongs to, so it is done once, not per project, and
+there is no API key in the config: the committed `.mcp.json` holds only the URL and each teammate logs in
+with their own account.
 
 Then hand the review loop to **`triage-visual-changes`** (it has the per-client setup and the recipes:
 bucket real regressions vs noise, put the before/after in the PR, bulk-accept). On a **passed** build the

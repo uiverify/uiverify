@@ -103,16 +103,16 @@ Either way, invoke them by name: `/uiverify:setup-visual-testing`, `/uiverify:tr
 Connect the UI Verify MCP server and your coding agent (Claude Code, Cursor, Codex, and others) can pull a pull request's UI changes into the conversation, look at each diff, read the AI judge's verdict, and accept the intended baselines - without leaving the terminal.
 
 ```sh
-claude mcp add --scope project --transport http uiverify https://uiverify.ai/api/mcp \
-  --header 'Authorization: Bearer ${UIVERIFY_API_KEY}'
+claude mcp add --scope project --transport http uiverify https://uiverify.ai/mcp
 ```
 
-`--scope project` writes it to your committed `.mcp.json` so the whole team gets it; the key is referenced as the `UIVERIFY_API_KEY` env var, never baked in. Your project setup page has this command with the key filled in. Full guide: [Triage visual changes from your coding agent](https://uiverify.ai/docs/triage-with-your-agent).
+Then restart Claude Code, run `/mcp`, pick `uiverify`, and log in to UI Verify in your browser. You log in once and the connection reaches every project in every team you are a member of. `--scope project` writes it to your committed `.mcp.json` so the whole team gets it; the file holds no secret, since each teammate logs in with their own account. In Cursor, add `{ "mcpServers": { "uiverify": { "url": "https://uiverify.ai/mcp" } } }` to `.cursor/mcp.json` and log in from its MCP settings. Full guide: [Triage visual changes from your coding agent](https://uiverify.ai/docs/triage-with-your-agent).
 
 The server is remote (streamable HTTP) - there is nothing to install or run. It exposes:
 
 | Tool | What it does |
 |---|---|
+| `list_projects` | List the projects you can access, with the `projectId` to pass when you have several |
 | `list_builds` | List recent UI Verify builds |
 | `get_build` | Get what changed in a build |
 | `list_build_stories` | Page through a build's stories by status |

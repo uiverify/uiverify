@@ -11,42 +11,42 @@ at the pixels when a number is ambiguous, then summarize or accept.
 
 ## Connect the MCP (once)
 
-The server is a remote Streamable-HTTP MCP at `https://uiverify.ai/api/mcp`, authed with your project's
-`uv_proj_…` API key as a Bearer token. **Add it as a real MCP server in your agent — don't hand-roll
-`curl` against the endpoint.** Over raw `curl` the image tools come back as MCP image blocks a shell
-can't render, so the pixels are useless to a script; a native client shows them to the model directly.
+The server is a remote Streamable-HTTP MCP at `https://uiverify.ai/mcp`. You log in once with your UI
+Verify account in the browser (OAuth), and that one connection reaches every project in every team you
+are a member of, so there is no per-project setup and no API key in the config. **Add it as a real MCP
+server in your agent — don't hand-roll `curl` against the endpoint.** Over raw `curl` the image tools come
+back as MCP image blocks a shell can't render, so the pixels are useless to a script; a native client shows
+them to the model directly.
 
-**Claude Code:**
+**Claude Code** — run in the project root:
 ```sh
-claude mcp add --transport http uiverify https://uiverify.ai/api/mcp \
-  --header 'Authorization: Bearer ${UIVERIFY_API_KEY}'
+claude mcp add --scope project --transport http uiverify https://uiverify.ai/mcp
 ```
 
-Single quotes keep `${UIVERIFY_API_KEY}` a reference that Claude Code expands each time it connects, so the
-key itself is never written into its MCP config.
+Then restart Claude Code, run `/mcp`, pick `uiverify`, and log in. `--scope project` writes the server to
+the committed `.mcp.json`; it holds no secret, so the whole team gets it and each teammate logs in with
+their own account.
 
-**Cursor** — add to `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global):
+**Cursor** — add to `.cursor/mcp.json` (commit it to share), then log in from Cursor's MCP settings:
 ```json
 {
   "mcpServers": {
-    "uiverify": {
-      "url": "https://uiverify.ai/api/mcp",
-      "headers": { "Authorization": "Bearer YOUR_uv_proj_KEY" }
-    }
+    "uiverify": { "url": "https://uiverify.ai/mcp" }
   }
 }
 ```
 
-Any other MCP client (Codex, Copilot, Gemini): point it at the same Streamable-HTTP URL with the
-`Authorization: Bearer` header. If a client can only reach it over HTTP by hand, prefer the `get_diff`
-tool (it returns downloadable image **URLs**) over `render_diff_image` (inline pixels) — see the tool
-table below.
+Any other MCP client (VS Code, Codex, Copilot, Gemini): point it at the same Streamable-HTTP URL and it
+asks you to log in. Restart the agent session after adding the server so the tools load. If a client can
+only reach it over HTTP by hand, prefer the `get_diff` tool (it returns downloadable image **URLs**) over
+`render_diff_image` (inline pixels) — see the tool table below.
 
 Tools it exposes:
 
 | Tool | Does | Key args |
 |---|---|---|
-| `list_builds` | Recent builds + gate status, to find the one to inspect | `branch?`, `status?`, `limit?` |
+| `list_projects` | Every project you can access, with its `projectId`, team, name, type, repo, and last build time. Only needed when you can access several projects: a `commitSha` / `prNumber` lookup and `list_builds` then take a `projectId` (with one project it is used automatically, and a call that's ambiguous returns an error listing them) | none |
+| `list_builds` | Recent builds + gate status, to find the one to inspect | `projectId?`, `branch?`, `status?`, `limit?` |
 | `get_build` | Lean triage of one build — the gate + `counts {total, changed, failed, unchanged}`, a build-wide `comments {total, unresolved}` review-comment tally, the AI tally, and the **first page (25)** of changed/failed stories (each with a `diffResultId`, diff %, and when AI review is on the judge's `aiVerdict`, `aiConfidence`, and for a regression `aiFlagReason` = its one-line "what looks unintended"), the page carrying a `nextCursor`. It does **not** dump the unchanged list — `counts.unchanged` is the signpost; page the rest with `list_build_stories`. `comments.unresolved > 0` means a human/agent left an open note — read it with `list_comments` before you accept | one of `commitSha` / `prNumber` / `buildId` |
 | `list_build_stories` | Page through one build's stories by status — the only way to browse the full changed / failed / **unchanged** set beyond `get_build`'s first page. `counts.unchanged` from `get_build` is the exact count it pages. Every changed-story row (here and in `get_build`) carries its own `comments {total, unresolved}` | selector, `status: changed \| unchanged \| failed`, `cursor?`, `limit?` (default 25, max 100) |
 | `get_diff` | Per-story diff metrics + **presigned image URLs** (baseline / candidate / diff) you can download to a file or link straight into a PR; when AI review is on, the judge's full call: `aiVerdict`, `aiConfidence`, `aiSummary` (what changed), `aiReasoning` (why), `aiFlagReason`; and a per-story `comments {total, unresolved}` (same signpost as `get_build`, scoped to the one story). Pass `storyId` to pull one story **even if it didn't change** — you get its current baseline URL, so you can show "identical to baseline" on a passed build | same selector, optional `storyId` |
@@ -58,7 +58,7 @@ Tools it exposes:
 | `list_comments` | Read the review comments a designer/QA (or another agent) left on a build's diffs — every live comment across the build, each carrying its `diffResultId`, `authorType`, `body`, `side`, `parentId` (a reply's thread root), `anchor` (a point/region on the image), and `resolved`. This is the thing `get_build`/`get_diff`'s `comments` count points you to | one of `commitSha` / `prNumber` / `buildId` |
 | `post_comment` | Leave a comment (or a threaded reply) on one story's diff — e.g. reply to a reviewer's question, or flag a regression back to them. Authored as the **agent**; a new root comment is refused if a newer build exists on the branch (comment on the latest), but replies are always allowed | selector + `diffResultId`, `body`, `side?`, `anchor?`, `parentId?` (reply to a root's id) |
 | `resolve_comment` | Resolve (or reopen) a comment thread once its note is addressed | `commentId` (thread root), `resolved` |
-| `update_comment` / `delete_comment` | Edit or remove a comment — an agent key may only touch **agent-authored** comments | `commentId` (+ `body` for update) |
+| `update_comment` / `delete_comment` | Edit or remove a comment — the agent may only touch **agent-authored** comments | `commentId` (+ `body` for update) |
 
 The comment tools (`list_comments` and the writes) are behind the team's image-comments feature; if they
 are not exposed on your MCP connection, your team does not have it enabled, and `get_build`/`get_diff`
