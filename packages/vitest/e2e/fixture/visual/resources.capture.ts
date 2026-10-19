@@ -1,11 +1,5 @@
 import { test } from "vitest";
-
-async function loaded(el: HTMLImageElement | HTMLLinkElement): Promise<void> {
-  await new Promise((resolve) => {
-    el.addEventListener("load", resolve);
-    el.addEventListener("error", resolve);
-  });
-}
+import { loaded } from "./loaded";
 
 test("cross-origin image without CORS", async () => {
   const img = document.createElement("img");

@@ -57,6 +57,8 @@ playwright test                          # archives land in uiverify-archive/ (U
 uiverify upload --static-dir uiverify-archive
 ```
 
+Every test renders on each upload unless the archive carries a module graph. To have UI Verify skip the tests a change can't reach, put a `preview-stats.json` in the archive directory before uploading, in the [module graph format](https://uiverify.ai/docs/skip-unchanged#module-graph-format). Each snapshot records its spec file relative to the Playwright config's directory, so list your spec files as modules in the graph.
+
 ## How it works
 
 Capture is deliberately cheap and single-browser: it just serializes the DOM (scripts stripped, so the app's JS never re-runs on replay) and buffers resource bytes. All the fidelity work (determinism, cross-browser, the diff, the AI review) happens in UI Verify, off the archive. This package talks to nothing at runtime; it only writes an archive directory the CLI uploads.

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { create, list } from "tar";
 import { z } from "zod";
+import type { BundleGraph } from "./skip";
 
 const ARCHIVE_FORMAT_VERSION = 1;
 
@@ -138,31 +139,42 @@ export function readArchiveProducer(staticDir: string): ArchiveProducer | null {
   }
 }
 
+/** Whether this `@uiverify/vitest` checks its graph against git (1.6.0+), so a missing graph was withheld
+ *  on purpose rather than never written. */
+function checksSources(producer: ArchiveProducer | null): boolean {
+  const [major = 0, minor = 0] = (producer?.version ?? "").split(".").map(Number);
+  return major > 1 || (major === 1 && minor >= 6);
+}
+
+/** `@uiverify/vitest` 1.6.0+ stamps this on its graph once every test in it was checked to import tracked
+ *  source (not bundler chunks or build output). */
+const sourceCheckedGraph = z.object({ uiverify: z.object({ sourceChecked: z.literal(true) }) });
+
 /**
- * Why `--only-changed` will quietly do nothing for this bundle, or `null` if it should work.
- *
- * Skipping is decided server-side, so a no-op looks exactly like a working opt-in in the CI log and the
- * user keeps paying for full runs with nothing to notice. Both no-op causes are provable locally, so
- * both get named:
- *  - `"no-graph"` — a Storybook bundle built without `--stats-json`, so there is no dependency graph.
- *  - `"archive"` — a Playwright archive, which has no graph to build; the server always renders it in full.
- *
- * A Vitest archive is the exception: @uiverify/vitest emits a `preview-stats.json` (the Vite module
- * graph), so an archive that carries one IS skip-capable — reported as `null`, not `"archive"`.
+ * What a built bundle offers skip-unchanged, read after `createBundle` (an archive's `index.json`, which
+ * names its producer, exists only then). Every case is provable locally, so the log can say why a run
+ * renders everything instead of looking like a working skip.
  *
  * Storybook is identified by its own marker, `iframe.html` (the preview frame every static build emits),
- * rather than by ruling an archive out. Both archive-shaped tests drift: `snapshots/` alone misreads a
- * Storybook build that copies a `snapshots/` asset dir, and "`snapshots/` and no `index.json`" flips to
- * Storybook the moment `finalizeArchiveIfNeeded` writes that manifest, so a re-run over the same archive
- * dir would start getting Storybook advice. A `staticDir` that doesn't exist has a real error coming and
- * is left alone rather than pre-empted with a misleading hint.
+ * rather than by ruling an archive out: `snapshots/` alone misreads a Storybook build that copies a
+ * `snapshots/` asset dir. Any other bundle is an archive. A Vitest graph without the source-check stamp
+ * is `unchecked-graph`; a graph from any other producer (e.g. one written by hand for Playwright) is
+ * trusted as-is.
  */
-export function onlyChangedNoOpReason(staticDir: string): "no-graph" | "archive" | null {
-  if (isStorybookStaticDir(staticDir)) {
-    return fs.existsSync(path.join(staticDir, "preview-stats.json")) ? null : "no-graph";
+export function bundleGraph(staticDir: string, producer: ArchiveProducer | null): BundleGraph {
+  const statsPath = path.join(staticDir, "preview-stats.json");
+  const hasGraph = fs.existsSync(statsPath);
+  if (isStorybookStaticDir(staticDir)) return hasGraph ? "graph" : "storybook-no-graph";
+  const vitest = producer?.name === "@uiverify/vitest";
+  if (!hasGraph) return !vitest ? "archive-no-graph" : checksSources(producer) ? "vitest-graph-withheld" : "vitest-no-graph";
+  if (!vitest) return "graph";
+  try {
+    return sourceCheckedGraph.safeParse(JSON.parse(fs.readFileSync(statsPath, "utf8"))).success
+      ? "graph"
+      : "unchecked-graph";
+  } catch {
+    return "unchecked-graph";
   }
-  if (!fs.existsSync(path.join(staticDir, "snapshots"))) return null;
-  return fs.existsSync(path.join(staticDir, "preview-stats.json")) ? null : "archive";
 }
 
 /**
@@ -170,8 +182,8 @@ export function onlyChangedNoOpReason(staticDir: string): "no-graph" | "archive"
  * static Storybook build emits. Used to decide whether `check` needs `--target` (see the check command): a
  * Storybook build is monolithic — the whole suite is built regardless of what you name — so a preview must
  * name what to render, whereas an archive `--static-dir` is already scoped to the tests you replayed. This
- * is the same positive Storybook sniff `onlyChangedNoOpReason` relies on, kept as one predicate so both
- * decisions read the same marker. A dir that doesn't exist reads as "not Storybook" (an archive/screenshot)
+ * is the same positive Storybook sniff `bundleGraph` relies on, kept as one predicate so both decisions
+ * read the same marker. A dir that doesn't exist reads as "not Storybook" (an archive/screenshot)
  * — the real "missing bundle" error then surfaces at upload, not pre-empted with a misleading hint.
  */
 export function isStorybookStaticDir(staticDir: string): boolean {

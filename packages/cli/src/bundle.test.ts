@@ -7,8 +7,8 @@ import {
   createBundle,
   finalizeArchiveIfNeeded,
   finalizeScreenshots,
+  bundleGraph,
   isStorybookStaticDir,
-  onlyChangedNoOpReason,
   readArchiveProducer,
 } from "./bundle";
 
@@ -153,29 +153,55 @@ describe("readArchiveProducer", () => {
   });
 });
 
-describe("onlyChangedNoOpReason", () => {
+describe("bundleGraph", () => {
   /** A Storybook static build: the preview frame plus its manifest. */
   function storybookDir(): void {
     fs.writeFileSync(path.join(dir, "iframe.html"), "<html></html>");
     fs.writeFileSync(path.join(dir, "index.json"), "{}");
   }
+  const VITEST = { name: "@uiverify/vitest", version: "1.6.0" };
+  const PLAYWRIGHT = { name: "@uiverify/playwright", version: "1.4.0" };
+  const writeStats = (stats: unknown): void =>
+    fs.writeFileSync(path.join(dir, "preview-stats.json"), JSON.stringify(stats));
 
   it("names the missing graph for a Storybook dir built without --stats-json", () => {
     storybookDir();
-    expect(onlyChangedNoOpReason(dir)).toBe("no-graph");
+    expect(bundleGraph(dir, null)).toBe("storybook-no-graph");
   });
 
-  it("stays quiet once preview-stats.json is there", () => {
+  it("reads a Storybook dir with preview-stats.json as a graph", () => {
     storybookDir();
-    fs.writeFileSync(path.join(dir, "preview-stats.json"), "{}");
-    expect(onlyChangedNoOpReason(dir)).toBeNull();
+    writeStats({ modules: [] });
+    expect(bundleGraph(dir, null)).toBe("graph");
   });
 
-  // The server forces skip off for archives, so the flag is a guaranteed no-op — and it's provable
-  // here, which is the whole point: never let the user pay for a full render believing otherwise.
-  it("names the archive case, which can never have a graph", () => {
-    writeSnapshot("login-abc123.json", { id: "a", title: "a", name: "" });
-    expect(onlyChangedNoOpReason(dir)).toBe("archive");
+  it("tells a graphless Vitest archive apart from any other archive", () => {
+    writeSnapshot("a.json", { id: "a", title: "a", name: "" });
+    expect(bundleGraph(dir, { name: "@uiverify/vitest", version: "1.5.0" })).toBe("vitest-no-graph");
+    // 1.6.0+ withholds the graph on purpose (no git, colliding paths), so upgrading is not the fix.
+    expect(bundleGraph(dir, VITEST)).toBe("vitest-graph-withheld");
+    expect(bundleGraph(dir, { name: "@uiverify/vitest", version: "2.0.0" })).toBe("vitest-graph-withheld");
+    expect(bundleGraph(dir, PLAYWRIGHT)).toBe("archive-no-graph");
+    expect(bundleGraph(dir, null)).toBe("archive-no-graph");
+  });
+
+  // An older @uiverify/vitest can emit a graph that names only Angular's bundled chunks, so a changed
+  // component maps to no test: the default must not act on a graph the SDK didn't check.
+  it("reads a Vitest graph without the source-check stamp as unchecked, and with it as a graph", () => {
+    writeSnapshot("a.json", { id: "a", title: "a", name: "" });
+    writeStats({ modules: [] });
+    expect(bundleGraph(dir, VITEST)).toBe("unchecked-graph");
+    writeStats({ modules: [], uiverify: { sourceChecked: true } });
+    expect(bundleGraph(dir, VITEST)).toBe("graph");
+    fs.writeFileSync(path.join(dir, "preview-stats.json"), "not json{");
+    expect(bundleGraph(dir, VITEST)).toBe("unchecked-graph");
+  });
+
+  // Whoever writes a graph for a Playwright archive by hand owns its contents; there is no SDK stamp to ask for.
+  it("trusts a graph from any other producer as-is", () => {
+    writeSnapshot("a.json", { id: "a", title: "a", name: "" });
+    writeStats({ modules: [] });
+    expect(bundleGraph(dir, PLAYWRIGHT)).toBe("graph");
   });
 
   // `createBundle` writes index.json into the user's archive dir, so a retried CI step or any local
@@ -184,20 +210,15 @@ describe("onlyChangedNoOpReason", () => {
     writeSnapshot("login-abc123.json", { id: "a", title: "a", name: "" });
     finalizeArchiveIfNeeded(dir);
     expect(fs.existsSync(path.join(dir, "index.json"))).toBe(true);
-    expect(onlyChangedNoOpReason(dir)).toBe("archive");
+    expect(bundleGraph(dir, PLAYWRIGHT)).toBe("archive-no-graph");
   });
 
   // A Storybook build can copy a `snapshots/` asset dir into its output; that must not read as an
   // archive and produce archive advice for a bundle that just needs --stats-json.
-  it("still says no-graph for a Storybook dir that contains a snapshots/ asset folder", () => {
+  it("still names Storybook's missing graph for a Storybook dir that contains a snapshots/ asset folder", () => {
     storybookDir();
     writeSnapshot("some-asset.json", { id: "a", title: "a", name: "" });
-    expect(onlyChangedNoOpReason(dir)).toBe("no-graph");
-  });
-
-  // A missing dir already fails loudly a moment later; this hint would only misdirect.
-  it("stays quiet when the static dir doesn't exist", () => {
-    expect(onlyChangedNoOpReason(path.join(dir, "nope"))).toBeNull();
+    expect(bundleGraph(dir, null)).toBe("storybook-no-graph");
   });
 });
 

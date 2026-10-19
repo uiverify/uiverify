@@ -32,9 +32,11 @@ The CI uploader for UI Verify. `uiverify upload` uploads your prebuilt Storybook
 Build your Storybook first, then point `--static-dir` at its output:
 
 ```sh
-npm run build-storybook
+npm run build-storybook -- --stats-json
 UIVERIFY_API_KEY=... npx uiverify upload --static-dir storybook-static
 ```
+
+`--stats-json` writes Storybook's dependency graph, which lets UI Verify skip the stories your change can't affect (see [Skipping unchanged stories](#skipping-unchanged-stories)).
 
 Or upload finished screenshots your own harness already produced (native, mobile, React Native, anything) with `--screenshots`. No Storybook and no server-side rendering: UI Verify diffs, judges, and baselines the PNGs directly.
 
@@ -52,29 +54,33 @@ Each image is keyed by its path under the directory with the extension dropped, 
 - `--api-url <url>`: UI Verify API URL (default `https://uiverify.ai`; or `UIVERIFY_API_URL`).
 - `--auto-accept-changes`: accept this build's changed snapshots as the new baseline (no review). Typically used on merges to your default branch.
 - `--exit-zero-on-changes`: detect but don't block. A `changed` (needs-review) verdict exits 0 and stays pending review; `failed` still exits non-zero.
-- `--only-changed`: render only the stories this commit's changed files could affect and carry the rest forward. Opt-in per build; see [Only changed stories](#only-changed-stories) below.
+- `--render-all`: render every story, even ones the dependency graph shows your change can't reach, and even if this exact commit already passed.
+- `--only-changed`: removed and ignored with a warning, so an old workflow keeps working. Skipping unchanged stories is the default whenever the bundle carries a dependency graph (for a Vitest archive, one from `@uiverify/vitest` 1.6.0 or later); see [Skipping unchanged stories](#skipping-unchanged-stories) below.
 - `--strict` / `--no-strict`: whether an operational failure (missing key, missing bundle, network error) fails the job. Strict by default.
 
-Exit codes: `0` success (or an operational failure under `--no-strict`), `1` the visual verdict or an operational failure under strict, `2` a malformed invocation (unknown option, boolean given a value, stray token). Exit 2 ignores `--no-strict` - that flag means "don't fail my job if the upload breaks", not "run with arguments I didn't mean".
+Exit codes: `0` success (or an operational failure under `--no-strict`), `1` the visual verdict or an operational failure under strict, `2` a malformed invocation (unknown option, boolean given a value, or stray token). Exit 2 ignores `--no-strict` - that flag means "don't fail my job if the upload breaks", not "run with arguments I didn't mean".
 
-## Only changed stories
+## Skipping unchanged stories
 
-`--only-changed` renders just the stories your commit could have affected and carries every other baseline forward at a fraction of a snapshot each, so a one-component PR costs far less than a full suite. It works for **Storybook and Vitest** uploads — both ship a dependency graph UI Verify resolves server-side. The CLI works out which files changed with `git diff` in your checkout (outside CI, uncommitted edits included) and sends only the paths. A **Playwright archive has no graph**, so those uploads (and screenshot uploads) always render in full and the flag is ignored.
+When the bundle carries a dependency graph (`preview-stats.json` at the root of the upload directory; for a Vitest archive, one written by `@uiverify/vitest` 1.6.0 or later), UI Verify renders just the stories your change could have affected and carries every other baseline forward at a fraction of a snapshot each, so a one-component PR costs far less than a full suite. This is the default; there is nothing to turn on. The CLI works out which files changed with `git diff` in your checkout and sends only the paths.
 
-Storybook builds the graph only when you pass `--stats-json`:
+Where the graph comes from:
 
-```sh
-npm run build-storybook -- --stats-json
-UIVERIFY_API_KEY=... npx uiverify upload --static-dir storybook-static --only-changed
-```
+- **Storybook**: build with `--stats-json` (Storybook 8+; `--webpack-stats-json` on 7.x).
 
-The `@uiverify/vitest` plugin emits the graph (`preview-stats.json`) into the archive automatically, so a Vitest upload just adds the flag:
+  ```sh
+  npm run build-storybook -- --stats-json
+  UIVERIFY_API_KEY=... npx uiverify upload --static-dir storybook-static
+  ```
 
-```sh
-UIVERIFY_API_KEY=... npx uiverify upload --static-dir uiverify-archive --only-changed
-```
+- **Vitest**: `@uiverify/vitest` 1.6.0 and later writes the graph into the archive itself (keep `uiverifyPlugin()` in your root Vitest config). Tests whose imports git can't follow, such as bundler output or gitignored generated code, are left out of the graph and always render; the test run says how many and why.
+- **Playwright or another archive**: add a `preview-stats.json` to the archive directory yourself, in the [module graph format](https://uiverify.ai/docs/skip-unchanged#module-graph-format).
 
-Without that graph there is no fallback: the build renders every story even with the flag on, deliberately, since a filename heuristic can't tell that a page story imports the component you changed.
+Without a graph there is no fallback: every story renders, deliberately, since a filename heuristic can't tell that a page story imports the component you changed. For Storybook and Vitest the upload log says so on every run (unless you passed `--render-all`) and names the way to get a graph. Screenshot uploads never skip server-side; upload only the screens you changed instead.
+
+Uploading from a checkout with uncommitted edits is safe. The CLI counts files that differ from the commit as changed (outside CI, untracked files that aren't ignored too), so what they affect renders. Such a build can still be reviewed and accepted, but later builds don't skip stories based on it.
+
+To render everything for one build, pass `--render-all`.
 
 ## Environment
 

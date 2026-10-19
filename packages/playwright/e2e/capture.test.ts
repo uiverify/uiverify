@@ -22,6 +22,7 @@ interface ReportSuite {
 }
 
 let snapshotTexts: Map<string, string>;
+let sourcePaths: Map<string, string>;
 let outcomes: Map<string, string>;
 let errors: Map<string, string>;
 
@@ -53,10 +54,12 @@ beforeAll(async () => {
   };
   for (const suite of JSON.parse(report).suites) visit(suite);
   snapshotTexts = new Map();
+  sourcePaths = new Map();
   const dir = path.join(outDir, "snapshots");
   for (const file of fs.existsSync(dir) ? fs.readdirSync(dir) : []) {
     const snapshot = JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"));
     snapshotTexts.set(snapshot.id, JSON.stringify(snapshot.dom));
+    sourcePaths.set(snapshot.id, snapshot.sourcePath);
   }
 }, 180_000);
 
@@ -83,4 +86,10 @@ describe("the automatic snapshot", () => {
     expect(outcomes.get("expected to fail with its page closed")).toBe("expected");
     expect(errors.get("expected to fail with its page closed")).not.toContain("closed");
   });
+});
+
+/** Catches a hand-written module graph being unable to locate a test: the server finds each test's spec
+ *  through `sourcePath`, and without it every test renders whatever the graph says. */
+it("records each snapshot's spec file, relative to the Playwright config", () => {
+  expect(sourcePaths.get("capture.spec.ts > passes")).toBe("tests/capture.spec.ts");
 });

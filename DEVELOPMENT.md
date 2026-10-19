@@ -19,7 +19,7 @@ server-side. Distributed as `npx <pkg> upload …` once published to npm.
    (`COMMIT_SHA`, `BRANCH`, `PR_NUMBER`, or GitHub Actions' `GITHUB_HEAD_REF`/`GITHUB_REF`) win.
 2. Tar the static dir → `bundle.tgz` (no story list is read or sent — the UI Verify service enumerates
    the stories, and their render params, from the uploaded bundle's `index.json`). If the build
-   emitted `preview-stats.json` (see [skip-unchanged](#skip-unchanged---only-changed) below), it rides
+   emitted `preview-stats.json` (see [skip-unchanged](#skip-unchanged) below), it rides
    along automatically — the CLI tars the whole static dir, no flag needed.
 3. `POST /api/ingest/build` (API-key auth) → `{ build_id, upload_url }`.
 4. `PUT` the bundle to `upload_url` (a local endpoint in dev; an S3 presigned URL in prod).
@@ -51,33 +51,53 @@ boolean given a value, a stray token, or a bad subcommand. Exit 2 ignores `--no-
 flag means "don't fail my job if the upload breaks", not "run with arguments I didn't mean", and a typo'd
 flag that exited 0 would leave CI green with nothing uploaded and no visual gate.
 
-### Skip-unchanged (`--only-changed`)
+### Skip-unchanged
 
 UI Verify's TurboSnap-equivalent renders only the stories a commit's changed files could affect and
-carries the rest forward — decided **server-side** from the changed files the CLI diffs locally (each
-baseline commit against your checkout; outside CI, uncommitted edits included), opt-in per build with `--only-changed`. Leave it off
-and every story renders as before. The flag is the only thing that turns skipping on: no env var, no
-negative form, and no server-side toggle in either direction, so what a step passes is what that build
-does. (`UIVERIFY_NO_DELTA=1` stops the CLI sending its changed files, which leaves the server nothing to
-skip against, so it can only turn skipping off.) Storybook and Vitest: a Vitest archive carries the Vite module graph; a Playwright archive has no
-dependency graph, so it always renders in full and the flag is a no-op.
+carries the rest forward — decided **server-side** from the bundle's dependency graph and the changed
+files the CLI diffs locally (each baseline commit against your checkout). It is **on by default**
+whenever the bundle carries a graph, a `preview-stats.json` at the root of the upload dir:
 
-It needs the Storybook **dependency graph**, which only exists if you build with Storybook's
-`--stats-json` flag (it writes `preview-stats.json` into `storybook-static`):
+- **Storybook** built with `--stats-json` (Storybook 8+; `--webpack-stats-json` on 7.x), which writes
+  `preview-stats.json` into `storybook-static`.
+- **A `@uiverify/vitest` 1.6.0+ archive**: the plugin writes the Vite module graph itself, after checking
+  each test's imports against git. A test whose imports pass through files git doesn't track (bundler
+  chunks, as under Angular's unit-test builder, a workspace package's built `dist/`, gitignored codegen),
+  or that imports no tracked source, is left out of the graph and always renders; the run prints
+  `[uiverify] The tests in N file(s) always render: …`. A graph from an older `@uiverify/vitest` (no
+  `"uiverify": { "sourceChecked": true }` stamp) is treated as no graph by the default.
+- **A Playwright (or other) archive** with a `preview-stats.json` put into the archive dir by hand, in the
+  [module graph format](https://uiverify.ai/docs/skip-unchanged#module-graph-format):
+  `{ "modules": [ { "name": "<repo-relative path>", "reasons": [ { "moduleName": "<an importer's path>" } ] } ] }`,
+  with each spec file present as a module. `@uiverify/playwright` 1.4.0+ records each snapshot's
+  `sourcePath` (the spec file relative to the Playwright config's directory) so the server can locate it.
 
-```sh
-storybook build --stats-json          # or: pnpm build-storybook --stats-json
-```
-
-There is no fallback tier: with no `preview-stats.json` in the bundle the server renders everything even
-with `--only-changed` on, by design — a path heuristic can't see that a page story imports the leaf
-component that changed, so it isn't allowed to decide. The CLI needs no flag for the stats file itself:
-it tars the whole static dir, so `preview-stats.json` ships if present.
+There is no fallback tier: with no graph the server renders everything, by design — a path heuristic
+can't see that a page story imports the leaf component that changed, so it isn't allowed to decide. The
+CLI says so on **every** such Storybook or Vitest upload (short of `--render-all`, which asked for exactly
+that), with the way to get a graph for that kind of bundle. A Playwright archive without one gets no line:
+its tests open pages by URL, so "add a graph" isn't a fix a CI log reader can act on. It needs no
+flag for the stats file itself: it tars the whole upload dir, so `preview-stats.json` ships if present.
+Screenshot uploads (`--screenshots`) never skip server-side and print nothing; uploading only the
+screens you changed is their skip.
 
 ```sh
 npm run build-storybook -- --stats-json
-npx uiverify upload --static-dir storybook-static --only-changed
+npx uiverify upload --static-dir storybook-static
 ```
+
+**Uncommitted edits.** The changed-file list includes every file where the checkout differs from the
+commit — outside CI, tracked edits plus untracked files that aren't ignored; in CI, tracked edits only
+(an untracked file there is something a step left behind, not part of the bundle). For a re-upload of
+the same commit those files are sent as their own entry, so what they affect renders. The build is
+registered as having uncommitted changes: it renders and can be accepted like any other, but later
+builds don't skip stories based on it. So a local upload is safe on the default.
+
+**Opting out.** `--render-all` renders every story, sends no changed files, and also sends no bundle
+hash, so the "this exact commit already passed" shortcut can't skip the build either. It is the only
+skip flag: `--only-changed`, which turned skipping on before it was the default, is now ignored with a
+warning (like `--shadow`), so an old workflow keeps working. `UIVERIFY_NO_DELTA=1` stops the CLI sending its changed files,
+which leaves the server nothing to skip against, so it can only turn skipping off.
 
 ## `uiverify check` — the interactive preview check (agent edit loop)
 
@@ -101,15 +121,15 @@ npm run build-storybook
 npx uiverify check --story 'components-button--*' --static-dir storybook-static
 ```
 
-`check` deliberately does NOT accept the CI gating flags (`--only-changed`, `--auto-accept-changes`,
-`--exit-zero-on-changes`) - they are meaningless on a preview check, so passing one is rejected rather
+`check` deliberately does NOT accept the CI gating flags (`--render-all`,
+`--auto-accept-changes`, `--exit-zero-on-changes`) - they are meaningless on a preview check, so passing one is rejected rather
 than silently ignored. Accept/deny happens after review, over the dashboard or the MCP accept tools.
 
 ## CLI
 
 ```
-uiverify upload --static-dir <dir> [--working-directory <dir>] [--api-url <url>] \
-                [--auto-accept-changes] [--exit-zero-on-changes] [--only-changed] [--strict | --no-strict]
+uiverify upload (--static-dir <dir> | --screenshots <dir>) [--working-directory <dir>] [--api-url <url>] \
+                [--auto-accept-changes] [--exit-zero-on-changes] [--render-all] [--strict | --no-strict]
 
 uiverify check  --story <glob> [--story <glob> …] (--static-dir <dir> | --screenshots <dir>) \
                 [--working-directory <dir>] [--api-url <url>] [--strict | --no-strict]
@@ -119,9 +139,11 @@ uiverify check  --story <glob> [--story <glob> …] (--static-dir <dir> | --scre
 - `--story <glob>` (`check` only, repeatable, required) — the stories to render for the preview check.
 - `--static-dir` the prebuilt `storybook-static` directory to upload (build Storybook first).
 - `--api-url` (or `UIVERIFY_API_URL`, default `https://uiverify.ai`; override for self-host/local dev).
-- `--only-changed` — render only the stories this commit's changed files could affect, carrying the rest
-  forward. Requires a bundle built with `--stats-json` (see
-  [Skip-unchanged](#skip-unchanged---only-changed)).
+- `--render-all` — render every story, even ones the dependency graph shows a change can't reach, and
+  even if this exact commit already passed (see [Skip-unchanged](#skip-unchanged)).
+- `--only-changed` — removed: skipping unchanged stories is the default when the bundle carries a
+  dependency graph (for a Vitest archive, one from `@uiverify/vitest` 1.6.0+). Ignored with a warning, so
+  an old workflow keeps working.
 - `--exit-zero-on-changes` — detect but don't block: a `changed` (needs-review) verdict exits 0 and
   stays pending review in the dashboard, so visual changes don't fail CI. `failed`/`blocked` still
   exit non-zero. The middle ground between the default (`changed` → job fails) and

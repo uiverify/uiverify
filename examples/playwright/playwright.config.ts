@@ -6,7 +6,7 @@ import { defineConfig, devices } from "@playwright/test";
  * pattern); the SDK skips its end-of-test auto-archive when a test snapshots explicitly.
  *
  *   npm run test:e2e                              # archives -> uiverify-archive/
- *   UIVERIFY_API_KEY=… npx uiverify upload --static-dir uiverify-archive --only-changed
+ *   UIVERIFY_API_KEY=… npx uiverify upload --static-dir uiverify-archive
  */
 const PORT = process.env.PORT ?? "5173";
 

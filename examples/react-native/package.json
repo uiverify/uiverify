@@ -10,7 +10,7 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "screenshots": "maestro test .maestro/flow.yaml && node scripts/collect-screenshots.mjs",
-    "upload": "uiverify upload --screenshots screenshots --only-changed"
+    "upload": "uiverify upload --screenshots screenshots"
   },
   "dependencies": {
     "expo": "^54.0.37",
@@ -22,6 +22,6 @@
     "@types/react": "~19.1.10",
     "pngjs": "^7.0.0",
     "typescript": "~5.9.2",
-    "uiverify": "^1.7.1"
+    "uiverify": "^1.8.0"
   }
 }

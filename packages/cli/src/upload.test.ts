@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { BuildStatus, IngestClient, RegisterBody } from "./client";
 import type { ClientDeltaEntry, GitMeta } from "./git";
+import type { BundleGraph } from "./skip";
 import { runUpload, type UploadDeps } from "./upload";
 
 interface CallLog {
@@ -10,6 +11,7 @@ interface CallLog {
   markedAncestors?: string[];
   markedChangedFiles?: Record<string, ClientDeltaEntry>;
   deltaForBases?: string[];
+  deltaForUncommitted?: string[] | null;
   statusPolls: number;
 }
 
@@ -87,6 +89,10 @@ function deps(
     producer?: { name: string; version: string } | null;
     deltaBases?: string[];
     delta?: (bases: string[], head: string) => Record<string, ClientDeltaEntry>;
+    /** What the bundle offers skip-unchanged. Default: a Storybook built without --stats-json. */
+    graph?: BundleGraph;
+    /** The checkout's uncommitted files. Default: a clean checkout. */
+    uncommitted?: string[] | null;
     /** When set, the fake server skips the rebuild and returns this prior build number. */
     skippedBuildNumber?: number;
     /** When true, bundle hashing throws - the upload must proceed without the rebuild-skip hint. */
@@ -105,8 +111,10 @@ function deps(
     gitMeta: () => meta,
     // Default: every candidate is a confirmed ancestor; tests that care override `confirm`.
     confirmAncestors: opts.confirm ?? ((candidates) => candidates),
-    deltaFor: (bases, head) => {
+    workingTreeChanges: () => (opts.uncommitted === undefined ? [] : opts.uncommitted),
+    deltaFor: (bases, head, uncommitted) => {
       log.deltaForBases = bases;
+      log.deltaForUncommitted = uncommitted;
       return opts.delta ? opts.delta(bases, head) : {};
     },
     createBundle: async () => {},
@@ -116,6 +124,7 @@ function deps(
     },
     // Default: a Storybook upload (no capture SDK); archive tests pass a producer.
     readProducer: () => opts.producer ?? null,
+    bundleGraph: () => opts.graph ?? "storybook-no-graph",
     tmpFile: () => "/tmp/bundle.tgz",
     log: (m) => lines?.push(m),
     sleep: async () => {},
@@ -219,34 +228,113 @@ describe("runUpload", () => {
     expect(log.register?.autoAcceptChanges).toBe(true);
   });
 
-  it("forwards --only-changed as onlyChanged in the register body", async () => {
+  it("skips by default when the bundle has a graph, sending the delta over the server's bases", async () => {
     const log: CallLog = { statusPolls: 0 };
-    await runUpload({ staticDir: "/sb", onlyChanged: true }, deps(log, ["passed"]));
-    expect(log.register?.onlyChanged).toBe(true);
-  });
-
-  it("computes the delta over the server's bases and sends it when --only-changed + a graph", async () => {
-    const log: CallLog = { statusPolls: 0 };
+    const lines: string[] = [];
     const base = "a".repeat(40);
     await runUpload(
-      { staticDir: "/sb", onlyChanged: true, bundleHasGraph: true },
-      deps(log, ["passed"], undefined, {
+      { staticDir: "/sb" },
+      deps(log, ["passed"], lines, {
+        graph: "graph",
         deltaBases: [base],
         delta: (bases) => ({ [bases[0] ?? ""]: { files: ["src/x.ts"], truncated: false } }),
       }),
     );
+    expect(log.register?.onlyChanged).toBe(true);
     expect(log.deltaForBases).toEqual([base]);
     expect(log.markedChangedFiles).toEqual({ [base]: { files: ["src/x.ts"], truncated: false } });
+    expect(lines.some((l) => l.includes("renders"))).toBe(false);
   });
 
-  it("does NOT compute a delta without a graph, even under --only-changed", async () => {
+  /** Would catch: a graphless default build passing silently, so the user pays for full runs believing
+   *  it skips, or one that asks the server to skip what it can't decide. */
+  it.each<[BundleGraph, string]>([
+    ["storybook-no-graph", "storybook build --stats-json"],
+    ["vitest-no-graph", "Upgrade @uiverify/vitest"],
+    ["unchecked-graph", "Upgrade @uiverify/vitest"],
+  ])("renders everything by default without a usable graph (%s), and says how to get one", async (graph, fix) => {
     const log: CallLog = { statusPolls: 0 };
-    await runUpload(
-      { staticDir: "/sb", onlyChanged: true, bundleHasGraph: false },
-      deps(log, ["passed"], undefined, { deltaBases: ["a".repeat(40)] }),
-    );
+    const lines: string[] = [];
+    await runUpload({ staticDir: "/sb" }, deps(log, ["passed"], lines, { graph, deltaBases: ["a".repeat(40)] }));
+    expect(log.register?.onlyChanged).toBe(false);
     expect(log.deltaForBases).toBeUndefined();
-    expect(log.markedChangedFiles).toBeUndefined();
+    expect(lines.filter((l) => l.startsWith("Every ") && l.includes(fix))).toHaveLength(1);
+  });
+
+  /** Would catch: `--render-all` still carrying stories, or still letting the same-commit rebuild shortcut
+   *  pass a commit without rendering it. */
+  it("--render-all asks for no skipping, sends no delta and no bundle hash", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    const lines: string[] = [];
+    await runUpload(
+      { staticDir: "/sb", skip: "render-all" },
+      deps(log, ["passed"], lines, { graph: "graph", deltaBases: ["a".repeat(40)], uncommitted: ["x.ts"] }),
+    );
+    expect(log.register?.onlyChanged).toBe(false);
+    expect(log.register?.bundleContentHash).toBeUndefined();
+    expect(log.deltaForBases).toBeUndefined();
+    expect(lines.some((l) => l.startsWith("Every "))).toBe(false);
+  });
+
+  /** Would catch: a Playwright log telling the user to hand-write a module graph, a fix nobody reading a
+   *  CI log can act on. */
+  it("renders a Playwright archive without a graph in full, and says nothing about graphs", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    const lines: string[] = [];
+    await runUpload({ staticDir: "/sb" }, deps(log, ["passed"], lines, { graph: "archive-no-graph", deltaBases: ["a".repeat(40)] }));
+    expect(log.register?.onlyChanged).toBe(false);
+    expect(log.deltaForBases).toBeUndefined();
+    expect(lines.some((l) => l.includes("preview-stats.json") || l.startsWith("Every "))).toBe(false);
+  });
+
+  it("says nothing about graphs for a screenshot upload or a preview check", async () => {
+    for (const opts of [{ screenshots: true }, { preview: true, previewTargets: ["a--*"] }]) {
+      const log: CallLog = { statusPolls: 0 };
+      const lines: string[] = [];
+      await runUpload({ staticDir: "/sb", ...opts }, deps(log, ["passed"], lines, { graph: "storybook-no-graph" }));
+      expect(log.register?.onlyChanged).toBe(false);
+      expect(lines.some((l) => l.startsWith("Every "))).toBe(false);
+    }
+  });
+
+  it("reports a clean checkout as having no uncommitted changes", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    await runUpload({ staticDir: "/sb" }, deps(log, ["passed"]));
+    expect(log.register?.uncommittedChanges).toBe(false);
+  });
+
+  /** A build made from uncommitted edits must tell the server (it then stamps no watermark), and
+   *  hand the edits to the delta even when the server offered no base, for the head's own entry. */
+  it("reports uncommitted edits, names them, and passes them to the delta", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    const lines: string[] = [];
+    await runUpload(
+      { staticDir: "/sb" },
+      deps(log, ["passed"], lines, { graph: "graph", uncommitted: ["a.ts", "b.ts", "c.ts", "d.ts"] }),
+    );
+    expect(log.register?.uncommittedChanges).toBe(true);
+    expect(log.deltaForBases).toEqual([]);
+    expect(log.deltaForUncommitted).toEqual(["a.ts", "b.ts", "c.ts", "d.ts"]);
+    expect(lines.some((l) => l.startsWith("4 file(s) differ from commit abcdef1 (a.ts, b.ts, c.ts, and 1 more)"))).toBe(
+      true,
+    );
+  });
+
+  it("skips the uncommitted-files check for a preview check or a screenshot upload", async () => {
+    for (const opts of [{ screenshots: true }, { preview: true, previewTargets: ["a--*"] }]) {
+      const log: CallLog = { statusPolls: 0 };
+      const lines: string[] = [];
+      await runUpload({ staticDir: "/sb", ...opts }, deps(log, ["passed"], lines, { uncommitted: ["a.ts"] }));
+      expect(lines.some((l) => l.includes("differ from commit"))).toBe(false);
+      expect(log.register?.uncommittedChanges).toBeUndefined();
+    }
+  });
+
+  it("treats a checkout git can't read as having uncommitted changes", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    await runUpload({ staticDir: "/sb" }, deps(log, ["passed"], undefined, { graph: "graph", uncommitted: null }));
+    expect(log.register?.uncommittedChanges).toBe(true);
+    expect(log.deltaForUncommitted).toBeNull();
   });
 
   it("UIVERIFY_NO_DELTA=1 skips the delta step entirely", async () => {
@@ -254,10 +342,7 @@ describe("runUpload", () => {
     const prev = process.env.UIVERIFY_NO_DELTA;
     process.env.UIVERIFY_NO_DELTA = "1";
     try {
-      await runUpload(
-        { staticDir: "/sb", onlyChanged: true, bundleHasGraph: true },
-        deps(log, ["passed"], undefined, { deltaBases: ["a".repeat(40)] }),
-      );
+      await runUpload({ staticDir: "/sb" }, deps(log, ["passed"], undefined, { graph: "graph", deltaBases: ["a".repeat(40)] }));
     } finally {
       if (prev === undefined) delete process.env.UIVERIFY_NO_DELTA;
       else process.env.UIVERIFY_NO_DELTA = prev;

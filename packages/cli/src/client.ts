@@ -16,7 +16,7 @@ const registerResponse = z.object({
   buildId: z.string(),
   uploadUrl: z.string(),
   baselineCommits: z.array(z.string()).default([]),
-  // The base commits `--only-changed` should diff against, named by the server. The CLI computes the
+  // The base commits skip-unchanged should diff against, named by the server. The CLI computes the
   // changed-file delta over these with local git (`deltaFor`) and sends it with the upload. An older
   // server omits the field ⇒ empty (no git work). Sanitized in `register` before use.
   deltaBases: z.array(z.string()).default([]),
@@ -117,6 +117,9 @@ export interface RegisterBody {
   /** Render only the stories this commit's changed files could affect and carry the rest forward
    *  (skip-unchanged). Decided server-side; per build, so it never changes anyone else's builds. */
   onlyChanged?: boolean;
+  /** The checkout had edits that aren't in `commitSha` (or git couldn't say), so the server won't use this
+   *  build's results as a reference point for skipping in later builds. */
+  uncommittedChanges?: boolean;
   /** This is an interactive preview check (`uiverify check`, a coding agent's edit-loop): render only
    *  `previewTargets`, diff against the real CI baseline, post no GitHub check, and never advance a CI
    *  baseline. Metered like any build. Absent/false ⇒ a normal build. */
@@ -135,7 +138,7 @@ export interface RegisterBody {
   sdkVersion?: string;
   /** The deterministic content hash of the bundle about to be uploaded (`bundleContentHash`, tagged
    *  `v1:<hex>`). Lets the server skip the rebuild of an already-passed commit when it matches a prior
-   *  fully-accepted build at the same commit. Omitted only if hashing somehow failed. */
+   *  fully-accepted build at the same commit. Omitted under `--render-all`, or if hashing somehow failed. */
   bundleContentHash?: string;
 }
 

@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history so --only-changed can diff against the baseline commit
+          fetch-depth: 0 # full history so unchanged stories can be skipped against the baseline commit
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -27,6 +27,6 @@ jobs:
         env:
           UIVERIFY_API_KEY: ${{ secrets.UIVERIFY_API_KEY }}
         run: |
-          FLAGS="--static-dir storybook-static --only-changed"
+          FLAGS="--static-dir storybook-static"
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then FLAGS="$FLAGS --auto-accept-changes"; fi
           npx -y uiverify upload $FLAGS

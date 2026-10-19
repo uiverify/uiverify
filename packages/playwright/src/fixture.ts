@@ -1,3 +1,4 @@
+import path from "node:path";
 import { test as base } from "@playwright/test";
 import {
   type ArchivedSnapshotParams,
@@ -73,7 +74,9 @@ export const test = base.extend<UiVerifyFixtures, UiVerifyWorkerFixtures>({
       const idBase = testInfo.titlePath.join(" > ");
       const title =
         testInfo.titlePath.length > 1 ? testInfo.titlePath.slice(0, -1).join(" > ") : (testInfo.titlePath[0] ?? "");
-      const archiver = new PlaywrightArchiver(page, { outDir: resolveOutDir(), idBase, title });
+      const configDir = testInfo.config.configFile ? path.dirname(testInfo.config.configFile) : testInfo.config.rootDir;
+      const sourcePath = path.relative(configDir, testInfo.file).split(path.sep).join("/");
+      const archiver = new PlaywrightArchiver(page, { outDir: resolveOutDir(), idBase, title, sourcePath });
       let auto = true;
 
       await use({

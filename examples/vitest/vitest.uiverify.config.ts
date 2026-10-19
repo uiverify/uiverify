@@ -13,7 +13,7 @@ const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "src");
  * so the archived state is post-interaction.
  *
  *   npm run test:uiverify                         # archives -> uiverify-archive/
- *   UIVERIFY_API_KEY=… npx uiverify upload --static-dir uiverify-archive --only-changed
+ *   UIVERIFY_API_KEY=… npx uiverify upload --static-dir uiverify-archive
  */
 export default defineConfig({
   plugins: [react(), uiverifyPlugin()],

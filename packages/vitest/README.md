@@ -74,6 +74,8 @@ npx vitest run
 UIVERIFY_API_KEY=your_key npx -y uiverify@latest upload --static-dir ./uiverify-archive
 ```
 
+Only the tests your change could affect render; the rest keep their baselines. The plugin writes the module graph that makes this possible (`preview-stats.json`) into the archive when the project is a git checkout, after checking each test's imports against git. A test whose imports pass through files git doesn't track (bundler output, a workspace package's built `dist/`, gitignored generated code), or that imports no tracked source, is left out of the graph and renders on every upload; the run prints `[uiverify] The tests in N file(s) always render: ...` with the reason.
+
 ## Options
 
 ```ts

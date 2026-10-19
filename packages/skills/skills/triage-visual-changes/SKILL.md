@@ -60,10 +60,6 @@ Tools it exposes:
 | `resolve_comment` | Resolve (or reopen) a comment thread once its note is addressed | `commentId` (thread root), `resolved` |
 | `update_comment` / `delete_comment` | Edit or remove a comment — the agent may only touch **agent-authored** comments | `commentId` (+ `body` for update) |
 
-The comment tools (`list_comments` and the writes) are behind the team's image-comments feature; if they
-are not exposed on your MCP connection, your team does not have it enabled, and `get_build`/`get_diff`
-will simply report `comments {total: 0, unresolved: 0}`.
-
 ## Recipe 1 — "Triage this build"
 
 Bucket the changes so the human sees signal, not 60 rows. Call `get_build` for the PR — it carries the

@@ -49,6 +49,25 @@ describe("buildPreviewStats", () => {
     expect(stats.modules.find((m) => m.name === "src/App.tsx")?.reasons).toEqual([{ moduleName: "src/App.test.tsx" }]);
   });
 
+  /** Would catch: a repo file a test reaches only through a virtual module
+   *  losing its edge to the test with the dropped module, so a change to it traces to no test. */
+  it("bridges through a dropped virtual module to the test that imports it", () => {
+    const test = `${ROOT}/uiverify/page.visual.test.tsx`;
+    const stats = buildPreviewStats({
+      viteRoot: ROOT,
+      modules: [
+        mod(test),
+        { id: "\0virtual:pages", importers: [{ file: test, id: test }] },
+        { file: `${ROOT}/src/Page.tsx`, id: `${ROOT}/src/Page.tsx`, importers: [{ id: "\0virtual:pages" }] },
+      ],
+      setupFiles: [],
+      testFiles: [test],
+    });
+    const byName = new Map(stats.modules.map((m) => [m.name, m.reasons.map((r) => r.moduleName)]));
+    expect(byName.has("\0virtual:pages")).toBe(false);
+    expect(byName.get("src/Page.tsx")).toEqual(["uiverify/page.visual.test.tsx"]);
+  });
+
   it("strips ?v= / ?import query suffixes off ids when file is absent", () => {
     const stats = buildPreviewStats({
       viteRoot: ROOT,

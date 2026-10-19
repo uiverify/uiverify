@@ -74,10 +74,11 @@ export interface ArchivedSnapshot {
   /** url → captured response, served back during replay instead of re-fetching from the network. */
   resources: Record<string, ArchivedResource>;
   params?: ArchivedSnapshotParams;
-  /** The test file that produced this snapshot, relative to the Vite/project root (e.g.
-   *  "components/Button.visual.test.tsx"). Written by @uiverify/vitest so UI Verify can locate this
-   *  snapshot's "story module" in the emitted module graph for skip-unchanged. Absent for a Playwright
-   *  archive (no module graph) and a pre-graph SDK. */
+  /** The test file that produced this snapshot (e.g. "components/Button.visual.test.tsx"): relative to the
+   *  Vite root for @uiverify/vitest, which emits the module graph itself, and to the Playwright config's
+   *  directory for @uiverify/playwright, whose archive carries a graph only when one is added to it. UI
+   *  Verify locates this snapshot's "story module" in that graph for skip-unchanged. Absent from an older
+   *  SDK. */
   sourcePath?: string;
   /** A design image (a Figma export) UI Verify compares this snapshot against until a render is accepted.
    *  The SDK passes a PNG data URI; `writeSnapshot` moves the bytes to `design/<sha256>.png` and stores that
@@ -101,9 +102,8 @@ export interface ArchiveIndexEntry {
   title: string;
   name: string;
   snapshot: string;
-  /** The producing test file, Vite/project-root-relative — lifted from the snapshot at manifest time.
-   *  UI Verify projects it onto the story's `importPath` to locate it in the module graph for
-   *  skip-unchanged. Absent for a Playwright archive (no graph) and a pre-graph SDK. */
+  /** The producing test file — lifted from the snapshot at manifest time. UI Verify projects it onto the
+   *  story's `importPath` to locate it in the module graph for skip-unchanged. Absent from an older SDK. */
   sourcePath?: string;
   /** The snapshot's `baselineImage`, lifted at manifest time because UI Verify reads only `index.json` at
    *  ingest. */

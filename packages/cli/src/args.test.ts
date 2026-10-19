@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CHECK_SPEC, parseArgs } from "./args";
+import { CHECK_SPEC, parseArgs, removedOptionNote } from "./args";
 
 describe("parseArgs", () => {
   it("reads a value option in both spellings", () => {
@@ -11,30 +11,30 @@ describe("parseArgs", () => {
   });
 
   it("collects a bare boolean flag wherever it appears in the argv", () => {
-    expect(parseArgs(["--only-changed", "--static-dir", "sb"]).flags.has("only-changed")).toBe(true);
-    expect(parseArgs(["--static-dir", "sb", "--only-changed"]).flags.has("only-changed")).toBe(true);
+    expect(parseArgs(["--render-all", "--static-dir", "sb"]).flags.has("render-all")).toBe(true);
+    expect(parseArgs(["--static-dir", "sb", "--render-all"]).flags.has("render-all")).toBe(true);
   });
 
   // Each of these used to (or could) end as a silent no-op: the run renders and bills the full suite
   // while the CI log is byte-identical to a successful opt-in. They must fail loudly instead.
   it.each([
-    ["a boolean given a value", ["--only-changed", "true"]],
-    ["a boolean negated with =, which we do not interpret", ["--only-changed=false"]],
-    ["a misspelled flag", ["--only-chnged"]],
+    ["a boolean given a value", ["--render-all", "true"]],
+    ["a boolean negated with =, which we do not interpret", ["--render-all=false"]],
+    ["a misspelled flag", ["--render-al"]],
     ["a misspelled value option", ["--statc-dir=/tmp/sb"]],
     ["an empty key", ["--=foo"]],
-    ["a value option with no value", ["--static-dir", "--only-changed"]],
+    ["a value option with no value", ["--static-dir", "--render-all"]],
     ["a stray positional", ["oops"]],
   ])("rejects %s", (_label, argv) => {
     expect(parseArgs(argv).invalid.length).toBeGreaterThan(0);
   });
 
-  // `--only-changed false` reads as "off" to a human but would parse as the flag plus a stray token.
+  // `--render-all false` reads as "off" to a human but would parse as the flag plus a stray token.
   // Acting on it either way is a guess, so the invocation is rejected and the caller fails the run —
   // what must never happen is proceeding with a policy the user didn't ask for.
   it("rejects a flag written with a value rather than guessing which way it meant", () => {
-    expect(parseArgs(["--only-changed", "false"]).invalid).toEqual(["<value at position 2>"]);
-    expect(parseArgs(["--only-changed=true"]).flags.has("only-changed")).toBe(false);
+    expect(parseArgs(["--render-all", "false"]).invalid).toEqual(["<value at position 2>"]);
+    expect(parseArgs(["--render-all=true"]).flags.has("render-all")).toBe(false);
   });
 
   // `--api-url=${{ vars.UNSET }}` expands to `--api-url=`; setting it to "" would defeat the caller's
@@ -56,7 +56,7 @@ describe("parseArgs", () => {
     ["--api-url", "https://uiverify.ai"],
     ["--auto-accept-changes"],
     ["--exit-zero-on-changes"],
-    ["--only-changed"],
+    ["--render-all"],
     ["--strict"],
     ["--no-strict"],
   ])("accepts the documented option %s", (...argv) => {
@@ -103,13 +103,28 @@ describe("parseArgs", () => {
     const { flags, values, invalid } = parseArgs([
       "--static-dir",
       "storybook-static",
-      "--only-changed",
+      "--render-all",
       "--auto-accept-changes",
       "--no-strict",
     ]);
     expect(invalid).toEqual([]);
     expect(values.get("static-dir")).toBe("storybook-static");
-    expect([...flags].sort()).toEqual(["auto-accept-changes", "no-strict", "only-changed"]);
+    expect([...flags].sort()).toEqual(["auto-accept-changes", "no-strict", "render-all"]);
+  });
+
+  /** Would catch: a workflow written before skipping became the default (`--only-changed`, the flag every
+   *  skipping customer passes) going red on upgrade, or the flag still changing what renders. */
+  it("ignores --only-changed with a warning rather than failing or acting on it", () => {
+    const { flags, invalid, removed } = parseArgs(["--static-dir", "sb", "--only-changed"]);
+    expect(invalid).toEqual([]);
+    expect(removed).toEqual(["--only-changed"]);
+    expect(flags.has("only-changed")).toBe(false);
+    expect(removedOptionNote("--only-changed")).toMatch(/default/);
+  });
+
+  it("accepts --render-all as a bare upload flag and rejects it with a value", () => {
+    expect(parseArgs(["--render-all"]).flags.has("render-all")).toBe(true);
+    expect(parseArgs(["--render-all=true"]).invalid).toEqual(["--render-all=…"]);
   });
 
   // The default (upload) spec has no repeatable option, so `multi` stays empty and `--target` is unknown.
@@ -146,9 +161,9 @@ describe("parseArgs — check spec (uiverify check)", () => {
   // The per-command allowlist is the point: check accepts its own surface and rejects upload's gating
   // flags (they'd be meaningless on a preview check), rather than silently ignoring them.
   it("rejects upload-only flags under the check spec", () => {
-    expect(parseArgs(["--only-changed"], CHECK_SPEC).invalid).toContain("--only-changed");
     expect(parseArgs(["--auto-accept-changes"], CHECK_SPEC).invalid).toContain("--auto-accept-changes");
     expect(parseArgs(["--exit-zero-on-changes"], CHECK_SPEC).invalid).toContain("--exit-zero-on-changes");
+    expect(parseArgs(["--render-all"], CHECK_SPEC).invalid).toContain("--render-all");
   });
 
   it("accepts a full realistic check invocation with nothing left over", () => {

@@ -1,7 +1,9 @@
 import os from "node:os";
 import path from "node:path";
+import type { ArchiveProducer } from "./bundle";
 import type { IngestClient } from "./client";
 import type { ClientDeltaEntry, GitMeta } from "./git";
+import { type BundleGraph, type SkipMode, planSkip } from "./skip";
 import { formatVerdictSummary } from "./summary";
 
 /**
@@ -18,12 +20,14 @@ export interface UploadOptions {
   /** Auto-accept this build's changed snapshots as the new baseline (pass on merges to main). */
   autoAcceptChanges?: boolean;
   /**
-   * Skip-unchanged: render only the stories this commit's changed files could affect and carry the
-   * rest forward. Opt-in per build. The whole decision runs server-side off the uploaded bundle's
-   * dependency graph — a bundle built without Storybook's `--stats-json` carries no graph, so the
-   * server renders everything even with this on.
+   * Skip-unchanged: render only the stories this commit's changed files could affect and carry the rest
+   * forward. `default` (no flag) asks for it whenever the bundle carries a dependency graph, `render-all`
+   * never asks. The decision itself runs server-side off the uploaded graph. Ignored for a preview check,
+   * which renders its targets.
    */
-  onlyChanged?: boolean;
+  skip?: SkipMode;
+  /** A `--screenshots` upload: finished PNGs, which never carry a graph. */
+  screenshots?: boolean;
   /** Run as an interactive preview check (`uiverify check`): the build renders only `previewTargets`,
    *  diffs against the real CI baseline, posts no GitHub check, and never advances a CI baseline. */
   preview?: boolean;
@@ -34,10 +38,6 @@ export interface UploadOptions {
   /** The agent's explicit render targets for a preview check (story-id globs / exact ids). Replaces the
    *  dep-graph closure server-side; only meaningful with `preview: true`. */
   previewTargets?: string[];
-  /** Whether the bundle carries a dependency graph (Storybook with --stats-json, or a Vitest archive) —
-   *  computed at the call site (where the file sniff already lives). Only a graph-carrying `--only-changed`
-   *  upload computes and sends the client delta; false skips it. */
-  bundleHasGraph?: boolean;
 }
 
 export interface UploadDeps {
@@ -46,9 +46,12 @@ export interface UploadDeps {
   /** Filter the server's candidate baseline commits to the head's true local git ancestors —
    *  injected so the upload flow is unit-tested without a real repo. */
   confirmAncestors: (candidates: string[], headSha: string) => string[];
-  /** Compute the skip-unchanged changed-file delta for the server's offered `deltaBases` with local git —
-   *  injected like `confirmAncestors` so the upload flow is unit-tested without a real repo. */
-  deltaFor: (bases: string[], headSha: string) => Record<string, ClientDeltaEntry>;
+  /** The files where the checkout differs from the head commit (`workingTreeChanges`), null when git can't
+   *  say. Injected like `confirmAncestors` so the upload flow is unit-tested without a real repo. */
+  workingTreeChanges: (headSha: string) => string[] | null;
+  /** Compute the skip-unchanged changed-file delta for the server's offered `deltaBases` with local git,
+   *  given the checkout's uncommitted list. */
+  deltaFor: (bases: string[], headSha: string, uncommitted: string[] | null) => Record<string, ClientDeltaEntry>;
   createBundle: (dir: string, out: string) => Promise<void>;
   /** The deterministic content hash of the built `.tgz`, computed after `createBundle`. Sent at register
    *  so the server can skip the rebuild of an already-passed commit. Injected so the flow is unit-tested
@@ -56,7 +59,9 @@ export interface UploadDeps {
   bundleContentHash: (tgzPath: string) => Promise<string>;
   /** The capture SDK that produced the bundle, read from the finalized manifest after `createBundle`.
    *  Injected so the flow is unit-tested without a real archive; null for a Storybook upload. */
-  readProducer: (staticDir: string) => { name: string; version: string } | null;
+  readProducer: (staticDir: string) => ArchiveProducer | null;
+  /** What the built bundle offers skip-unchanged (`bundleGraph`), read after `createBundle`. */
+  bundleGraph: (staticDir: string, producer: ArchiveProducer | null) => BundleGraph;
   tmpFile: () => string;
   log: (msg: string) => void;
   sleep?: (ms: number) => Promise<void>;
@@ -86,16 +91,40 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
 
   // Read after createBundle: it finalizes the archive manifest (index.json), which carries the producer.
   const producer = deps.readProducer(opts.staticDir);
+  const skipMode = opts.preview ? "render-all" : (opts.skip ?? "default");
+  const plan = planSkip(skipMode, opts.screenshots ? null : deps.bundleGraph(opts.staticDir, producer));
+  if (plan.notice) deps.log(plan.notice);
+
+  // The checkout's edits that aren't in the commit went into the bundle as surely as the commit did. The
+  // server diffs from them, and doesn't record a build made with them as a reference point for skipping.
+  // A preview never becomes a reference point and a screenshot upload has no graph to skip with, so
+  // neither needs the git work.
+  const reportsCheckout = !opts.preview && !opts.screenshots;
+  const uncommitted = reportsCheckout ? deps.workingTreeChanges(meta.commitSha) : [];
+  const uncommittedChanges = reportsCheckout ? uncommitted === null || uncommitted.length > 0 : undefined;
+  if (reportsCheckout && uncommitted === null) {
+    deps.log("Could not read uncommitted changes from git, so later builds won't skip stories based on this one.");
+  } else if (reportsCheckout && uncommitted !== null && uncommitted.length > 0) {
+    const shown = uncommitted.slice(0, 3).join(", ");
+    const more = uncommitted.length > 3 ? `, and ${uncommitted.length - 3} more` : "";
+    deps.log(
+      `${uncommitted.length} file(s) differ from commit ${meta.commitSha.slice(0, 7)} (${shown}${more}): what they affect renders, and later builds won't skip stories based on this one.`,
+    );
+  }
+
   // Hash the finalized bundle so the server can skip the rebuild of an already-passed commit when this is
   // a byte-identical re-upload of one it already rendered + accepted (computed after createBundle so the
   // finalized index.json is included). The hash is a pure optimization hint: if hashing somehow fails,
   // omit it and upload normally (the server just won't consider the skip) rather than failing the upload
-  // over an optimization. This is why the wire field is optional.
+  // over an optimization. This is why the wire field is optional. `--render-all` sends none, so it renders
+  // even a commit that already passed.
   let bundleContentHash: string | undefined;
-  try {
-    bundleContentHash = await deps.bundleContentHash(tgz);
-  } catch (e) {
-    deps.log(`Could not hash the bundle (${e instanceof Error ? e.message : String(e)}); uploading without the rebuild-skip hint.`);
+  if (opts.skip !== "render-all") {
+    try {
+      bundleContentHash = await deps.bundleContentHash(tgz);
+    } catch (e) {
+      deps.log(`Could not hash the bundle (${e instanceof Error ? e.message : String(e)}); uploading without the rebuild-skip hint.`);
+    }
   }
 
   deps.log("Registering build…");
@@ -105,7 +134,8 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
     prNumber: meta.prNumber,
     parentShas: meta.parentShas,
     autoAcceptChanges: opts.autoAcceptChanges ?? false,
-    onlyChanged: opts.onlyChanged ?? false,
+    onlyChanged: plan.onlyChanged,
+    uncommittedChanges,
     // Preview check: the agent's targets replace the graph closure server-side (empty/absent on a
     // normal upload). Sent only when this is a preview run so the body stays the normal contract otherwise.
     preview: opts.preview ?? false,
@@ -138,16 +168,17 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
     deps.log(`Confirmed ${ancestorShas.length} / ${baselineCommits.length} baseline commits in git ancestry`);
   }
 
-  // Skip-unchanged: for a graph-carrying `--only-changed` upload, diff the base commits the server named
-  // against this build's commit and the working tree with local git, and send the file lists with the
-  // upload. `UIVERIFY_NO_DELTA=1` sends none, and then nothing is carried from an earlier commit. Never fails the upload — `deltaFor` turns every git error into a truncated entry.
+  // Skip-unchanged: for an upload that asked to skip and carries a graph, diff the base commits the server
+  // named against this build's commit and the working tree with local git, and send the file lists with
+  // the upload. `UIVERIFY_NO_DELTA=1` sends none, and then nothing is carried from an earlier commit. Never
+  // fails the upload — `deltaFor` turns every git error into a truncated entry.
   let changedFiles: Record<string, ClientDeltaEntry> | undefined;
-  if (opts.onlyChanged && opts.bundleHasGraph && deltaBases.length > 0) {
+  if (plan.onlyChanged && (deltaBases.length > 0 || uncommittedChanges === true)) {
     if (process.env.UIVERIFY_NO_DELTA === "1") {
       deps.log("Skipping changed-file delta (UIVERIFY_NO_DELTA=1): nothing will be carried from earlier commits");
     } else {
-      changedFiles = deps.deltaFor(deltaBases, meta.commitSha);
-      const entries = Object.values(changedFiles);
+      changedFiles = deps.deltaFor(deltaBases, meta.commitSha, uncommitted);
+      const entries = deltaBases.flatMap((b) => changedFiles?.[b] ?? []);
       const fetched = entries.filter((e) => e.fetched).length;
       const unreadable = entries.filter((e) => e.truncated).length;
       deps.log(`Diffed HEAD against ${entries.length} baseline commit(s) (${fetched} fetched, ${unreadable} unreadable)`);

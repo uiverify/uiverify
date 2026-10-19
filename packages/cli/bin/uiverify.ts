@@ -1,16 +1,16 @@
 import path from "node:path";
-import { CHECK_SPEC, type ParseSpec, UPLOAD_SPEC, parseArgs } from "../src/args";
+import { CHECK_SPEC, type ParseSpec, UPLOAD_SPEC, parseArgs, removedOptionNote } from "../src/args";
 import {
   bundleContentHash,
+  bundleGraph,
   createBundle,
   createScreenshotBundle,
   isStorybookStaticDir,
-  onlyChangedNoOpReason,
   readArchiveProducer,
 } from "../src/bundle";
 import { httpIngestClient } from "../src/client";
 import { exitCodeFor, previewExitCodeFor } from "../src/exit";
-import { ciWatchCommand, collectGitMeta, confirmAncestors, deltaFor } from "../src/git";
+import { ciWatchCommand, collectGitMeta, confirmAncestors, deltaFor, workingTreeChanges } from "../src/git";
 import { redact } from "../src/redact";
 import { resolveStrict } from "../src/strict";
 import { type UploadDeps, defaultTmpFile, runUpload } from "../src/upload";
@@ -32,7 +32,7 @@ import { type UploadDeps, defaultTmpFile, runUpload } from "../src/upload";
  *    `failed`/`blocked` for `check` (a preview `changed` is the expected result, not a gate).
  *  - A malformed invocation exits **2**, ignoring `--no-strict`: an unknown or misspelled option, a
  *    boolean given a value, a stray token (`parseArgs`' `invalid`), or a bad subcommand. New
- *    argv-validation paths go through `invalid`, not `softFail()`.
+ *    argv-validation paths go through `parseArgs`, not `softFail()`.
  */
 
 const TOP_LEVEL_USAGE = "usage: uiverify <upload | check> [options]  (run `uiverify <command> --help`)";
@@ -53,7 +53,7 @@ Environment:
   UIVERIFY_API_URL   Override the default UI Verify API URL (https://uiverify.ai); for self-host/local dev.`;
 
 const UPLOAD_USAGE =
-  "usage: uiverify upload (--static-dir <dir> | --screenshots <dir>) [--working-directory <dir>] [--api-url <url>] [--auto-accept-changes] [--exit-zero-on-changes] [--only-changed] [--strict | --no-strict]";
+  "usage: uiverify upload (--static-dir <dir> | --screenshots <dir>) [--working-directory <dir>] [--api-url <url>] [--auto-accept-changes] [--exit-zero-on-changes] [--render-all] [--strict | --no-strict]";
 
 const UPLOAD_HELP = `uiverify upload — upload a prebuilt Storybook bundle for visual regression testing.
 
@@ -63,6 +63,11 @@ Build your Storybook first (e.g. \`npm run build-storybook\`), then point --stat
 Upload, register, then poll the build every ~2s and print a live "Rendered X / N" progress line until
 it finishes. Exits non-zero if the visual gate is changed/failed — the one deliberate gating exit,
 independent of --strict.
+
+When the bundle carries a dependency graph (preview-stats.json: a Storybook built with --stats-json, a
+@uiverify/vitest archive, or one you add to a Playwright archive), only the stories your change could
+affect render and the rest keep their baselines. Without one, everything renders and the log says how
+to get one.
 
 Options:
   --static-dir <dir>         Upload this prebuilt Storybook static directory (e.g. storybook-static),
@@ -75,11 +80,8 @@ Options:
   --auto-accept-changes      Accept this build's changes as the new baseline (pass on merges to main).
   --exit-zero-on-changes     Detect but don't block: a changed (needs-review) verdict exits 0 and stays
                              pending review in the dashboard. failed/blocked still exit non-zero.
-  --only-changed             Render only the stories this commit's changed files could affect and carry
-                             the rest forward. Works for Storybook and Vitest uploads, which ship a
-                             dependency graph (Storybook needs --stats-json; the @uiverify/vitest plugin
-                             emits preview-stats.json automatically). Ignored for Playwright archives and
-                             screenshot uploads, which have no graph — every test renders in full.
+  --render-all               Render every story, even when the bundle's dependency graph shows a change
+                             can't reach it, and even if this exact commit already passed.
   --strict                   Fail the CI job (exit 1) if the upload itself fails — bad/missing key,
                              missing bundle, network error. This is the DEFAULT.
   --no-strict                Never fail the CI job on an operational error (exit 0). The visual verdict
@@ -180,7 +182,8 @@ function resolveCommon(rest: string[], spec: ParseSpec, cmdName: string, usage: 
   // Warned, not rejected: these worked in an earlier release, so failing the job would break a workflow
   // that upgrades without touching its arguments.
   for (const opt of new Set(removed)) {
-    console.error(`[uiverify] ⚠ ${opt} was removed and is being ignored — drop it from your workflow.`);
+    const note = removedOptionNote(opt);
+    console.error(`[uiverify] ⚠ ${opt} was removed and is being ignored${note ? ` (${note})` : ""} — drop it from your workflow.`);
   }
 
   if (!apiKey) softFail("UIVERIFY_API_KEY is required");
@@ -212,10 +215,12 @@ function uploadDepsFor(ctx: CommonContext): UploadDeps {
     client: httpIngestClient(ctx.apiUrl, ctx.apiKey),
     gitMeta: () => collectGitMeta(ctx.cwd),
     confirmAncestors: (candidates, headSha) => confirmAncestors(candidates, headSha, ctx.cwd),
-    deltaFor: (bases, headSha) => deltaFor(bases, headSha, ctx.cwd, { exclude: ctx.staticDir }),
+    workingTreeChanges: (headSha) => workingTreeChanges(headSha, ctx.cwd, { exclude: ctx.staticDir }),
+    deltaFor: (bases, headSha, uncommitted) => deltaFor(bases, headSha, ctx.cwd, uncommitted),
     createBundle: ctx.isScreenshots ? createScreenshotBundle : createBundle,
     bundleContentHash,
     readProducer: ctx.isScreenshots ? () => null : readArchiveProducer,
+    bundleGraph,
     tmpFile: defaultTmpFile,
     log: ctx.log,
   };
@@ -228,21 +233,7 @@ async function uploadCommand(rest: string[]): Promise<void> {
   }
   const ctx = resolveCommon(rest, UPLOAD_SPEC, "upload", UPLOAD_USAGE);
   const exitZeroOnChanges = ctx.flags.has("exit-zero-on-changes");
-  const onlyChanged = ctx.flags.has("only-changed");
-  // Not a failure — a full render is always correct — but say it, or the run is indistinguishable from
-  // a working opt-in. Stays a file check, never a reimplementation of the server's decision.
-  const noOpReason = onlyChanged && !ctx.isScreenshots ? onlyChangedNoOpReason(ctx.staticDir) : null;
-  if (onlyChanged && ctx.isScreenshots) {
-    ctx.log(
-      "⚠ --only-changed has no effect on a screenshot upload (no dependency graph) — to skip work, upload only the screens you changed.",
-    );
-  } else if (noOpReason === "no-graph") {
-    ctx.log(
-      "⚠ --only-changed, but no preview-stats.json in the bundle — every story will render. Build with Storybook's --stats-json to get the dependency graph.",
-    );
-  } else if (noOpReason === "archive") {
-    ctx.log("⚠ --only-changed has no effect on this archive — no preview-stats.json dependency graph (a Playwright archive has none; the @uiverify/vitest plugin emits one) — every test will render.");
-  }
+  const skip = ctx.flags.has("render-all") ? "render-all" : "default";
 
   try {
     const res = await runUpload(
@@ -251,10 +242,8 @@ async function uploadCommand(rest: string[]): Promise<void> {
         appUrl: ctx.apiUrl,
         autoAcceptChanges: ctx.flags.has("auto-accept-changes"),
         watchHint: ciWatchCommand(process.env) ?? undefined,
-        onlyChanged,
-        // A graph-carrying `--only-changed` upload is the only one that computes + sends the client delta.
-        // Reuses the same file sniff `noOpReason` already ran (null ⇒ a graph is present).
-        bundleHasGraph: onlyChanged && !ctx.isScreenshots && noOpReason === null,
+        skip,
+        screenshots: ctx.isScreenshots,
       },
       uploadDepsFor(ctx),
     );
@@ -292,7 +281,7 @@ async function checkCommand(rest: string[]): Promise<void> {
 
   try {
     const res = await runUpload(
-      { staticDir: ctx.staticDir, appUrl: ctx.apiUrl, preview: true, previewTargets: targets },
+      { staticDir: ctx.staticDir, appUrl: ctx.apiUrl, preview: true, previewTargets: targets, screenshots: ctx.isScreenshots },
       uploadDepsFor(ctx),
     );
     // A preview check is not a gate: a `changed` verdict is the expected result the agent reviews over

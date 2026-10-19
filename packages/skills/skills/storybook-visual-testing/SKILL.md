@@ -76,8 +76,8 @@ Two ways to inject them, both fine:
   returns the **same** response every time.
 
 **One component per story file, every variant × state in one story** where you can — cheaper and easier
-to eyeball than N near-identical stories. Keep each in its own file so `--only-changed` carries the
-untouched ones forward, and add a path filter so the visual job only runs on UI PRs.
+to eyeball than N near-identical stories. Keep each in its own file so unchanged ones are skipped,
+and add a path filter so the visual job only runs on UI PRs.
 
 ### 2. Freeze the clock
 

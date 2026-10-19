@@ -149,7 +149,7 @@ with this exact shape: render the component → `await expect.element(...).toBeV
 **One canvas per component, not N stories.** Render every variant × state of a component (a Button's
 sizes/states, every tile kind) in a **single grid** and take **one** snapshot — cheaper (one screenshot),
 and you eyeball the whole component's surface at once. Keep each page/component in **its own test file**
-so `--only-changed` carries the untouched ones forward, and add a path filter so the visual job only runs
+so unchanged ones are skipped, and add a path filter so the visual job only runs
 on UI PRs — both keep the suite cheap at scale.
 
 ### 2. Freeze the clock

@@ -8,11 +8,22 @@ import {
   ciWatchCommand,
   confirmAncestors,
   deltaFor,
+  workingTreeChanges,
   parseParents,
   parseRepoFromRemote,
   prNumberFromEnv,
   repoFullNameFromEnv,
 } from "./git";
+
+/** The delta exactly as the upload computes it: the checkout's uncommitted list first, then the bases. */
+function delta(
+  bases: string[],
+  head: string,
+  cwd: string,
+  opts: { exclude?: string; env?: NodeJS.ProcessEnv } = { env: {} },
+): ReturnType<typeof deltaFor> {
+  return deltaFor(bases, head, cwd, workingTreeChanges(head, cwd, opts));
+}
 
 describe("git", () => {
   it("parseParents splits the %P output and drops blanks", () => {
@@ -150,7 +161,7 @@ describe("deltaFor (real git)", () => {
   afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
 
   it("lists changed/added/deleted files for a local base, treating a rename as delete + add", () => {
-    const out = deltaFor([base], head, dir);
+    const out = delta([base], head, dir);
     const entry = out[base];
     expect(entry?.truncated).toBe(false);
     expect(entry?.fetched).toBeUndefined();
@@ -158,13 +169,13 @@ describe("deltaFor (real git)", () => {
   });
 
   it("reports an absent base with no origin as not-fetched, never an error", () => {
-    const out = deltaFor(["b".repeat(40)], head, dir);
+    const out = delta(["b".repeat(40)], head, dir);
     expect(out["b".repeat(40)]).toEqual({ files: [], truncated: true, reason: "not-fetched" });
   });
 
   it("reports every base head-missing when the head commit is not present", () => {
     const missingHead = "f".repeat(40);
-    const out = deltaFor([base], missingHead, dir);
+    const out = delta([base], missingHead, dir);
     expect(out[base]).toEqual({ files: [], truncated: true, reason: "head-missing" });
   });
 
@@ -174,13 +185,20 @@ describe("deltaFor (real git)", () => {
     git("add", "-A");
     git("commit", "-q", "-m", "sha-named file");
     const head2 = sha("HEAD");
-    const out = deltaFor([base], head2, dir);
+    const out = delta([base], head2, dir);
     expect(out[base]?.truncated).toBe(false);
     expect(out[base]?.files).toContain(base);
   });
 
-  it("returns nothing for an empty base list without touching git", () => {
-    expect(deltaFor([], head, dir)).toEqual({});
+  it("returns nothing for an empty base list on a clean checkout without touching git", () => {
+    expect(deltaFor([], head, dir, [])).toEqual({});
+  });
+
+  /** A clean checkout holds exactly the commit, so a story verified at `head` has nothing to be checked
+   *  against, and an entry for it would only cost a slot. */
+  it("sends no entry for the head when the checkout is clean", () => {
+    const current = sha("HEAD");
+    expect(Object.keys(delta([base], current, dir))).toEqual([base]);
   });
 });
 
@@ -227,14 +245,14 @@ describe("deltaFor uncommitted edits (real git)", () => {
   /** Would catch: the delta diffing commit against commit only, so a story changed by an edit that isn't
    *  committed yet is carried forward from a baseline that predates the edit. */
   it("adds staged, unstaged and untracked edits to every base's list", () => {
-    const out = deltaFor([base, head], head, dir, { exclude: path.join(dir, "storybook-static"), env: {} });
+    const out = delta([base, head], head, dir, { exclude: path.join(dir, "storybook-static"), env: {} });
     expect(out[base]?.truncated).toBe(false);
     expect([...(out[base]?.files ?? [])].sort()).toEqual(["Button.tsx", "New.tsx", "committed.tsx", "staged.tsx"]);
     expect([...(out[head]?.files ?? [])].sort()).toEqual(["Button.tsx", "New.tsx", "staged.tsx"]);
   });
 
   it("leaves out ignored files and the upload dir", () => {
-    const files = deltaFor([base], head, dir, { exclude: path.join(dir, "storybook-static"), env: {} })[base]?.files ?? [];
+    const files = delta([base], head, dir, { exclude: path.join(dir, "storybook-static"), env: {} })[base]?.files ?? [];
     expect(files).not.toContain("ignored.log");
     expect(files.some((f) => f.startsWith("storybook-static/"))).toBe(false);
   });
@@ -245,7 +263,7 @@ describe("deltaFor uncommitted edits (real git)", () => {
     write("dist[prod]/iframe.html", "<html>");
     write("distp", "1");
     try {
-      const files = deltaFor([base], head, dir, { exclude: path.join(dir, "dist[prod]"), env: {} })[base]?.files ?? [];
+      const files = delta([base], head, dir, { exclude: path.join(dir, "dist[prod]"), env: {} })[base]?.files ?? [];
       expect(files).toContain("distp");
       expect(files.some((f) => f.startsWith("dist[prod]/"))).toBe(false);
     } finally {
@@ -255,18 +273,42 @@ describe("deltaFor uncommitted edits (real git)", () => {
   });
 
   it("lists an untracked upload dir when no exclude is given", () => {
-    expect(deltaFor([base], head, dir, { env: {} })[base]?.files).toContain("storybook-static/iframe.html");
+    expect(delta([base], head, dir, { env: {} })[base]?.files).toContain("storybook-static/iframe.html");
   });
 
-  /** Would catch: a CI run listing what its own steps left behind (an un-ignored failure screenshot), which
-   *  the server can't map to a story and answers with a full render on every build. */
+  /** Would catch two opposite mistakes. Listing what a CI step left behind (an un-ignored failure
+   *  screenshot) makes the server answer with a full render on every build; dropping an edit an agent or a
+   *  CI step made to a tracked file carries forward a story the bundle shows changed. */
   it.each([{ CI: "true" }, { TF_BUILD: "True" }, { JENKINS_URL: "https://ci" }, { TEAMCITY_VERSION: "2024.1" }])(
-    "adds no uncommitted files in CI (%o)",
+    "adds edited tracked files but no untracked ones in CI (%o)",
     (env) => {
-      const out = deltaFor([base], head, dir, { exclude: path.join(dir, "storybook-static"), env });
-      expect(out[base]).toEqual({ files: ["committed.tsx"], truncated: false });
+      const out = delta([base], head, dir, { exclude: path.join(dir, "storybook-static"), env });
+      expect(out[base]?.truncated).toBe(false);
+      expect([...(out[base]?.files ?? [])].sort()).toEqual(["Button.tsx", "committed.tsx", "staged.tsx"]);
     },
   );
+
+  /** Re-uploading a commit whose stories are already verified at it. The server decides that group
+   *  from an entry keyed by the head, so it must hold the uncommitted edits, and only those. */
+  it("sends the uncommitted edits as an entry keyed by the head, ahead of the bases", () => {
+    const out = delta([base], head, dir, { exclude: path.join(dir, "storybook-static"), env: {} });
+    expect(Object.keys(out)).toEqual([head, base]);
+    expect([...(out[head]?.files ?? [])].sort()).toEqual(["Button.tsx", "New.tsx", "staged.tsx"]);
+    expect(out[head]?.truncated).toBe(false);
+  });
+
+  it("sends the head entry even when the server offered no bases", () => {
+    const out = delta([], head, dir, { exclude: path.join(dir, "storybook-static"), env: {} });
+    expect(Object.keys(out)).toEqual([head]);
+  });
+
+  /** Would catch: a checkout git can't read being sent as clean, which carries the at-head group blind. */
+  it("marks every entry, the head's too, unreadable when the uncommitted list can't be read", () => {
+    expect(deltaFor([base], head, dir, null)).toEqual({
+      [head]: { files: [], truncated: true, reason: "git-error" },
+      [base]: { files: [], truncated: true, reason: "git-error" },
+    });
+  });
 
   /** Would catch: the working tree compared to HEAD rather than to `head`, so with a `COMMIT_SHA` that names
    *  an earlier commit, what changed between that commit and the checkout was in neither list. */
@@ -288,7 +330,7 @@ describe("deltaFor uncommitted edits (real git)", () => {
       fs.writeFileSync(path.join(repo, "later.ts"), "1");
       g("add", "-A");
       g("commit", "-q", "-m", "the checked-out commit");
-      expect([...(deltaFor([b], named, repo, { env: {} })[b]?.files ?? [])].sort()).toEqual(["later.ts", "named.ts"]);
+      expect([...(delta([b], named, repo, { env: {} })[b]?.files ?? [])].sort()).toEqual(["later.ts", "named.ts"]);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }
@@ -330,7 +372,7 @@ describe("deltaFor without a checkout (real git)", () => {
   /** Would catch: an empty index read as "every tracked file deleted", which put the whole repo (and its
    *  lockfile) into every base's list and made every fork PR render in full. */
   it("adds nothing for an empty index, where no checkout exists to have edits", () => {
-    expect(deltaFor([base], head, dir, { env: {} })[base]).toEqual({ files: ["y.ts"], truncated: false });
+    expect(delta([base], head, dir, { env: {} })[base]).toEqual({ files: ["y.ts"], truncated: false });
   });
 
   /** Would catch: an empty index read as "no edits" when files are on disk — a checkout unstaged wholesale
@@ -344,7 +386,7 @@ describe("deltaFor without a checkout (real git)", () => {
       run(unstaged, "reset", "-q", "--hard", "HEAD");
       run(unstaged, "rm", "-r", "-q", "--cached", ".");
       fs.rmSync(path.join(unstaged, "a.ts"));
-      expect(deltaFor([base], head, unstaged, { env: {} })[base]).toEqual({ files: [], truncated: true, reason: "git-error" });
+      expect(delta([base], head, unstaged, { env: {} })[base]).toEqual({ files: [], truncated: true, reason: "git-error" });
     } finally {
       fs.rmSync(unstaged, { recursive: true, force: true });
     }

@@ -38,7 +38,7 @@ npm run test:e2e                 # starts the dev server, drives it, archives ->
 UIVERIFY_API_KEY=uv_proj_… npm run upload
 ```
 
-`upload` runs `uiverify upload --static-dir uiverify-archive --only-changed`. Get a project API key
+`upload` runs `uiverify upload --static-dir uiverify-archive`. Get a project API key
 (`uv_proj_…`) from your [UI Verify dashboard](https://uiverify.ai).
 
 ## In CI

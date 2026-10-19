@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 4173",
     "test:e2e": "playwright test",
-    "upload": "uiverify upload --static-dir uiverify-archive --only-changed"
+    "upload": "uiverify upload --static-dir uiverify-archive"
   },
   "dependencies": {
     "react": "^19.0.0",
@@ -20,11 +20,11 @@
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@uiverify/playwright": "^1.3.0",
+    "@uiverify/playwright": "^1.4.0",
     "@vitejs/plugin-react": "^4.3.4",
     "playwright": "^1.55.0",
     "typescript": "^5.7.2",
-    "uiverify": "^1.7.1",
+    "uiverify": "^1.8.0",
     "vite": "^7.0.0"
   }
 }

@@ -23,6 +23,7 @@ interface RunResult {
   failed: Map<string, string>;
   output: string;
   files: string[];
+  outDir: string;
 }
 
 /** A real font file to serve, so the page loads it: the icon font Playwright ships. */
@@ -39,10 +40,20 @@ let fontBytes: Buffer;
 let assets: http.Server;
 let origin: string;
 const dirs: string[] = [];
+/** The fixture runs in a repository of its own, whose index tracks exactly the fixture's files, so the
+ *  SDK build it loads sits outside the repository like a dependency in node_modules, and the graph's
+ *  source check sees the fixture whether or not its files are committed here yet. */
+let fixtureGit: Record<string, string>;
 
 /** Assets on another origin than the test page, served with no CORS headers (but the font). */
 beforeAll(async () => {
   await promisify(execFile)(path.join(packageDir, "node_modules/.bin/tsup"), [], { cwd: packageDir });
+  const gitDir = fs.mkdtempSync(path.join(os.tmpdir(), "uiverify-e2e-git-"));
+  dirs.push(gitDir);
+  fixtureGit = { GIT_DIR: gitDir, GIT_WORK_TREE: fixture };
+  const env = { ...process.env, ...fixtureGit };
+  await promisify(execFile)("git", ["init", "-q"], { cwd: fixture, env });
+  await promisify(execFile)("git", ["add", "-A", "--", ".", ":!node_modules"], { cwd: fixture, env });
   fontBytes = findFont();
   assets = http.createServer((req, res) => {
     if (req.url === "/icon.png" || req.url === "/frozen.png") {
@@ -84,7 +95,7 @@ async function runFixture(args: string[] = [], env: Record<string, string> = {})
     const run = await promisify(execFile)(
       vitestBin,
       ["run", "--reporter=default", "--reporter=json", `--outputFile.json=${report}`, ...args],
-      { cwd: fixture, env: { ...process.env, UIVERIFY_ARCHIVE_DIR: outDir, UIVERIFY_E2E_ASSETS: origin, ...env } },
+      { cwd: fixture, env: { ...process.env, ...fixtureGit, UIVERIFY_ARCHIVE_DIR: outDir, UIVERIFY_E2E_ASSETS: origin, ...env } },
     );
     output = run.stdout + run.stderr;
   } catch (err) {
@@ -105,7 +116,7 @@ async function runFixture(args: string[] = [], env: Record<string, string> = {})
       if (test.status === "failed") failed.set(test.fullName, test.failureMessages.join("\n"));
     }
   }
-  return { snapshots, failed, output, files: fs.readdirSync(outDir) };
+  return { snapshots, failed, output, files: fs.readdirSync(outDir), outDir };
 }
 
 describe("a browser-mode run", () => {
@@ -114,10 +125,23 @@ describe("a browser-mode run", () => {
     run = await runFixture();
   }, 180_000);
 
-  /** Catches the plugin inside a `projects` entry writing no module graph, so `--only-changed` saves
-   *  nothing. */
+  /** Catches the plugin inside a `projects` entry writing no module graph, so skipping unchanged tests
+   *  saves nothing. */
   it("writes the module graph", () => {
     expect(run.files).toContain("preview-stats.json");
+  });
+
+  /** Catches the source check dropping a test that imports tracked source, keeping one that imports none,
+   *  or shipping a graph without the marker the CLI requires. */
+  it("keeps the tests that import tracked source in the graph, and says which always render", () => {
+    const stats = JSON.parse(fs.readFileSync(path.join(run.outDir, "preview-stats.json"), "utf8"));
+    expect(stats.uiverify).toEqual({ sourceChecked: true });
+    const modules = new Map<string, string[]>(
+      stats.modules.map((m: { name: string; reasons: { moduleName: string }[] }) => [m.name, m.reasons.map((r) => r.moduleName)]),
+    );
+    expect(modules.get("visual/loaded.ts")).toEqual(["visual/resources.capture.ts"]);
+    expect(modules.has("visual/errors.capture.ts")).toBe(false);
+    expect(run.output).toContain("[uiverify] The tests in 3 file(s) always render: they import no tracked source file");
   });
 
   /** Catches the automatic snapshot running after a test file's cleanup `afterEach`, archiving an empty

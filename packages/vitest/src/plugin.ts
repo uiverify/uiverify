@@ -43,8 +43,8 @@ export function uiverifyPlugin(options: UiverifyPluginOptions = {}): Plugin {
     optimizeDeps: { exclude: ["@uiverify/vitest"] },
     test: {
       setupFiles: [SETUP_MODULE],
-      // Emit Vite's module graph as `preview-stats.json` so `uiverify upload --only-changed` can skip
-      // unchanged snapshots. `"default"` is kept so the plugin doesn't silence Vitest's own output. When
+      // Emit Vite's module graph as `preview-stats.json` so `uiverify upload` can skip unchanged
+      // snapshots. `"default"` is kept so the plugin doesn't silence Vitest's own output. When
       // this project-level setting is ignored (the plugin inside `projects`), `configureVitest` below adds
       // the reporter to the root instead.
       reporters: ["default", graphReporter(outDir)],

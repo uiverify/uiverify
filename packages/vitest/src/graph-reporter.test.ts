@@ -1,10 +1,19 @@
-import { describe, it, expect } from "vitest";
-import type { GraphModuleLike } from "./preview-stats";
-import { buildStatsFromRun, ensureGraphReporter, graphReporter } from "./graph-reporter";
+import { afterEach, describe, it, expect } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { type GraphModuleLike, unionStats } from "./preview-stats";
+import type { RunStats } from "./source-check";
+import { buildStatsFromRun, emitModuleGraph, ensureGraphReporter, graphReporter } from "./graph-reporter";
 
 /** A minimal fake of the Vitest shape `buildStatsFromRun` reads: a project whose browser Vite server
  *  exposes a `client` environment module graph via `idToModuleMap.forEach`. */
-function fakeProject(root: string, modules: { file: string; importers?: string[] }[], setupFiles: string[] = []) {
+function fakeProject(
+  root: string,
+  modules: { file: string; importers?: string[] }[],
+  setupFiles: string[] = [],
+  testFilesList: string[] | null = modules.map((m) => m.file).filter((f) => f.includes(".test.")),
+) {
   const nodes: GraphModuleLike[] = modules.map((m) => ({
     file: m.file,
     id: m.file,
@@ -20,12 +29,14 @@ function fakeProject(root: string, modules: { file: string; importers?: string[]
       },
     },
     config: { setupFiles },
-    testFilesList: null as string[] | null,
+    testFilesList,
   };
 }
 
-const byName = (stats: { modules: { name: string; reasons: { moduleName: string }[] }[] } | null) =>
-  new Map((stats?.modules ?? []).map((m) => [m.name, m.reasons.map((r) => r.moduleName).sort()]));
+const byName = (run: RunStats | "unchecked" | null) =>
+  new Map(
+    unionStats(run && run !== "unchecked" ? run.projects.map((p) => p.stats) : []).modules.map((m) => [m.name, m.reasons.map((r) => r.moduleName).sort()]),
+  );
 
 describe("buildStatsFromRun", () => {
   it("reads the browser client module graph and emits root-relative reverse edges", () => {
@@ -38,7 +49,7 @@ describe("buildStatsFromRun", () => {
   });
 
   it("takes test files from the public testModules arg when testFilesList is null (the #2 regression)", () => {
-    const project = fakeProject("/repo/app", [{ file: "/repo/app/test/a.visual.test.tsx" }], ["/repo/app/test/setup.ts"]);
+    const project = fakeProject("/repo/app", [{ file: "/repo/app/test/a.visual.test.tsx" }], ["/repo/app/test/setup.ts"], null);
     // Note the setup file is NOT a module-graph importer; its edges come only from the test-file list.
     const stats = byName(
       buildStatsFromRun({ projects: [project] }, [{ moduleId: "/repo/app/test/a.visual.test.tsx", project }]),
@@ -49,11 +60,37 @@ describe("buildStatsFromRun", () => {
   });
 
   it("relativizes each project against its OWN vite root and unions (the #5 fix)", () => {
-    const a = fakeProject("/repo/appA", [{ file: "/repo/appA/src/Foo.tsx" }]);
-    const b = fakeProject("/repo/appB", [{ file: "/repo/appB/src/Bar.tsx" }]);
-    const names = (buildStatsFromRun({ projects: [a, b] }, undefined)?.modules ?? []).map((m) => m.name).sort();
+    const a = fakeProject("/repo/appA", [{ file: "/repo/appA/src/Foo.test.tsx" }]);
+    const b = fakeProject("/repo/appB", [{ file: "/repo/appB/src/Bar.test.tsx" }]);
+    const names = [...byName(buildStatsFromRun({ projects: [a, b] }, undefined)).keys()].sort();
     // Each is clean root-relative (no `../appB/...` leaking project A's root onto project B).
-    expect(names).toEqual(["src/Bar.tsx", "src/Foo.tsx"]);
+    expect(names).toEqual(["src/Bar.test.tsx", "src/Foo.test.tsx"]);
+  });
+
+  /** Would catch: a graph stamped as source-checked when Vitest listed no tests to check, so its spec
+   *  modules stay locatable and a change behind bundled chunks carries them forward. */
+  it("writes no graph when a browser project's tests weren't listed", () => {
+    const unlisted = fakeProject(
+      "/repo/app",
+      [{ file: "/repo/app/test/a.visual.test.tsx" }, { file: "/repo/app/chunk-X.js", importers: ["/repo/app/test/a.visual.test.tsx"] }],
+      [],
+      null,
+    );
+    expect(buildStatsFromRun({ projects: [unlisted] }, [])).toBe("unchecked");
+    // Beside a listed project too: its snapshots could be located through the other project's modules.
+    const listed = fakeProject("/repo/other", [{ file: "/repo/other/test/a.visual.test.tsx" }]);
+    expect(buildStatsFromRun({ projects: [listed, unlisted] }, [])).toBe("unchecked");
+  });
+
+  /** Would catch: a browser project that ran tests but exposed no module graph being dropped silently,
+   *  so its snapshots are located through a sibling project's same-path module. */
+  it("writes no graph when a browser project ran tests but has no module graph", () => {
+    const listed = fakeProject("/repo/other", [{ file: "/repo/other/test/a.visual.test.tsx" }]);
+    const graphless = fakeProject("/repo/app", [], [], ["/repo/app/test/a.visual.test.tsx"]);
+    const ran = [{ moduleId: "/repo/app/test/a.visual.test.tsx", project: graphless }];
+    expect(buildStatsFromRun({ projects: [listed, graphless] }, ran)).toBe("unchecked");
+    // Listed but not run (a filtered run): nothing of it is in the archive, so the other project ships.
+    expect(buildStatsFromRun({ projects: [listed, graphless] }, [])).not.toBe("unchecked");
   });
 
   it("returns null when no project has a usable browser graph (safe full-render fallback)", () => {
@@ -62,7 +99,70 @@ describe("buildStatsFromRun", () => {
   });
 });
 
+describe("emitModuleGraph", () => {
+  const dirs: string[] = [];
+  const outDir = () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "uiverify-graph-"));
+    dirs.push(dir);
+    return dir;
+  };
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const project = () =>
+    fakeProject("/repo/app", [
+      { file: "/repo/app/test/a.visual.test.tsx" },
+      { file: "/repo/app/src/A.tsx", importers: ["/repo/app/test/a.visual.test.tsx"] },
+    ]);
+  const testModules = (p: ReturnType<typeof project>) => [{ moduleId: "/repo/app/test/a.visual.test.tsx", project: p }];
+
+  it("writes the checked graph with the marker", () => {
+    const dir = outDir();
+    const p = project();
+    const git = { root: "/repo", tracked: new Set(["app/src/A.tsx", "app/test/a.visual.test.tsx"]) };
+    expect(emitModuleGraph(dir, { projects: [p] }, testModules(p), () => git)).toEqual({ kind: "written", droppedLine: null });
+    const written = JSON.parse(fs.readFileSync(path.join(dir, "preview-stats.json"), "utf8"));
+    expect(written.uiverify).toEqual({ sourceChecked: true });
+    expect(written.modules).toContainEqual({ name: "src/A.tsx", reasons: [{ moduleName: "test/a.visual.test.tsx" }] });
+  });
+
+  /** Catches a run outside git shipping an unchecked graph, or leaving a previous run's graph behind. */
+  it("writes no graph, and removes a stale one, when git can't list the repository", () => {
+    const dir = outDir();
+    fs.writeFileSync(path.join(dir, "preview-stats.json"), "{}");
+    const p = project();
+    expect(emitModuleGraph(dir, { projects: [p] }, testModules(p), () => null)).toEqual({ kind: "no-git" });
+    expect(fs.existsSync(path.join(dir, "preview-stats.json"))).toBe(false);
+  });
+});
+
 describe("ensureGraphReporter", () => {
+  /** Would catch: a failed emit leaving the previous run's stamped graph in the archive (a watch rerun
+   *  doesn't clear it), so the upload skips against dependencies this run never checked. */
+  it("removes a stale graph when writing this run's graph fails", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "uiverify-graph-fail-"));
+    try {
+      fs.writeFileSync(path.join(dir, "preview-stats.json"), "{}");
+      const reporter = graphReporter(dir);
+      const broken = {
+        get projects(): never {
+          throw new Error("boom");
+        },
+      };
+      const warn = console.warn;
+      console.warn = () => {};
+      try {
+        reporter.onInit(broken);
+        reporter.onTestRunEnd([]);
+      } finally {
+        console.warn = warn;
+      }
+      expect(fs.existsSync(path.join(dir, "preview-stats.json"))).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   /** Catches the plugin inside a Vitest `projects` entry shipping no graph: its project-level `reporters`
    *  are ignored, so the root must gain the reporter from `configureVitest`. */
   it("adds the graph reporter to root reporters that lack it", () => {

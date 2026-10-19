@@ -2,13 +2,13 @@
  * The `uiverify` argument parser.
  *
  * Every option is declared, so anything the user writes is either recognized or **rejected** — never
- * quietly ignored. That matters more here than in most CLIs: a mistyped `--only-chnged`, a
- * `--only-changed false`, or a `--only-changed=true` that the parser shrugs off all produce a run
+ * quietly ignored. That matters more here than in most CLIs: a mistyped `--render-al`, a
+ * `--render-all false`, or a `--render-all=true` that the parser shrugs off all produce a run
  * that looks successful in the CI log while rendering (and billing) something other than what was
  * asked for. The caller fails the run instead, which is the same fail-closed posture as `--strict`.
  *
  * The allowlist is **per subcommand** (`ParseSpec`), so each command accepts exactly its own surface:
- * `upload --target` and `check --only-changed` are both rejected, not silently ignored. `parseArgs`
+ * `upload --target` and `check --render-all` are both rejected, not silently ignored. `parseArgs`
  * defaults to the `upload` spec so its callers/tests are unchanged.
  */
 export interface ParseSpec {
@@ -23,7 +23,7 @@ export interface ParseSpec {
 export const UPLOAD_SPEC: ParseSpec = {
   valueOptions: new Set(["static-dir", "screenshots", "working-directory", "api-url"]),
   multiValueOptions: new Set(),
-  booleanFlags: new Set(["auto-accept-changes", "exit-zero-on-changes", "only-changed", "strict", "no-strict"]),
+  booleanFlags: new Set(["auto-accept-changes", "exit-zero-on-changes", "render-all", "strict", "no-strict"]),
 };
 
 /** `uiverify check` (the interactive preview build): capture input + the agent's `--target` selection +
@@ -40,14 +40,19 @@ export const CHECK_SPEC: ParseSpec = {
  * they took a value (so their value token is consumed rather than left to look like a stray).
  *
  * They are reported separately from `invalid` because rejecting them would be a worse regression than
- * the silent no-op the allowlist exists to stop: `uiverify@0.2.4` accepted both, 0.2.5 ignored them
- * silently, and a consumer whose workflow still passes one would go straight from "uploads fine" to a
- * red job with nothing uploaded. The caller warns and carries on.
+ * the silent no-op the allowlist exists to stop: a consumer whose workflow still passes one (`--shadow`
+ * and `--build-cmd` from 0.2.4, `--only-changed` from before skipping became the default) would go
+ * straight from "uploads fine" to a red job with nothing uploaded. The caller warns and carries on.
  */
-const REMOVED_OPTIONS = new Map<string, { takesValue: boolean }>([
+const REMOVED_OPTIONS = new Map<string, { takesValue: boolean; note?: string }>([
   ["shadow", { takesValue: false }],
   ["build-cmd", { takesValue: true }],
+  ["only-changed", { takesValue: false, note: "skipping unchanged stories is the default now" }],
 ]);
+
+export function removedOptionNote(option: string): string | undefined {
+  return REMOVED_OPTIONS.get(option.replace(/^--/, ""))?.note;
+}
 
 export interface ParsedArgs {
   flags: Set<string>;

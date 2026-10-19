@@ -50,7 +50,7 @@ npm run screenshots              # Maestro drives the app -> screenshots/*.png
 UIVERIFY_API_KEY=uv_proj_… npm run upload
 ```
 
-`upload` runs `uiverify upload --screenshots screenshots --only-changed`. Get a project API key
+`upload` runs `uiverify upload --screenshots screenshots`. Get a project API key
 (`uv_proj_…`) from your [UI Verify dashboard](https://uiverify.ai).
 
 ## In CI

@@ -45,6 +45,9 @@ export interface ArchiverOptions {
   idBase: string;
   /** Display grouping title (e.g. the spec/suite title). */
   title: string;
+  /** The spec file, relative to the Playwright config's directory, so UI Verify can locate this test in a
+   *  module graph (`preview-stats.json`) put into the archive directory. */
+  sourcePath?: string;
 }
 
 export class PlaywrightArchiver {
@@ -155,6 +158,7 @@ export class PlaywrightArchiver {
       resources: Object.fromEntries(this.resources),
       ...(params.delayMs ? { params } : {}),
       producer: PRODUCER,
+      ...(this.opts.sourcePath ? { sourcePath: this.opts.sourcePath } : {}),
     };
 
     writeSnapshot(this.opts.outDir, snapshot);

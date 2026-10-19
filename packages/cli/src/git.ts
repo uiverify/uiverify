@@ -163,8 +163,8 @@ function gitDeltaOrNull(args: string[], cwd: string, timeoutMs: number): string 
   }
 }
 
-/** Whether this runs in CI, where the checkout is the commit. `CI` covers most hosts; Azure Pipelines,
- *  Jenkins and TeamCity don't set it by default. */
+/** Whether this runs in CI. `CI` covers most hosts; Azure Pipelines, Jenkins and TeamCity don't set it by
+ *  default. */
 function isCi(env: NodeJS.ProcessEnv): boolean {
   return Boolean(env.CI || env.TF_BUILD || env.JENKINS_URL || env.TEAMCITY_VERSION);
 }
@@ -181,20 +181,27 @@ function deltaPathspec(root: string, exclude: string | undefined): string[] {
 }
 
 /**
- * Files where the working tree differs from `head`: staged and unstaged edits to tracked files (and,
- * when `head` isn't the checked-out commit, everything between the two), plus untracked files that
- * aren't ignored. The bundle was built from the working tree, so these changed it as surely as a
- * commit did. Null when git can't say. An empty index with nothing on disk means nothing is checked out
- * (the fork-PR upload fetches commits as objects and points HEAD at them), so there are no edits, where
- * a diff against the tree would report every tracked file as deleted. An empty index WITH files on disk
- * (a checkout unstaged wholesale) can't say what was deleted, so it is null too.
+ * Files where the working tree differs from `head`: staged and unstaged edits to tracked files, plus,
+ * when `untracked`, untracked files that aren't ignored. Null when git can't say. An empty index with
+ * nothing on disk means nothing is checked out (the fork-PR upload fetches commits as objects and points
+ * HEAD at them), so there are no edits, where a diff against the tree would report every tracked file as
+ * deleted. An empty index WITH untracked files on disk (a checkout unstaged wholesale) can't say what was
+ * deleted, so it is null too.
  */
-function uncommittedFiles(root: string, head: string, pathspec: string[], timeout: () => number): string[] | null {
+function uncommittedFiles(
+  root: string,
+  head: string,
+  pathspec: string[],
+  timeout: () => number,
+  untracked: boolean,
+): string[] | null {
   const index = gitDeltaOrNull(["ls-files", "-z"], root, timeout());
   if (index === null) return null;
-  const untracked = gitDeltaOrNull(["ls-files", "--others", "--exclude-standard", "-z", ...pathspec], root, timeout());
-  if (untracked === null) return null;
-  const untrackedFiles = untracked.split("\0").filter(Boolean);
+  const untrackedRaw = untracked
+    ? gitDeltaOrNull(["ls-files", "--others", "--exclude-standard", "-z", ...pathspec], root, timeout())
+    : "";
+  if (untrackedRaw === null) return null;
+  const untrackedFiles = untrackedRaw.split("\0").filter(Boolean);
   if (index === "") return untrackedFiles.length === 0 ? [] : null;
   const tracked = gitDeltaOrNull(
     // prettier-ignore
@@ -207,27 +214,49 @@ function uncommittedFiles(root: string, head: string, pathspec: string[], timeou
 }
 
 /**
- * Compute each base commit's changed-file delta against `head` with local git, for `--only-changed`.
- * The server names the base commits to diff against in the register response; the CLI diffs them here
- * and sends the raw file lists with the upload (the render decision stays server-side — this client
- * only reports what git says changed). Outside CI, every base's list also carries the checkout's
- * uncommitted edits ({@link uncommittedFiles}), so an edit that isn't committed yet is compared like a
- * committed one. In CI ({@link isCi}) the checkout is the commit, and what a CI step
- * leaves behind (a failed test's screenshot, an un-ignored report) never went into the bundle; listing
- * it would force a full render through an unmapped asset. Never throws: every failure becomes a per-base
- * `{ truncated: true, reason }` entry, so the upload can't be failed by the diff step. Diffs local
- * bases first, then fetches up to {@link DELTA_MAX_FETCHES} absent ones by SHA, under a
- * {@link DELTA_STEP_BUDGET_MS} step budget (each git call capped to the smaller of 20s and the budget
- * remaining, so the step never overruns). `exclude` is the upload dir, left out of the uncommitted list.
+ * The files where the checkout differs from `head`, which the bundle was built from as surely as from
+ * the commit. Null when git can't say (including a `head` that isn't here). Outside CI that is every
+ * edited tracked file plus untracked files that aren't ignored; in CI ({@link isCi}) only edited tracked
+ * files, since an agent or a CI step can rewrite those, while an untracked file there is something a step
+ * left behind (a failed test's screenshot, an un-ignored report) that never went into the bundle, and
+ * listing it would force a full render through an unmapped asset. `exclude` is the upload dir.
+ */
+export function workingTreeChanges(
+  head: string,
+  cwd: string,
+  opts: { exclude?: string; env?: NodeJS.ProcessEnv } = {},
+): string[] | null {
+  const root = gitOrNull(["rev-parse", "--show-toplevel"], cwd) ?? cwd;
+  const start = Date.now();
+  const callTimeout = (): number => Math.min(DELTA_CALL_TIMEOUT_MS, DELTA_STEP_BUDGET_MS - (Date.now() - start));
+  if (gitDeltaOrNull(["cat-file", "-e", `${head}^{commit}`], root, callTimeout()) === null) return null;
+  const untracked = !isCi(opts.env ?? process.env);
+  return uncommittedFiles(root, head, deltaPathspec(root, opts.exclude), callTimeout, untracked);
+}
+
+/**
+ * Compute each base commit's changed-file delta against `head` with local git, for skip-unchanged. The
+ * server names the base commits to diff against in the register response; the CLI diffs them here and
+ * sends the raw file lists with the upload (the render decision stays server-side — this client only
+ * reports what git says changed). Every base's list also carries `uncommitted` (the checkout's
+ * {@link workingTreeChanges}), so an edit that isn't committed yet is compared like a committed one, and
+ * when there are any, an entry keyed by `head` itself lists just those: a story already verified at
+ * `head` can only have moved through them. A null `uncommitted` (git couldn't say) makes every entry
+ * unreadable. Never throws: every failure becomes a per-base `{ truncated: true, reason }` entry, so the
+ * upload can't be failed by the diff step. Diffs local bases first, then fetches up to
+ * {@link DELTA_MAX_FETCHES} absent ones by SHA, under a {@link DELTA_STEP_BUDGET_MS} step budget (each git
+ * call capped to the smaller of 20s and the budget remaining, so the step never overruns; `workingTreeChanges`
+ * runs before it under a budget of its own).
  */
 export function deltaFor(
   bases: string[],
   head: string,
   cwd: string,
-  opts: { exclude?: string; env?: NodeJS.ProcessEnv } = {},
+  uncommitted: string[] | null,
 ): Record<string, ClientDeltaEntry> {
   const out: Record<string, ClientDeltaEntry> = {};
-  if (bases.length === 0) return out;
+  const dirty = uncommitted === null || uncommitted.length > 0;
+  if (bases.length === 0 && !dirty) return out;
   // Run from the repo root so paths are root-relative on every git version (no dependency on --no-relative).
   const root = gitOrNull(["rev-parse", "--show-toplevel"], cwd) ?? cwd;
   const start = Date.now();
@@ -236,12 +265,21 @@ export function deltaFor(
   const headPresent = gitDeltaOrNull(["cat-file", "-e", `${head}^{commit}`], root, callTimeout()) !== null;
   const hasOrigin = gitOrNull(["remote", "get-url", "origin"], root) !== null;
   const shallow = isShallowRepo(root);
-  const uncommitted =
-    headPresent && !isCi(opts.env ?? process.env)
-      ? uncommittedFiles(root, head, deltaPathspec(root, opts.exclude), callTimeout)
-      : [];
   let fetches = 0;
   let totalBytes = 0;
+
+  /** The entry for `files`, or a `cap` truncation once it would push the body past its limits. */
+  const sized = (files: string[], fetched: boolean): ClientDeltaEntry => {
+    const bytes = files.reduce((n, f) => n + f.length + 1, 0);
+    if (files.length > DELTA_MAX_PATHS_PER_BASE || files.some((f) => f.length > DELTA_MAX_PATH_LEN) || totalBytes + bytes > DELTA_MAX_TOTAL_BYTES) {
+      return fetched ? { files: [], truncated: true, reason: "cap", fetched } : { files: [], truncated: true, reason: "cap" };
+    }
+    totalBytes += bytes;
+    return fetched ? { files, truncated: false, fetched: true } : { files, truncated: false };
+  };
+
+  // First, so a server capping the entry count drops a base (which then renders) rather than this one.
+  if (dirty) out[head] = uncommitted === null ? { files: [], truncated: true, reason: "git-error" } : sized(uncommitted, false);
 
   for (const base of bases) {
     const trunc = (reason: DeltaReason, fetched?: boolean): void => {
@@ -298,14 +336,7 @@ export function deltaFor(
       trunc(callTimeout() <= 0 ? "budget" : "git-error", fetched);
       continue;
     }
-    const files = [...new Set([...raw.split("\0").filter(Boolean), ...uncommitted])];
-    const bytes = files.reduce((n, f) => n + f.length + 1, 0);
-    if (files.length > DELTA_MAX_PATHS_PER_BASE || files.some((f) => f.length > DELTA_MAX_PATH_LEN) || totalBytes + bytes > DELTA_MAX_TOTAL_BYTES) {
-      trunc("cap", fetched);
-      continue;
-    }
-    totalBytes += bytes;
-    out[base] = fetched ? { files, truncated: false, fetched: true } : { files, truncated: false };
+    out[base] = sized([...new Set([...raw.split("\0").filter(Boolean), ...uncommitted])], fetched);
   }
   return out;
 }
