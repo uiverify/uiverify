@@ -55,7 +55,6 @@ Each image is keyed by its path under the directory with the extension dropped, 
 - `--auto-accept-changes`: accept this build's changed snapshots as the new baseline (no review). Typically used on merges to your default branch.
 - `--exit-zero-on-changes`: detect but don't block. A `changed` (needs-review) verdict exits 0 and stays pending review; `failed` still exits non-zero.
 - `--render-all`: render every story, even ones the dependency graph shows your change can't reach, and even if this exact commit already passed.
-- `--only-changed`: removed and ignored with a warning, so an old workflow keeps working. Skipping unchanged stories is the default whenever the bundle carries a dependency graph (for a Vitest archive, one from `@uiverify/vitest` 1.6.0 or later); see [Skipping unchanged stories](#skipping-unchanged-stories) below.
 - `--strict` / `--no-strict`: whether an operational failure (missing key, missing bundle, network error) fails the job. Strict by default.
 
 Exit codes: `0` success (or an operational failure under `--no-strict`), `1` the visual verdict or an operational failure under strict, `2` a malformed invocation (unknown option, boolean given a value, or stray token). Exit 2 ignores `--no-strict` - that flag means "don't fail my job if the upload breaks", not "run with arguments I didn't mean".

@@ -94,9 +94,7 @@ registered as having uncommitted changes: it renders and can be accepted like an
 builds don't skip stories based on it. So a local upload is safe on the default.
 
 **Opting out.** `--render-all` renders every story, sends no changed files, and also sends no bundle
-hash, so the "this exact commit already passed" shortcut can't skip the build either. It is the only
-skip flag: `--only-changed`, which turned skipping on before it was the default, is now ignored with a
-warning (like `--shadow`), so an old workflow keeps working. `UIVERIFY_NO_DELTA=1` stops the CLI sending its changed files,
+hash, so the "this exact commit already passed" shortcut can't skip the build either. `UIVERIFY_NO_DELTA=1` stops the CLI sending its changed files,
 which leaves the server nothing to skip against, so it can only turn skipping off.
 
 ## `uiverify check` — the interactive preview check (agent edit loop)
@@ -141,9 +139,6 @@ uiverify check  --story <glob> [--story <glob> …] (--static-dir <dir> | --scre
 - `--api-url` (or `UIVERIFY_API_URL`, default `https://uiverify.ai`; override for self-host/local dev).
 - `--render-all` — render every story, even ones the dependency graph shows a change can't reach, and
   even if this exact commit already passed (see [Skip-unchanged](#skip-unchanged)).
-- `--only-changed` — removed: skipping unchanged stories is the default when the bundle carries a
-  dependency graph (for a Vitest archive, one from `@uiverify/vitest` 1.6.0+). Ignored with a warning, so
-  an old workflow keeps working.
 - `--exit-zero-on-changes` — detect but don't block: a `changed` (needs-review) verdict exits 0 and
   stays pending review in the dashboard, so visual changes don't fail CI. `failed`/`blocked` still
   exit non-zero. The middle ground between the default (`changed` → job fails) and

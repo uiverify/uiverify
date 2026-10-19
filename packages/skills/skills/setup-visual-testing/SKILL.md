@@ -178,7 +178,7 @@ never trade coverage for speed.
 **Render only what the PR could have changed — on by default for Storybook and Vitest.** Whenever the
 upload carries a dependency graph, UI Verify renders just the stories your commit's changed files could
 affect and carries the rest of the baselines forward, so a PR's build time and bill track the size of the
-diff, not the size of the suite. There is no flag to turn on. It is safe from the first run - when it
+diff, not the size of the suite. It is safe from the first run - when it
 can't prove a story is unaffected it renders it, and a first build has nothing to carry, so it renders
 everything anyway. Local uploads are safe on the default too: files you haven't committed count as
 changed, so what they affect renders.
