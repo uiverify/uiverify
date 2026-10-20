@@ -18,6 +18,9 @@ server in your agent — don't hand-roll `curl` against the endpoint.** Over raw
 back as MCP image blocks a shell can't render, so the pixels are useless to a script; a native client shows
 them to the model directly.
 
+**Claude Code with the UI Verify plugin installed**: the plugin already connects this server. Run `/mcp`,
+pick the UI Verify server, and log in; skip the command below.
+
 **Claude Code** — run in the project root:
 ```sh
 claude mcp add --scope project --transport http uiverify https://uiverify.ai/mcp

@@ -106,7 +106,7 @@ Connect the UI Verify MCP server and your coding agent (Claude Code, Cursor, Cod
 claude mcp add --scope project --transport http uiverify https://uiverify.ai/mcp
 ```
 
-Then restart Claude Code, run `/mcp`, pick `uiverify`, and log in to UI Verify in your browser. You log in once and the connection reaches every project in every team you are a member of. `--scope project` writes it to your committed `.mcp.json` so the whole team gets it; the file holds no secret, since each teammate logs in with their own account. In Cursor, add `{ "mcpServers": { "uiverify": { "url": "https://uiverify.ai/mcp" } } }` to `.cursor/mcp.json` and log in from its MCP settings. Full guide: [Triage visual changes from your coding agent](https://uiverify.ai/docs/triage-with-your-agent).
+If you installed the plugin above, it already connects this server, so skip the command and just log in from `/mcp`. Otherwise restart Claude Code after adding it, run `/mcp`, pick `uiverify`, and log in to UI Verify in your browser. You log in once and the connection reaches every project in every team you are a member of. `--scope project` writes it to your committed `.mcp.json` so the whole team gets it; the file holds no secret, since each teammate logs in with their own account. In Cursor, add `{ "mcpServers": { "uiverify": { "url": "https://uiverify.ai/mcp" } } }` to `.cursor/mcp.json` and log in from its MCP settings. Full guide: [Triage visual changes from your coding agent](https://uiverify.ai/docs/triage-with-your-agent).
 
 The server is remote (streamable HTTP) - there is nothing to install or run. It exposes:
 

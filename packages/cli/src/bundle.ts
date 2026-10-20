@@ -160,6 +160,9 @@ const sourceCheckedGraph = z.object({ uiverify: z.object({ sourceChecked: z.lite
  * `snapshots/` asset dir. Any other bundle is an archive. A Vitest graph without the source-check stamp
  * is `unchecked-graph`; a graph from any other producer (e.g. one written by hand for Playwright) is
  * trusted as-is.
+ *
+ * The UI Verify server classifies the uploaded bundle the same way, to show this line's fix on the build
+ * page; a change to these rules needs the same change there.
  */
 export function bundleGraph(staticDir: string, producer: ArchiveProducer | null): BundleGraph {
   const statsPath = path.join(staticDir, "preview-stats.json");

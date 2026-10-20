@@ -117,7 +117,8 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
   // finalized index.json is included). The hash is a pure optimization hint: if hashing somehow fails,
   // omit it and upload normally (the server just won't consider the skip) rather than failing the upload
   // over an optimization. This is why the wire field is optional. `--render-all` sends none, so it renders
-  // even a commit that already passed.
+  // even a commit that already passed. The server also reads a missing hash as `--render-all` (it then
+  // shows no "no dependency graph" hint), so every other upload keeps sending one.
   let bundleContentHash: string | undefined;
   if (opts.skip !== "render-all") {
     try {
