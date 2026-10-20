@@ -1,6 +1,7 @@
 {
   "name": "uiverify-workflow",
-  "version": "1.0.1",
+  "displayName": "UI Verify Workflow",
+  "version": "1.0.2",
   "description": "Agent skills for the agentic-development loop that takes a ticket to a merged PR (implement, design, review, e2e-verify, ship, tune), from the UI Verify team.",
   "author": {
     "name": "UI Verify",
@@ -8,6 +9,9 @@
   },
   "homepage": "https://uiverify.ai",
   "privacyPolicyUrl": "https://uiverify.ai/privacy",
+  "termsOfServiceUrl": "https://uiverify.ai/terms",
+  "documentationUrl": "https://uiverify.ai/skills",
+  "supportUrl": "mailto:support@uiverify.ai",
   "repository": "https://github.com/uiverify/uiverify",
   "keywords": [
     "agentic",
