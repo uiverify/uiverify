@@ -1,7 +1,7 @@
 {
   "name": "uiverify",
-  "version": "1.0.0",
-  "description": "Agent skills for coding agents (uiverify.ai): the agentic-development loop that takes a ticket to a merged PR (implement, review, e2e-verify, ship, tune) plus UI Verify's visual regression testing, run in your own repo.",
+  "version": "2.0.0",
+  "description": "UI Verify visual testing for coding agents: set up visual regression testing, write economical and deterministic Storybook, Playwright and Vitest captures, and triage builds over the UI Verify MCP server (bundled).",
   "author": {
     "name": "UI Verify",
     "url": "https://uiverify.ai"
@@ -9,16 +9,14 @@
   "homepage": "https://uiverify.ai",
   "repository": "https://github.com/uiverify/uiverify",
   "keywords": [
-    "agentic",
-    "claude-code",
-    "code-review",
-    "pull-request",
-    "ci",
     "visual-testing",
     "visual-regression",
     "screenshot-testing",
     "storybook",
     "playwright",
+    "vitest",
+    "mcp",
+    "claude-code",
     "uiverify"
   ]
 }

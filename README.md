@@ -77,7 +77,8 @@ It renders only the stories you name (repeatable `--story`, globs or exact ids),
 | **[`uiverify`](packages/cli)** | `npm i -D uiverify` | The CLI. `uiverify upload` is the CI uploader (Storybook bundle, Playwright/Vitest archive, or a directory of finished screenshots) - streams render progress and reflects the visual verdict in its exit code. `uiverify check` is the agent edit-loop check - renders just the stories you name against the real CI baseline, without posting a check or moving a baseline. |
 | **[`@uiverify/playwright`](packages/playwright)** | `npm i -D @uiverify/playwright` | The Playwright capture SDK. Swap `@playwright/test` for it and each test archives its final UI state (serialized DOM + resource bytes) for UI Verify to replay and diff. |
 | **[`@uiverify/vitest`](packages/vitest)** | `npm i -D @uiverify/vitest` | The Vitest capture SDK. Add `uiverifyPlugin()` to your Vitest config and each browser-mode test archives its final DOM (serialized DOM + resource bytes) for UI Verify to replay and diff; `takeSnapshot()` takes named snapshots instead. |
-| **[`@uiverify/skills`](packages/skills)** | `npx skills add`, see below | Agent skills: `SKILL.md` workflows a coding agent runs in your repo to set up visual testing, author economical + deterministic stories, and triage builds. |
+| **[`@uiverify/skills`](packages/skills)** | `npx skills add`, see below | Agent skills: `SKILL.md` workflows a coding agent runs in your repo to set up visual testing, author economical + deterministic stories, and triage builds. As a Claude Code plugin it also connects the UI Verify MCP server. |
+| **[`@uiverify/workflow-skills`](packages/workflow-skills)** | Claude Code plugin, see below | The agentic-development loop we build UI Verify with: `factory`, `design`, `review-loop`, `e2e-verify`, `babysit-pr`, and the skills that tune it. |
 
 ### Agent skills
 
@@ -97,6 +98,8 @@ Or, on Claude Code, install as a plugin so updates arrive automatically:
 ```
 
 Either way, invoke them by name: `/uiverify:setup-visual-testing`, `/uiverify:triage-visual-changes`, and more. See [`packages/skills`](packages/skills) for the full list and a copy-in-by-hand alternative.
+
+The agentic-development loop we build UI Verify with (`factory`, `design`, `review-loop`, `e2e-verify`, `babysit-pr`) is a second plugin in the same marketplace: `/plugin install uiverify-workflow@uiverify`, then `/uiverify-workflow:factory`. See [`packages/workflow-skills`](packages/workflow-skills).
 
 ## Triage over MCP
 

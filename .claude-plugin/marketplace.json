@@ -5,14 +5,19 @@
     "url": "https://uiverify.ai"
   },
   "metadata": {
-    "description": "Agent skills and tooling for UI Verify: visual testing for agents.",
-    "version": "1.0.0"
+    "description": "UI Verify's agent plugins: visual testing for coding agents, and the agentic-development loop.",
+    "version": "1.1.0"
   },
   "plugins": [
     {
       "name": "uiverify",
       "source": "./packages/skills",
-      "description": "Set up visual testing, author economical + deterministic stories, and triage builds from your coding agent."
+      "description": "Visual testing for coding agents: set up UI Verify, write economical and deterministic stories and captures, and triage builds over the bundled MCP server."
+    },
+    {
+      "name": "uiverify-workflow",
+      "source": "./packages/workflow-skills",
+      "description": "The agentic-development loop that takes a ticket to a merged PR: implement, design, review, e2e-verify, ship, and tune."
     }
   ]
 }

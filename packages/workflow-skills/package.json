@@ -1,0 +1,19 @@
+{
+  "name": "@uiverify/workflow-skills",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Agent skills for the agentic-development loop that takes a ticket to a merged PR: implement, design, review, e2e-verify, ship, and tune the loop. From the UI Verify team (uiverify.ai).",
+  "homepage": "https://uiverify.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/uiverify/uiverify.git",
+    "directory": "packages/workflow-skills"
+  },
+  "license": "MIT",
+  "author": "UI Verify",
+  "type": "module",
+  "files": [
+    "skills",
+    "LICENSE"
+  ]
+}

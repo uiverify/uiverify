@@ -152,5 +152,6 @@ or build with `pnpm -C packages/cli build` and run `node packages/cli/dist/uiver
 
 > **Monorepo:** the CLI lives in `packages/cli`; the Playwright capture SDK (`@uiverify/playwright`) lives
 > in `packages/playwright`; the Vitest capture SDK (`@uiverify/vitest`) lives in `packages/vitest`; and the
-> agent skills (`@uiverify/skills`, a Claude Code plugin, not published to npm) live in `packages/skills`
-> (see each README). Same "dumb client, no server-side logic" rule.
+> agent skills live in `packages/skills` (`@uiverify/skills`, the `uiverify` Claude Code plugin) and
+> `packages/workflow-skills` (`@uiverify/workflow-skills`, the `uiverify-workflow` plugin), neither published
+> to npm (see each README). Same "dumb client, no server-side logic" rule.

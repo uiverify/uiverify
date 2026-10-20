@@ -11,8 +11,13 @@ published as standalone open-source packages that talk to the UI Verify service 
 - **`packages/skills`** (`@uiverify/skills`, `private`) — agent skills: plain `SKILL.md` workflows a coding
   agent runs in the user's repo to set up visual testing, author economical + deterministic stories, and triage
   builds. Markdown only, no runtime code or build step; talks to UI Verify over HTTP / MCP. **Not published to
-  npm** — distributed as a Claude Code plugin (this repo doubles as a plugin marketplace,
-  `.claude-plugin/marketplace.json`; the plugin manifest is `packages/skills/.claude-plugin/plugin.json`).
+  npm** — distributed as the `uiverify` Claude Code plugin (this repo doubles as a plugin marketplace,
+  `.claude-plugin/marketplace.json`; the plugin manifest is `packages/skills/.claude-plugin/plugin.json`, and
+  its `.mcp.json` bundles the UI Verify MCP server).
+- **`packages/workflow-skills`** (`@uiverify/workflow-skills`, `private`) — the agentic-development loop
+  (`factory`, `review-loop`, `babysit-pr`, ...) as the separate `uiverify-workflow` plugin in the same
+  marketplace. Tool-agnostic, no UI Verify coupling beyond handing a visual check to the `uiverify` skills;
+  kept apart so the `uiverify` plugin listed in Anthropic's directory is only about visual testing.
 
 **The invariants below are written for the CLI, but the cross-cutting rule — dumb client, no server-side
 product logic, publishable & safe to open-source — applies to EVERY package here.** The CLI's "never fail the
