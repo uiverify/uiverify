@@ -132,7 +132,7 @@ Concrete — feed fixed, ordered, complete fixtures:
 
 Two ways to inject them, both fine:
 ```ts
-// (a) pass fixtures as props — the simplest, when the component takes its data as props
+// (a) hand the fixtures in as props — the simplest, when the component takes its data as props
 await render(<LibraryTile name="ktor" stars={12873} platforms={['jvm', 'js', 'native']} />);
 
 // (b) mock the data module the component imports — when it fetches internally
