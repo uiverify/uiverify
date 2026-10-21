@@ -58,8 +58,10 @@ archive …` warning naming it. Serve fixtures a local copy or a `data:` URI to 
 of those services.
 
 The capturer then waits for these fonts like any other — but it can only wait for fonts the test actually
-loads; it can't declare one you never imported (`document.fonts.check('16px "bootstrap-icons"')` is `false`
-until the CSS is imported, which is the whole "icons render as boxes" bug).
+loads; it can't declare one you never imported, which is the whole "icons render as boxes" bug. To confirm
+the font is there, `(await document.fonts.load('16px "bootstrap-icons"')).length` must be above `0`: it is `0`
+when no `@font-face` declares the family. Don't use `document.fonts.check()` for this — it returns `true` for
+a family that was never declared, so it passes exactly when the CSS is missing.
 
 **Tailwind v4 in a monorepo.** Tailwind generates only the classes it finds in the files it scans, starting
 from where Vitest runs. When the visual tests run from another package than the app, add `@source` lines for
