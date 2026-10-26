@@ -1,0 +1,17 @@
+{
+  "name": "uiverify",
+  "owner": {
+    "name": "UI Verify",
+    "email": "support@uiverify.ai"
+  },
+  "metadata": {
+    "description": "UI Verify's Cursor plugin: visual testing for coding agents."
+  },
+  "plugins": [
+    {
+      "name": "uiverify",
+      "source": "./packages/skills",
+      "description": "Visual testing for coding agents: set up UI Verify, write economical and deterministic stories and captures, and triage builds over the bundled MCP server."
+    }
+  ]
+}

@@ -1,12 +1,12 @@
-import type { CapturedResource } from "@uiverify/archive-core";
+import type { CapturedResource } from "../archive-types";
 
 /** Per-resource size cap: a single asset larger than this is skipped (a missed asset replays as a blank,
  *  a visible gap, rather than bloating every archive). Mirrors the Playwright SDK. */
 export const MAX_RESOURCE_BYTES = 10 * 1024 * 1024;
 
-/** How long one fetch of a resource may take. The capture runs outside the test's own timeout, so an
- *  unbounded fetch from a stalled server would hang the run; the page's attempt and the three outside it
- *  stay within Vitest's 30 s hook timeout. */
+/** How long one fetch of a resource may take, so a stalled server can't hang a capture. (Vitest's capture
+ *  runs outside the test's own timeout: its page attempt and three outside it stay within the 30 s hook
+ *  timeout.) */
 export const FETCH_TIMEOUT_MS = 5_000;
 
 /** A fetched resource, or why it could not be fetched. */
@@ -21,10 +21,26 @@ export interface MissingResource {
   reason: string;
 }
 
-/** The page's own `fetch`, captured at module load (this module loads with the setup file, before any
- *  test body runs), so a test that stubs `fetch` for its API mocks (`vi.stubGlobal("fetch", ...)`) does not
- *  also answer the archiver's asset requests with its mock payloads. */
+/** The page's own `fetch`, captured at module load (before any test body or app code runs), so a test that
+ *  stubs `fetch` for its API mocks (`vi.stubGlobal("fetch", ...)`) does not also answer the archiver's asset
+ *  requests with its mock payloads. */
 export const nativeFetch: typeof fetch = globalThis.fetch.bind(globalThis);
+
+/** The real timer and clock, captured at module load for the same reason: a test's fake timers must not
+ *  stop a capture's {@link beforeDeadline} from firing. */
+const realSetTimeout: (fn: () => void, ms: number) => unknown = setTimeout.bind(globalThis);
+const realNow: () => number = performance.now.bind(performance);
+
+/** The reason a resource (or `blob:` image) still being read at a capture's deadline is reported missing. */
+export const PAST_DEADLINE = "not read before the capture's time limit";
+
+/** `work`, or a rejection with {@link PAST_DEADLINE} once `deadline` (a `performance.now()` time) passes. */
+export function beforeDeadline<T>(work: Promise<T>, deadline: number): Promise<T> {
+  const expired = new Promise<never>((_, reject) =>
+    realSetTimeout(() => reject(new Error(PAST_DEADLINE)), Math.max(0, deadline - realNow())),
+  );
+  return Promise.race([work, expired]);
+}
 
 /** A binary asset's path by extension. Consulted for a generic content type (a CDN or S3 bucket that serves
  *  a font as `binary/octet-stream` is common, and Chromium loads fonts and raster images by sniffing the
@@ -291,11 +307,16 @@ function importedSheets(css: string, sheetUrl: string): string[] {
  *  `<link>`, and that sheet's own `@import`s). Chromium leaves what a cross-origin `<link>` without
  *  `crossorigin` fetched out of Resource Timing, so for a cross-origin sheet its `@import`s and the font
  *  files of its faces in `loadedFontFaces` (keys of the page's loaded FontFaces) are archived too. `missing` lists what could not
- *  be archived. */
+ *  be archived, including whatever is still being read at `deadline` (a `performance.now()` time). */
 export async function archiveReferencedResources(
   loadedUrls: Iterable<string>,
   serializedDom: string,
-  options: { pageOrigin?: string; loadedFontFaces?: ReadonlySet<string>; fetchOutsidePage?: FetchOutsidePage } = {},
+  options: {
+    pageOrigin?: string;
+    loadedFontFaces?: ReadonlySet<string>;
+    fetchOutsidePage?: FetchOutsidePage;
+    deadline?: number;
+  } = {},
 ): Promise<{ resources: Record<string, CapturedResource>; missing: MissingResource[] }> {
   const loaded = new Set(loadedUrls);
   const resources: Record<string, CapturedResource> = {};
@@ -304,7 +325,7 @@ export async function archiveReferencedResources(
   let batch = referencedUrls(loaded, serializedDom);
   while (batch.size) {
     for (const url of batch) attempted.add(url);
-    const archived = await archiveResources(batch, options.fetchOutsidePage);
+    const archived = await archiveResources(batch, options.fetchOutsidePage, options.deadline);
     Object.assign(resources, archived.resources);
     missing.push(...archived.missing);
     const next = new Set<string>();
@@ -344,12 +365,12 @@ const TOO_LARGE = "larger than the 10 MB per-resource limit";
 /** Fetch and base64 each visual resource. Same-origin assets (the common case for a component test served
  *  by Vite) read cleanly in the page. A cross-origin asset with no CORS headers is opaque to the page's
  *  `fetch`, and a server can refuse or fail a request the page's own load survived, so a resource the page
- *  can't read, or gets an error response for, is handed to `fetchOutsidePage`, which can read it and
- *  retries. What still fails is reported in `missing`; a successful response that isn't a visual asset (a
- *  script, JSON) is left out. */
+ *  can't read, or gets an error response for, is handed to `fetchOutsidePage`, which can read it. What still fails, or is still being read at `deadline`, is reported in `missing`; a successful
+ *  response that isn't a visual asset (a script, JSON) is left out. */
 export async function archiveResources(
   urls: Iterable<string>,
   fetchOutsidePage?: FetchOutsidePage,
+  deadline?: number,
 ): Promise<{ resources: Record<string, CapturedResource>; missing: MissingResource[] }> {
   const resources: Record<string, CapturedResource> = {};
   const missing: MissingResource[] = [];
@@ -371,13 +392,22 @@ export async function archiveResources(
   };
   await Promise.all(
     [...urls].map(async (url) => {
+      const fetchEither = async (): Promise<FetchedResource | "skip"> => {
+        try {
+          return await fetchInPage(url);
+        } catch (err) {
+          return fetchOutsidePage ? fetchOutsidePage(url) : { error: err instanceof Error ? err.message : String(err) };
+        }
+      };
       let fetched: FetchedResource | "skip";
-      try {
-        fetched = await fetchInPage(url);
-      } catch (err) {
-        fetched = fetchOutsidePage
-          ? await fetchOutsidePage(url)
-          : { error: err instanceof Error ? err.message : String(err) };
+      if (deadline === undefined) fetched = await fetchEither();
+      else {
+        try {
+          fetched = await beforeDeadline(fetchEither(), deadline);
+        } catch (err) {
+          if (!(err instanceof Error && err.message === PAST_DEADLINE)) throw err;
+          fetched = { error: PAST_DEADLINE };
+        }
       }
       if (fetched === "skip") return;
       if ("error" in fetched) return void missing.push({ url, reason: fetched.error });

@@ -3,15 +3,16 @@
  *
  * The archive is a static snapshot of what the page was at capture, so a `Math.random()` pick made while a
  * component renders is baked in: an unpinned random pick (a shuffled list, a randomly chosen image) would
- * differ run-to-run. Seed it here - once as the setup module loads, reset before each test - so
- * random-paced content renders identically, without the author reaching for `vi.spyOn(Math, "random")`.
+ * differ run-to-run. Seed it before the app's code runs (as Vitest's setup module loads, or in each document
+ * Bun's page script starts), reset before each test that shares a page, so random-paced content renders
+ * identically, without the author reaching for `vi.spyOn(Math, "random")`.
  *
  * We seed a *sequence*, not a constant: a fixed return value collapses every shuffle and makes two
  * "random" values identical.
  *
- * This reaches every pick, because a Vitest browser test renders in the browser (no SSR) - the pick
- * happens after the seed is installed. A pick a framework makes during its own server render is already in
- * the HTML, and is pinned in the component with `isUIVerify()` instead.
+ * This reaches every pick the browser makes, which all happen after the seed is installed. A pick a framework
+ * makes during its own server render is already in the HTML, and is pinned in the component with
+ * `isUIVerify()` instead.
  */
 const INITIAL_SEED = 0x2545f4914f6cdd1d;
 let seed = INITIAL_SEED;
@@ -24,8 +25,7 @@ function seededRandom(): number {
   return ((seed >>> 0) % 1e9) / 1e9;
 }
 
-/** Replace `Math.random` with the seeded PRNG. Idempotent; called once as the setup module loads, before
- *  any test renders a component. */
+/** Replace `Math.random` with the seeded PRNG. Idempotent; called before the app's code runs. */
 export function installSeededRandom(): void {
   if (installed) return;
   installed = true;

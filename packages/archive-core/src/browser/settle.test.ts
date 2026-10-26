@@ -111,4 +111,53 @@ describe("settle", () => {
     expect(lazy.complete).toBe(true);
     expect(FakeImage.created.map((img) => img.src)).toEqual(["/inner.png"]);
   });
+
+  /** Catches `lazyToEager: false` still rewriting `loading`: where the browser already loads lazy images up
+   *  front, the rewrite only makes the serialized DOM differ between runs. */
+  it("leaves a lazy image's loading attribute alone with lazyToEager off, and still waits for it", async () => {
+    const lazy = new FakeImage();
+    lazy.loading = "lazy";
+    stubPage([lazy]);
+    setTimeout(() => lazy.load(), 5);
+    await settle({ lazyToEager: false });
+    expect(lazy.loading).toBe("lazy");
+    expect(lazy.complete).toBe(true);
+  });
+});
+
+/** A `FontFace` stand-in: `load()` is what preloading calls, `loaded` what waiting for a used face awaits. */
+function fakeFace(status: "unloaded" | "loading" | "loaded") {
+  const face = {
+    status,
+    load: vi.fn(async () => undefined),
+    loaded: new Promise<void>((resolve) => setTimeout(() => ((face.status = "loaded"), resolve()), 5)),
+  };
+  return face;
+}
+
+describe("settle fonts", () => {
+  function stubFonts(faces: ReturnType<typeof fakeFace>[]) {
+    stubPage([]);
+    const fonts = Object.assign(faces, { ready: Promise.resolve() });
+    vi.stubGlobal("document", { ...root([]), fonts });
+  }
+
+  /** Catches `fonts: "used"` loading every declared face: on a real page that requests subsets the page
+   *  never draws, which a recorded-font route can't answer. */
+  it("loads no unused face with fonts: \"used\", and waits out one still loading", async () => {
+    const unused = fakeFace("unloaded");
+    const loading = fakeFace("loading");
+    stubFonts([unused, loading]);
+    await settle({ fonts: "used" });
+    expect(unused.load).not.toHaveBeenCalled();
+    expect(loading.status).toBe("loaded");
+  });
+
+  /** Catches the default changing for Vitest: an isolated component needs every face loaded before capture. */
+  it("loads every declared face by default", async () => {
+    const unused = fakeFace("unloaded");
+    stubFonts([unused]);
+    await settle();
+    expect(unused.load).toHaveBeenCalled();
+  });
 });

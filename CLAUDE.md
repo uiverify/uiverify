@@ -8,12 +8,20 @@ published as standalone open-source packages that talk to the UI Verify service 
   for it; each test archives its final UI state for UI Verify to replay + diff). It writes an archive dir the CLI
   uploads; its archive-format types are a **local mirror** of the UI Verify service's wire contract, kept in
   sync by hand. Build: `tsup` → ESM + d.ts.
+- **`packages/vitest`** (`@uiverify/vitest`) and **`packages/bun`** (`@uiverify/bun`) — the Vitest browser-mode and
+  Bun capture SDKs, writing the same archive. The in-page capture code both run (settling, seeded random, DOM
+  serialization, resource archiving) lives once, in the private **`packages/archive-core`**'s
+  `@uiverify/archive-core/browser` subpath, which may import nothing from Node; each SDK bundles it. The Bun
+  SDK drives Chrome through `Bun.WebView` and is tested on Bun, not Node (see Build / test).
 - **`packages/skills`** (`@uiverify/skills`, `private`) — agent skills: plain `SKILL.md` workflows a coding
   agent runs in the user's repo to set up visual testing, author economical + deterministic stories, and triage
   builds. Markdown only, no runtime code or build step; talks to UI Verify over HTTP / MCP. **Not published to
   npm** — distributed as the `uiverify` Claude Code plugin (this repo doubles as a plugin marketplace,
   `.claude-plugin/marketplace.json`; the plugin manifest is `packages/skills/.claude-plugin/plugin.json`, and
-  its `.mcp.json` bundles the UI Verify MCP server).
+  its `.mcp.json` bundles the UI Verify MCP server). The same folder is also the `uiverify` Cursor plugin
+  (`packages/skills/.cursor-plugin/plugin.json`, listed by the root `.cursor-plugin/marketplace.json`; it points
+  at the same `skills/` and `.mcp.json`). Cursor's validator fails when the two manifests' `version` differ, so
+  bump both together.
 - **`packages/workflow-skills`** (`@uiverify/workflow-skills`, `private`) — the agentic-development loop
   (`factory`, `review-loop`, `babysit-pr`, ...) as the separate `uiverify-workflow` plugin in the same
   marketplace. Tool-agnostic, no UI Verify coupling beyond handing a visual check to the `uiverify` skills;
@@ -114,7 +122,9 @@ service repo — *not* here): a universal determinism change owes those articles
 ## Build / test
 
 - `pnpm build` — esbuild bundle → `dist/uiverify.js` (gitignored). `prepublishOnly` runs it.
-- `pnpm test` — Vitest. `pnpm typecheck` — `tsc --noEmit`.
+- `pnpm test` — Vitest, every package but `@uiverify/bun`. `pnpm typecheck` — `tsc --noEmit`.
+- `pnpm --filter @uiverify/bun test` — the Bun SDK's units and e2e suite (`bun test`; needs Bun ≥ 1.3.12 and
+  Chrome).
 
 ## `examples/` pin published versions — bump them with every release
 

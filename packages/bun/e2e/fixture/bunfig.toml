@@ -1,0 +1,3 @@
+# An app's test preload that replaces fetch, as happy-dom's does: it must not reach the visual test processes.
+[test]
+preload = ["./replace-fetch.ts"]

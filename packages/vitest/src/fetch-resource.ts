@@ -1,4 +1,4 @@
-import { FETCH_TIMEOUT_MS, type FetchedResource, isArchivableResource, MAX_RESOURCE_BYTES } from "./resources";
+import { FETCH_TIMEOUT_MS, type FetchedResource, isArchivableResource, MAX_RESOURCE_BYTES } from "@uiverify/archive-core/browser";
 
 const ATTEMPTS = 3;
 const TOO_LARGE = "larger than the 10 MB per-resource limit";

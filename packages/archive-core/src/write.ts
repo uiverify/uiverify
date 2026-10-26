@@ -44,15 +44,27 @@ function writeOnce(target: string, bytes: Buffer): void {
  * `<outDir>/resources/` store. The manifest (`index.json`) is assembled in a SEPARATE pass
  * (`finalizeArchive`, or the CLI at upload time), never here: a test run writes snapshots from parallel
  * workers, and concurrent writers to one index would race. Returns the snapshot path written.
+ *
+ * `exclusive` fails instead of replacing a snapshot file already there: for a writer that cleared the
+ * archive at the start of the run, an existing file means two tests produced the same id.
  */
-export function writeSnapshot(outDir: string, snapshot: CapturedSnapshot): string {
+export function writeSnapshot(outDir: string, snapshot: CapturedSnapshot, options: { exclusive?: boolean } = {}): string {
   const resources: Record<string, ArchivedResource> = {};
   for (const [url, resource] of Object.entries(snapshot.resources)) resources[url] = storeResource(outDir, resource);
   const archived: ArchivedSnapshot = { ...snapshot, resources };
   const dir = path.join(outDir, "snapshots");
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, snapshotFileName(snapshot.id));
-  fs.writeFileSync(file, JSON.stringify(externalizeBaselineImage(outDir, archived)));
+  try {
+    fs.writeFileSync(file, JSON.stringify(externalizeBaselineImage(outDir, archived)), {
+      flag: options.exclusive ? "wx" : "w",
+    });
+  } catch (error) {
+    if (options.exclusive && error instanceof Error && "code" in error && error.code === "EEXIST") {
+      throw new Error(`Two tests produced the snapshot id "${snapshot.id}"; give one of them another name.`);
+    }
+    throw error;
+  }
   return file;
 }
 

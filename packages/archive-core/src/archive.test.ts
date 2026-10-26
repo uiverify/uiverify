@@ -20,7 +20,7 @@ function seedSnapshot(bundle: string, snap: Pick<ArchivedSnapshot, "id" | "title
   writeSnapshot(bundle, {
     ...snap,
     viewport: { width: 800, height: 600 },
-    dom: { type: 0, childNodes: [], id: 1 } as unknown as ArchivedSnapshot["dom"],
+    dom: { type: 0, childNodes: [], id: 1 },
     resources: {},
   });
 }
@@ -51,12 +51,37 @@ describe("writeSnapshot", () => {
         title: "home page",
         name: "",
         viewport: { width: 800, height: 600 },
-        dom: { type: 0, childNodes: [], id: 1 } as unknown as ArchivedSnapshot["dom"],
+        dom: { type: 0, childNodes: [], id: 1 },
         resources: {},
       });
       expect(written).toBe(path.join(bundle, "snapshots", snapshotFileName("home")));
       expect(fs.existsSync(written)).toBe(true);
       expect(JSON.parse(fs.readFileSync(written, "utf8")).id).toBe("home");
+    } finally {
+      fs.rmSync(bundle, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("writeSnapshot exclusive", () => {
+  /** Catches two tests with one id silently overwriting each other's snapshot (two test files with the same
+   *  basename, say): an exclusive writer fails on the second, a plain one keeps replacing. */
+  it("fails on an id already written, and replaces it without the option", () => {
+    const bundle = fs.mkdtempSync(path.join(os.tmpdir(), "uiverify-exclusive-"));
+    const snap: CapturedSnapshot = {
+      id: "a.visual.ts > home",
+      title: "a.visual.ts",
+      name: "",
+      viewport: { width: 800, height: 600 },
+      dom: { type: 0, childNodes: [], id: 1 },
+      resources: {},
+    };
+    try {
+      writeSnapshot(bundle, snap, { exclusive: true });
+      expect(() => writeSnapshot(bundle, snap, { exclusive: true })).toThrow(
+        'Two tests produced the snapshot id "a.visual.ts > home"',
+      );
+      expect(() => writeSnapshot(bundle, snap)).not.toThrow();
     } finally {
       fs.rmSync(bundle, { recursive: true, force: true });
     }
@@ -83,7 +108,7 @@ describe("writeSnapshot resource store", () => {
               title: id,
               name: "",
               viewport: { width: 800, height: 600 },
-              dom: { type: 0, childNodes: [], id: 1 } as unknown as ArchivedSnapshot["dom"],
+              dom: { type: 0, childNodes: [], id: 1 },
               resources,
             }),
             "utf8",
@@ -116,7 +141,7 @@ describe("writeSnapshot baselineImage", () => {
     title: "home page",
     name: "",
     viewport: { width: 800, height: 600 },
-    dom: { type: 0, childNodes: [], id: 1 } as unknown as ArchivedSnapshot["dom"],
+    dom: { type: 0, childNodes: [], id: 1 },
     resources: {},
     baselineImage: `data:image/png;base64,${PNG.toString("base64")}`,
   });

@@ -1,10 +1,11 @@
 /**
  * @uiverify/archive-core — the runner-agnostic pieces shared by the UI Verify capture SDKs
- * (@uiverify/playwright, @uiverify/vitest): the archive format types, the deterministic snapshot
+ * (@uiverify/playwright, @uiverify/vitest, @uiverify/bun): the archive format types, the deterministic snapshot
  * filename, the per-snapshot writer, the manifest builder, and the output-dir resolution.
  *
  * This package is INTERNAL: it is bundled into each SDK at build time and never published on its own.
- * It carries no runner (Playwright/Vitest) dependency — only the archive format and Node fs helpers.
+ * It carries no runner (Playwright/Vitest/Bun) dependency — only the archive format and Node fs helpers. The
+ * code that runs in the page is the separate, Node-free `./browser` entry.
  */
 export type {
   ArchivedResource,

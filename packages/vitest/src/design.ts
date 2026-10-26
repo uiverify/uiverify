@@ -1,4 +1,4 @@
-import { nativeFetch, toBase64 } from "./resources";
+import { nativeFetch, toBase64 } from "@uiverify/archive-core/browser";
 
 /** A design image as `takeSnapshot` takes it: a URL or PNG data URI, or an image-import object with a
  *  `src` (what Next.js image handling resolves a PNG import to). */

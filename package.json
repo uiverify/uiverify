@@ -2,7 +2,7 @@
   "name": "uiverify-monorepo",
   "version": "0.0.0",
   "private": true,
-  "description": "Public client packages for UI Verify (uiverify.ai): the uiverify CLI uploader, the @uiverify/playwright capture SDK, and the @uiverify/skills agent skills. Each talks to UI Verify over HTTP / MCP only.",
+  "description": "Public client packages for UI Verify (uiverify.ai): the uiverify CLI uploader, the @uiverify/playwright, @uiverify/vitest and @uiverify/bun capture SDKs, and the @uiverify/skills agent skills. Each talks to UI Verify over HTTP / MCP only.",
   "homepage": "https://uiverify.ai",
   "repository": {
     "type": "git",
@@ -14,7 +14,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test"
+    "test": "pnpm -r --filter '!@uiverify/bun' test"
   },
   "packageManager": "pnpm@11.22.0"
 }

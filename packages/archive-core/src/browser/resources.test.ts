@@ -386,3 +386,46 @@ describe("referencedUrls token prefilter", () => {
     expect([...referencedUrls(loaded, dom)].sort()).toEqual(loaded.slice(0, 6).sort());
   });
 });
+
+describe("archiveResources deadline", () => {
+  /** Catches a slow asset holding a capture past its time limit: whatever is still being read when the
+   *  deadline passes is reported missing, and what finished is kept. */
+  it("reports what is still being read at the deadline as missing and keeps the rest", async () => {
+    const fast = "https://cdn.example.com/fast.png";
+    const slow = "https://cdn.example.com/slow.png";
+    const pageFetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === slow) await new Promise((resolve) => setTimeout(resolve, 1_000));
+      return new Response("png", { headers: { "content-type": "image/png" } });
+    });
+    const { archiveResources, PAST_DEADLINE } = await loadWithPageFetch(pageFetch);
+    const started = performance.now();
+    const archived = await archiveResources([fast, slow], undefined, performance.now() + 50);
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(Object.keys(archived.resources)).toEqual([fast]);
+    expect(archived.missing).toEqual([{ url: slow, reason: PAST_DEADLINE }]);
+  });
+});
+
+describe("archiveReferencedResources deadline", () => {
+  /** Catches the deadline reaching only the first batch: a slow font behind an archived stylesheet holds the
+   *  capture past its time limit. */
+  it("reports a stylesheet's dependency still being read at the deadline as missing", async () => {
+    const sheet = "https://app.example.com/style.css";
+    const slowFont = "https://app.example.com/slow.woff2";
+    const pageFetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === sheet) {
+        return new Response(`@font-face { font-family: Slow; src: url(${slowFont}); }`, { headers: { "content-type": "text/css" } });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      return new Response(FONT_BYTES, { headers: { "content-type": "font/woff2" } });
+    });
+    const { archiveReferencedResources, PAST_DEADLINE } = await loadWithPageFetch(pageFetch);
+    const started = performance.now();
+    const archived = await archiveReferencedResources([sheet, slowFont], JSON.stringify({ link: { href: sheet } }), {
+      deadline: performance.now() + 200,
+    });
+    expect(performance.now() - started).toBeLessThan(700);
+    expect(Object.keys(archived.resources)).toEqual([sheet]);
+    expect(archived.missing).toEqual([{ url: slowFont, reason: PAST_DEADLINE }]);
+  });
+});

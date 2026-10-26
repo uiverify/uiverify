@@ -2,8 +2,7 @@ import * as vitest from "vitest";
 import { afterEach, beforeEach, inject } from "vitest";
 import { server } from "vitest/browser";
 import { beginTest, captureEndOfTest, finishTest } from "./runtime";
-import { installSeededRandom, resetSeed } from "./seed";
-import { preloadFonts } from "./settle";
+import { installSeededRandom, preloadFonts, raiseResourceTimingBuffer, resetSeed } from "@uiverify/archive-core/browser";
 
 // Flag the page as a UI Verify capture at RECORD time, as this setup module loads - before any test
 // renders a component - so `isUIVerify()` is true while the app renders in the test browser (the
@@ -11,17 +10,14 @@ import { preloadFonts } from "./settle";
 // `isAnimationActive={!isUIVerify()}` actually disable the animation under capture.
 //
 // The global name is inlined rather than imported from `@uiverify/archive-core` on purpose: this file
-// runs in the BROWSER, and a value import from archive-core's index pulls its Node `crypto` usage into
-// the browser bundle ("crypto.createHash externalized"). Keep the literal equal to archive-core's
-// `UI_VERIFY_GLOBAL`, which its test pins.
+// runs in the BROWSER, and a value import from archive-core's index (unlike its `/browser` subpath) pulls
+// its Node `crypto` usage into the browser bundle ("crypto.createHash externalized"). Keep the literal equal
+// to archive-core's `UI_VERIFY_GLOBAL`, which its test pins.
 Reflect.set(globalThis, "__UI_VERIFY__", true);
 
-// Lift the Resource Timing buffer's default 250-entry cap before the app loads any modules. `capture()`
-// rediscovers every asset to archive by reading `performance.getEntriesByType("resource")`; once the
-// buffer is full the browser silently drops later entries, so an <img> requested after its component's
-// JS graph (the common case) can be evicted - it renders on screen but its URL never reaches the archive,
-// replaying as a blank. Set here (this module runs before any test renders) the buffer never overflows.
-performance.setResourceTimingBufferSize?.(1_000_000);
+// Lift the Resource Timing buffer's 250-entry cap before the app loads any modules (this module runs before
+// any test renders), so no asset a capture rediscovers from Resource Timing is ever evicted.
+raiseResourceTimingBuffer();
 
 // Seed Math.random at record time, before any component renders, so a random-paced pick (a shuffled list,
 // a randomly chosen image) is deterministic in the archive: the archive is a static snapshot, so whatever

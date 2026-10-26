@@ -1,7 +1,7 @@
 {
   "name": "@uiverify/archive-core",
   "version": "0.0.0",
-  "description": "Internal shared archive format, snapshot writer, and manifest builder for the UI Verify capture SDKs. Bundled into @uiverify/playwright and @uiverify/vitest at build time; not published on its own.",
+  "description": "Internal shared archive format, snapshot writer, manifest builder and in-page capture code (`./browser`) for the UI Verify capture SDKs. Bundled into @uiverify/playwright, @uiverify/vitest and @uiverify/bun at build time; not published on its own.",
   "private": true,
   "license": "MIT",
   "author": "UI Verify",
@@ -15,6 +15,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./browser": {
+      "types": "./dist/browser/index.d.ts",
+      "default": "./dist/browser/index.js"
     }
   },
   "files": [
@@ -29,6 +33,7 @@
   "devDependencies": {
     "@rrweb/types": "^2.0.0",
     "@types/node": "^24.0.0",
+    "rrweb-snapshot": "^2.1.0",
     "tsup": "^8.5.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.8"

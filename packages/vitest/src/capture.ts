@@ -1,18 +1,8 @@
 import { commands } from "vitest/browser";
-import { snapshot } from "rrweb-snapshot";
 import type { CapturedSnapshot } from "@uiverify/archive-core";
+import { collectResources, type FetchedResource, inlineBlobs, serializeDocument, settle } from "@uiverify/archive-core/browser";
 import type { TaskLike } from "./snapshot-id";
-import { inlineBlobImages } from "./blob-urls";
 import { type DesignImage, designDataUri } from "./design";
-import {
-  archiveReferencedResources,
-  type FetchedResource,
-  fontFaceKey,
-  isModuleOrData,
-  MAX_RESOURCE_BYTES,
-  nativeFetch,
-} from "./resources";
-import { settle } from "./settle";
 import pkg from "../package.json";
 
 /** Stamped into every snapshot so the CLI can report the capture SDK's version at upload. Inlined at
@@ -36,48 +26,6 @@ declare module "vitest/internal/browser" {
   }
 }
 
-/** Resource Timing, read through the real `performance` captured at module load: the automatic snapshot
- *  runs before the test's `afterEach` hooks, so while `vi.useFakeTimers()` is still installed, and its fake
- *  `performance` lists no resources. */
-const resourceEntries = performance.getEntriesByType.bind(performance, "resource");
-
-/** Archive the visual resources the page loaded (rediscovered via the Resource Timing API) that this
- *  snapshot uses, warning about each one that could not be archived: the replay is hermetic, so it renders
- *  without it (a fallback font, a broken image) and the capture comes back "changed" for no visible reason. */
-async function collectResources(id: string, dom: CapturedSnapshot["dom"]): Promise<CapturedSnapshot["resources"]> {
-  const loaded = new Set<string>();
-  for (const entry of resourceEntries()) {
-    if (/^https?:/.test(entry.name) && !isModuleOrData(entry.name)) loaded.add(entry.name);
-  }
-  const loadedFontFaces = new Set(
-    Array.from(document.fonts)
-      .filter((face) => face.status === "loaded")
-      .map(fontFaceKey),
-  );
-  const { resources, missing } = await archiveReferencedResources(loaded, JSON.stringify(dom), {
-    pageOrigin: location.origin,
-    loadedFontFaces,
-    fetchOutsidePage: (url) => commands.__uiverifyFetchResource(url),
-  });
-  for (const { url, reason } of missing) warnNotArchived(id, url, reason);
-  return resources;
-}
-
-function warnNotArchived(id: string, url: string, reason: string): void {
-  console.warn(`[uiverify] "${id}": could not archive ${url} (${reason}). UI Verify will replay this snapshot without it.`);
-}
-
-async function blobToDataUri(blobUrl: string): Promise<string> {
-  const blob = await (await nativeFetch(blobUrl)).blob();
-  if (blob.size > MAX_RESOURCE_BYTES) throw new Error("larger than the per-resource limit");
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => (typeof reader.result === "string" ? resolve(reader.result) : reject(reader.error));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
-}
-
 /** Serialize the page's current DOM into a {@link CapturedSnapshot}, ready for {@link writeCaptured}.
  *  `name` distinguishes multiple captures within one test; it is empty for a test's single auto-snapshot. */
 export async function capture(
@@ -96,22 +44,13 @@ export async function capture(
   // (a fallback glyph / a broken image). Time-boxed inside settle().
   await settle();
 
-  // `slimDOM.script` drops <script> nodes: the archive replays as static, settled pixels, so the app's
-  // JS must not re-run on replay. `inlineStylesheet` folds same-origin CSS into the DOM (no CSS fetch on
-  // replay); images stay URLs, served from the resource archive. `recordCanvas` captures canvas pixels,
-  // but a tainted/cross-origin canvas makes it throw - fall back to skipping canvas rather than failing.
-  const serialize = (recordCanvas: boolean) =>
-    snapshot(document, { inlineStylesheet: true, recordCanvas, slimDOM: { script: true } });
-  let dom: ReturnType<typeof serialize>;
-  try {
-    dom = serialize(true);
-  } catch {
-    dom = serialize(false);
-  }
+  const dom = serializeDocument();
   if (!dom) throw new Error(`@uiverify/vitest: rrweb failed to serialize the DOM for "${id}"`);
 
-  for (const url of await inlineBlobImages(dom, blobToDataUri)) warnNotArchived(id, url, "the blob: URL can't be read");
-  const resources = await collectResources(id, dom);
+  await inlineBlobs(id, dom);
+  const resources = await collectResources(id, dom, {
+    fetchOutsidePage: (url) => commands.__uiverifyFetchResource(url),
+  });
   const deviceScaleFactor = window.devicePixelRatio || undefined;
   const colorScheme = matchMedia("(prefers-color-scheme: dark)").matches ? ("dark" as const) : ("light" as const);
   return {
