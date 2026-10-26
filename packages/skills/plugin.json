@@ -1,0 +1,25 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "uiverify",
+  "version": "2.0.3",
+  "description": "Visual testing for coding agents: your agent sees every UI change it makes. Set up visual regression tests for Storybook, Playwright and Vitest, keep captures deterministic and economical, and review builds over the bundled UI Verify MCP server.",
+  "author": {
+    "name": "UI Verify",
+    "email": "support@uiverify.ai",
+    "url": "https://uiverify.ai"
+  },
+  "homepage": "https://uiverify.ai",
+  "repository": "https://github.com/uiverify/uiverify",
+  "license": "MIT",
+  "keywords": [
+    "visual-testing",
+    "visual-regression",
+    "screenshot-testing",
+    "storybook",
+    "playwright",
+    "vitest",
+    "code-review",
+    "ci",
+    "mcp"
+  ]
+}

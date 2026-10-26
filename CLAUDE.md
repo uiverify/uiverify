@@ -20,8 +20,13 @@ published as standalone open-source packages that talk to the UI Verify service 
   `.claude-plugin/marketplace.json`; the plugin manifest is `packages/skills/.claude-plugin/plugin.json`, and
   its `.mcp.json` bundles the UI Verify MCP server). The same folder is also the `uiverify` Cursor plugin
   (`packages/skills/.cursor-plugin/plugin.json`, listed by the root `.cursor-plugin/marketplace.json`; it points
-  at the same `skills/` and `.mcp.json`). Cursor's validator fails when the two manifests' `version` differ, so
-  bump both together.
+  at the same `skills/` and `.mcp.json`). It is also an [Agent Plugins](https://agent-plugins.org) v1.0.0 plugin for
+  GitHub Copilot CLI and the awesome-copilot marketplace: `packages/skills/plugin.json` (only the spec's fields, no
+  `skills`/`mcpServers` keys; `skills/` and `mcp.json` are found by convention) and `packages/skills/mcp.json`
+  (`streamable-http`, kept pointing at the same server as `.mcp.json`). Cursor's validator fails when manifest
+  versions differ, and awesome-copilot's checks compare the listed version with `plugin.json`, so bump all three
+  manifests' `version` together. awesome-copilot also lints every skill (`vally lint`), which fails a `SKILL.md`
+  over 500 lines; move detail into the skill's `references/` instead.
 - **`packages/workflow-skills`** (`@uiverify/workflow-skills`, `private`) — the agentic-development loop
   (`factory`, `review-loop`, `babysit-pr`, ...) as the separate `uiverify-workflow` plugin in the same
   marketplace. Tool-agnostic, no UI Verify coupling beyond handing a visual check to the `uiverify` skills;

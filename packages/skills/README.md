@@ -80,6 +80,13 @@ rm -rf uiverify
 
 Then log in to UI Verify from the `uiverify` entry in Cursor's MCP settings.
 
+**As a GitHub Copilot CLI plugin**, from this repo's marketplace. It installs the skills and registers the UI Verify MCP server (the folder is also an [Agent Plugins](https://agent-plugins.org) package, `plugin.json` + `mcp.json`):
+
+```sh
+copilot plugin marketplace add uiverify/uiverify
+copilot plugin install uiverify@uiverify
+```
+
 **Or copy the folders** into your agent's skills directory (e.g. `.claude/skills/`) with plain git - nothing extra to install. Copied this way the skills are invoked bare (`/setup-visual-testing`, not `/uiverify:setup-visual-testing`):
 
 ```sh
