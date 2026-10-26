@@ -27,7 +27,7 @@ Catch unintended UI changes on every pull request. UI Verify renders your compon
 
 Agent skills for coding agents (Claude Code, Codex, and others) that set up and run UI Verify visual testing in **your** repo. Each is a plain `SKILL.md` with no runtime code. They talk to UI Verify over HTTP (the `uiverify` CLI / `@uiverify/playwright` / `@uiverify/vitest`) and MCP only; two of them (`economical-visual-tests` and the determinism pair) help **any** per-snapshot visual tool, so they travel.
 
-Installed as a Claude Code or Cursor plugin, or a Gemini CLI extension, this also connects the UI Verify MCP server (`https://uiverify.ai/mcp`), so your agent can read builds and diffs after one browser login.
+Installed as a Claude Code, Cursor or Codex plugin, or a Gemini CLI extension, this also connects the UI Verify MCP server (`https://uiverify.ai/mcp`), so your agent can read builds and diffs after one browser login.
 
 Looking for the agentic-development loop (`factory`, `review-loop`, `babysit-pr`, ...)? It moved to its own plugin, [`uiverify-workflow`](../workflow-skills).
 
@@ -91,6 +91,14 @@ Then log in to UI Verify from the `uiverify` entry in Cursor's MCP settings.
 ```sh
 copilot plugin marketplace add uiverify/uiverify
 copilot plugin install uiverify@uiverify
+```
+
+**As a Codex plugin**: this folder is also a Codex plugin (`.codex-plugin/plugin.json`, same skills, same bundled MCP server):
+
+```sh
+codex plugin marketplace add uiverify/uiverify
+codex plugin add uiverify@uiverify
+codex mcp login uiverify
 ```
 
 **Or copy the folders** into your agent's skills directory (e.g. `.claude/skills/`) with plain git - nothing extra to install. Copied this way the skills are invoked bare (`/setup-visual-testing`, not `/uiverify:setup-visual-testing`):

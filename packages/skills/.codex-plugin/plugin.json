@@ -1,0 +1,106 @@
+{
+  "name": "uiverify",
+  "version": "2.0.3",
+  "description": "Visual testing for coding agents: your agent sees every UI change it makes. Set up visual regression tests for Storybook, Playwright and Vitest, keep captures deterministic, and review builds over the bundled UI Verify MCP server.",
+  "author": {
+    "name": "UI Verify",
+    "email": "support@uiverify.ai",
+    "url": "https://uiverify.ai"
+  },
+  "homepage": "https://uiverify.ai",
+  "repository": "https://github.com/uiverify/uiverify",
+  "license": "MIT",
+  "keywords": [
+    "visual-testing",
+    "visual-regression",
+    "screenshot-testing",
+    "storybook",
+    "playwright",
+    "vitest",
+    "mcp",
+    "uiverify"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "UI Verify",
+    "shortDescription": "Visual tests for coding agents",
+    "longDescription": "UI Verify is visual testing for coding agents: your agent sees every UI change it makes, so visual bugs never reach production.\n\nConnect your UI Verify account and ask about your builds. The agent can list your projects and recent builds, show what a build or pull request changed visually, open the before, after and diff images for any story, read and reply to review comments, and accept the changes you approve so they become the new baseline. Each change comes sorted into likely regressions and intended changes, so the risky ones get looked at first.\n\nIn Codex, the bundled skills set up visual testing in your repository: they find or add the capture path (Storybook stories, Playwright tests or Vitest browser-mode tests), wire the uiverify CLI into CI, make captures deterministic so a diff only shows a real change, and preview the visual impact of an edit before you push.\n\nFor developers and teams who build web UI with Storybook, Playwright or Vitest. Requires a UI Verify account, and builds appear once a project's CI uploads them with the uiverify CLI. The plugin only reaches projects in the teams you belong to.",
+    "developerName": "UI Verify",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "websiteURL": "https://uiverify.ai",
+    "supportURL": "https://uiverify.ai/support",
+    "privacyPolicyURL": "https://uiverify.ai/privacy",
+    "termsOfServiceURL": "https://uiverify.ai/terms",
+    "defaultPrompt": [
+      "What changed visually in my latest pull request?",
+      "Show me the before and after for the likely regressions in my last build",
+      "Set up visual testing for this repo"
+    ],
+    "brandColor": "#1DA366",
+    "brandColorDark": "#2BD98A",
+    "composerIcon": "./.claude-plugin/icon.png",
+    "logo": "./.claude-plugin/icon.png",
+    "screenshots": []
+  },
+  "extensions": {
+    "com.openai": {
+      "review": {
+        "test_cases": {
+          "positive": [
+            {
+              "description": "List the projects the signed-in account can reach",
+              "prompt": "Which UI Verify projects can I access?",
+              "tools_triggered": "list_projects",
+              "expected_behavior": "Lists Shoppy Web, a Storybook project for the igrlk/shoppy repo. A new account that is in no project yet sees it as UI Verify's read-only demo project, and the reply says so."
+            },
+            {
+              "description": "Triage a pull request's visual changes into likely regressions and intended changes",
+              "prompt": "What changed visually in pull request 5 of Shoppy Web?",
+              "tools_triggered": "list_projects, get_build",
+              "expected_behavior": "Reports 9 changed stories out of 29. Three look like regressions: the Order summary disappears from the mobile Cart page, and the Add to cart button on the Product page turns from a filled button into an outlined one on desktop and mobile. The other six are the intended rating badge restyle."
+            },
+            {
+              "description": "Show the before and after images for one changed story",
+              "prompt": "Show me the before and after for the mobile Cart page in Shoppy Web pull request 5.",
+              "tools_triggered": "get_build, render_diff_image",
+              "expected_behavior": "Shows the baseline and the new screenshot of Pages/Cart Filled on mobile and points out that the Order summary and checkout section are missing in the new one."
+            },
+            {
+              "description": "Explain why a change was flagged as a likely regression",
+              "prompt": "Why was the Add to cart button change in Shoppy Web pull request 5 flagged?",
+              "tools_triggered": "get_build, get_diff",
+              "expected_behavior": "Explains that the button changed from a filled button to an outlined one, which is unrelated to the pull request's goal of polishing the rating badge, so it was flagged as a likely unintended change on both desktop and mobile."
+            },
+            {
+              "description": "Compare a whole pull request with the branch it merges into",
+              "prompt": "Compared with main, which screens does Shoppy Web pull request 3 change?",
+              "tools_triggered": "get_pr_changeset",
+              "expected_behavior": "Reports that the pull request changes 2 stories against main, Pages/Cart Filled and Pages/Product Default, adds none and removes none, with 21 stories unchanged."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Deleting a project is not something the plugin can do, so it should say so and not call a write tool",
+              "prompt": "Delete the Shoppy Web project and all of its builds."
+            },
+            {
+              "description": "The plugin has no purchasing or billing tools, so it should say it cannot change a plan and not start a purchase",
+              "prompt": "Upgrade my UI Verify plan so I get more snapshots this month."
+            },
+            {
+              "description": "Builds of a project the account cannot access are not reachable, so it should say it cannot find that project rather than invent results",
+              "prompt": "Show me the visual changes in the latest build of the Acme Store project on UI Verify."
+            }
+          ]
+        },
+        "commerce": false,
+        "commerce_description": "This plugin does not sell products or process payments."
+      },
+      "publication": {
+        "release_notes": "First release in the ChatGPT and Codex plugin directory: the UI Verify MCP server for reviewing visual changes, plus nine skills that set up and tune visual testing for Storybook, Playwright and Vitest."
+      }
+    }
+  }
+}
