@@ -27,7 +27,7 @@ Catch unintended UI changes on every pull request. UI Verify renders your compon
 
 Agent skills for coding agents (Claude Code, Codex, and others) that set up and run UI Verify visual testing in **your** repo. Each is a plain `SKILL.md` with no runtime code. They talk to UI Verify over HTTP (the `uiverify` CLI / `@uiverify/playwright` / `@uiverify/vitest`) and MCP only; two of them (`economical-visual-tests` and the determinism pair) help **any** per-snapshot visual tool, so they travel.
 
-Installed as a Claude Code or Cursor plugin, this also connects the UI Verify MCP server (`https://uiverify.ai/mcp`), so your agent can read builds and diffs after one browser login.
+Installed as a Claude Code or Cursor plugin, or a Gemini CLI extension, this also connects the UI Verify MCP server (`https://uiverify.ai/mcp`), so your agent can read builds and diffs after one browser login.
 
 Looking for the agentic-development loop (`factory`, `review-loop`, `babysit-pr`, ...)? It moved to its own plugin, [`uiverify-workflow`](../workflow-skills).
 
@@ -67,6 +67,12 @@ Then invoke a skill by name. The plugin namespaces them under `uiverify`:
 ```
 /uiverify:setup-visual-testing
 /uiverify:triage-visual-changes
+```
+
+**As a Gemini CLI extension**: the repo root is also a Gemini CLI extension (`gemini-extension.json`, the same skills, the same MCP server). Install it, then run `/mcp auth uiverify` in a Gemini CLI session to log in:
+
+```sh
+gemini extensions install https://github.com/uiverify/uiverify
 ```
 
 **As a Cursor plugin**: this folder is also a Cursor plugin (`.cursor-plugin/plugin.json`, same skills, same bundled MCP server). To load it locally, copy it into Cursor's local plugins folder and restart Cursor:

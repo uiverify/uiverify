@@ -77,7 +77,7 @@ It renders only the stories you name (repeatable `--story`, globs or exact ids),
 | **[`uiverify`](packages/cli)** | `npm i -D uiverify` | The CLI. `uiverify upload` is the CI uploader (Storybook bundle, Playwright/Vitest archive, or a directory of finished screenshots) - streams render progress and reflects the visual verdict in its exit code. `uiverify check` is the agent edit-loop check - renders just the stories you name against the real CI baseline, without posting a check or moving a baseline. |
 | **[`@uiverify/playwright`](packages/playwright)** | `npm i -D @uiverify/playwright` | The Playwright capture SDK. Swap `@playwright/test` for it and each test archives its final UI state (serialized DOM + resource bytes) for UI Verify to replay and diff. |
 | **[`@uiverify/vitest`](packages/vitest)** | `npm i -D @uiverify/vitest` | The Vitest capture SDK. Add `uiverifyPlugin()` to your Vitest config and each browser-mode test archives its final DOM (serialized DOM + resource bytes) for UI Verify to replay and diff; `takeSnapshot()` takes named snapshots instead. |
-| **[`@uiverify/skills`](packages/skills)** | `npx skills add`, see below | Agent skills: `SKILL.md` workflows a coding agent runs in your repo to set up visual testing, author economical + deterministic stories, and triage builds. As a Claude Code or Cursor plugin it also connects the UI Verify MCP server. |
+| **[`@uiverify/skills`](packages/skills)** | `npx skills add`, see below | Agent skills: `SKILL.md` workflows a coding agent runs in your repo to set up visual testing, author economical + deterministic stories, and triage builds. As a Claude Code or Cursor plugin, or a Gemini CLI extension, it also connects the UI Verify MCP server. |
 | **[`@uiverify/workflow-skills`](packages/workflow-skills)** | Claude Code plugin, see below | The agentic-development loop we build UI Verify with: `factory`, `design`, `review-loop`, `e2e-verify`, `babysit-pr`, and the skills that tune it. |
 
 ### Agent skills
@@ -99,6 +99,14 @@ Or, on Claude Code, install as a plugin so updates arrive automatically:
 
 Either way, invoke them by name: `/uiverify:setup-visual-testing`, `/uiverify:triage-visual-changes`, and more. See [`packages/skills`](packages/skills) for the full list and a copy-in-by-hand alternative.
 
+On Gemini CLI, install the same skills plus the MCP server as an extension, then log in once:
+
+```sh
+gemini extensions install https://github.com/uiverify/uiverify
+```
+
+In a Gemini CLI session, run `/mcp auth uiverify` and log in to UI Verify in your browser.
+
 The agentic-development loop we build UI Verify with (`factory`, `design`, `review-loop`, `e2e-verify`, `babysit-pr`) is a second plugin in the same marketplace: `/plugin install uiverify-workflow@uiverify`, then `/uiverify-workflow:factory`. See [`packages/workflow-skills`](packages/workflow-skills).
 
 ## Triage over MCP
@@ -109,7 +117,7 @@ Connect the UI Verify MCP server and your coding agent (Claude Code, Cursor, Cod
 claude mcp add --scope project --transport http uiverify https://uiverify.ai/mcp
 ```
 
-If you installed the plugin above, it already connects this server, so skip the command and just log in from `/mcp`. Otherwise restart Claude Code after adding it, run `/mcp`, pick `uiverify`, and log in to UI Verify in your browser. You log in once and the connection reaches every project in every team you are a member of. `--scope project` writes it to your committed `.mcp.json` so the whole team gets it; the file holds no secret, since each teammate logs in with their own account. In Cursor, add `{ "mcpServers": { "uiverify": { "url": "https://uiverify.ai/mcp" } } }` to `.cursor/mcp.json` and log in from its MCP settings. Full guide: [Triage visual changes from your coding agent](https://uiverify.ai/docs/triage-with-your-agent).
+If you installed the plugin above, it already connects this server, so skip the command and just log in from `/mcp`. Otherwise restart Claude Code after adding it, run `/mcp`, pick `uiverify`, and log in to UI Verify in your browser. You log in once and the connection reaches every project in every team you are a member of. `--scope project` writes it to your committed `.mcp.json` so the whole team gets it; the file holds no secret, since each teammate logs in with their own account. In Cursor, add `{ "mcpServers": { "uiverify": { "url": "https://uiverify.ai/mcp" } } }` to `.cursor/mcp.json` and log in from its MCP settings. In Gemini CLI, the extension above connects it, and `/mcp auth uiverify` logs you in. Full guide: [Triage visual changes from your coding agent](https://uiverify.ai/docs/triage-with-your-agent).
 
 The server is remote (streamable HTTP) - there is nothing to install or run. It exposes:
 
