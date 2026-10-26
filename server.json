@@ -1,14 +1,23 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.igrlk/uiverify",
-  "description": "MCP server for visual regression testing: triage a PR's UI diffs from your coding agent.",
+  "description": "Visual testing for coding agents: your agent sees every UI change it makes and triages each diff.",
   "title": "UI Verify",
   "repository": {
     "url": "https://github.com/uiverify/uiverify",
     "source": "github"
   },
-  "version": "1.1.0",
+  "version": "1.2.0",
   "websiteUrl": "https://uiverify.ai",
+  "icons": [
+    {
+      "src": "https://uiverify.ai/brand/avatar.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "512x512"
+      ]
+    }
+  ],
   "remotes": [
     {
       "type": "streamable-http",
