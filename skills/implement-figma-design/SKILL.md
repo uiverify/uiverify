@@ -200,7 +200,7 @@ Then:
   ```sh
   git add -A && git commit -qm "attempt N: <block>: <change>"
   npx storybook build -o storybook-static   # or your repo's build script
-  UIVERIFY_API_KEY=uv_proj_... npx -y uiverify@latest check --static-dir ./storybook-static --target 'pages-profile--default'
+  UIVERIFY_API_KEY=uv_proj_... npx uiverify check --static-dir ./storybook-static --target 'pages-profile--default'   # the repo's own uiverify (npm i -D uiverify)
   ```
 
   The story id is in `storybook-static/index.json` (a target that matches nothing fails the check and

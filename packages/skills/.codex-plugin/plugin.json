@@ -1,6 +1,6 @@
 {
   "name": "uiverify",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "Visual testing for coding agents: your agent sees every UI change it makes. Set up visual regression tests for Storybook, Playwright and Vitest, keep captures deterministic, and review builds over the bundled UI Verify MCP server.",
   "author": {
     "name": "UI Verify",
@@ -25,7 +25,7 @@
   "interface": {
     "displayName": "UI Verify",
     "shortDescription": "Visual tests for coding agents",
-    "longDescription": "UI Verify is visual testing for coding agents: your agent sees every UI change it makes, so visual bugs never reach production.\n\nConnect your UI Verify account and ask about your builds. The agent can list your projects and recent builds, show what a build or pull request changed visually, open the before, after and diff images for any story, read and reply to review comments, and accept the changes you approve so they become the new baseline. Each change comes sorted into likely regressions and intended changes, so the risky ones get looked at first.\n\nIn Codex, the bundled skills set up visual testing in your repository: they find or add the capture path (Storybook stories, Playwright tests or Vitest browser-mode tests), wire the uiverify CLI into CI, make captures deterministic so a diff only shows a real change, and preview the visual impact of an edit before you push.\n\nFor developers and teams who build web UI with Storybook, Playwright or Vitest. Requires a UI Verify account, and builds appear once a project's CI uploads them with the uiverify CLI. The plugin only reaches projects in the teams you belong to.",
+    "longDescription": "UI Verify is visual testing for coding agents: your agent sees the UI changes it makes before they reach production.\n\nConnect your UI Verify account and ask about your builds. The agent can list your projects and recent builds, show what a build or pull request changed visually, open the before, after and diff images for any story, read and reply to review comments, and accept the changes you approve so they become the new baseline. It can also explain why a change was flagged as a likely regression.\n\nIn Codex, the bundled skills set up visual testing in your repository: they find or add the capture path (Storybook stories, Playwright tests or Vitest browser-mode tests), wire the uiverify CLI into CI, make captures deterministic to cut flaky diffs, and preview the visual impact of an edit before you push.\n\nFor developers and teams who build web UI with Storybook, Playwright or Vitest. Requires a UI Verify account, and builds appear once a project's CI uploads them with the uiverify CLI. The plugin only reaches projects in the teams you belong to.",
     "developerName": "UI Verify",
     "category": "Developer Tools",
     "capabilities": ["Interactive", "Read", "Write"],
