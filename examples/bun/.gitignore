@@ -1,0 +1,7 @@
+node_modules/
+dist/
+uiverify-archive/
+*.log
+.DS_Store
+bun.lock
+package-lock.json

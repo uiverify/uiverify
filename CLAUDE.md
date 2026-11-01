@@ -103,28 +103,31 @@ When adding a new **operational** failure path, route it through `softFail()` �
 `main()`'s catch or call `process.exit(1)` directly. When adding a new **argv-validation** path, add it to
 `parseArgs`' `invalid` so it joins the exit-2 funnel. The API key is redacted from every message.
 
-## The capture-determinism skills share a core — a universal learning lands in all three
+## The capture-determinism skills share a core — a universal learning lands in all four
 
-`storybook-visual-testing`, `vitest-visual-testing`, and `playwright-visual-testing` teach the same job —
-stop flaky visual diffs — to three capture surfaces, so most of what they say is **universal** and must
-stay identical across them: the `isUIVerify()` escape hatch (charts, `<canvas>` / `requestAnimationFrame`
+`storybook-visual-testing`, `vitest-visual-testing`, `playwright-visual-testing`, and `bun-visual-testing`
+teach the same job — stop flaky visual diffs — to four capture surfaces, so most of what they say is
+**universal** and must stay identical across them: the `isUIVerify()` escape hatch (charts, `<canvas>` / `requestAnimationFrame`
 loops), freezing the clock, non-`Math.random` randomness (`crypto`/`uuid`/faker), honoring
 `prefers-reduced-motion`, and above all **freezing live data with fixtures** — the single highest-value,
-*headline* determinism step wherever a component renders in isolation (Vitest and Storybook; the same
-lever is recipe 2/6 on a real page).
+*headline* determinism step wherever a component renders in isolation (Vitest, Storybook, and a Bun
+`serveBundle()` component page; the same lever is recipe 2/6 on a real page, and `page.route` fixtures on a
+Bun real page).
 
-So when you add or change a **universal** lever in one skill, **port it to the other two in the same
+So when you add or change a **universal** lever in one skill, **port it to the other three in the same
 change**, and mark which parts are universal vs **surface-specific**. What is deliberately NOT shared:
 SSR-time `Math.random()` + `UI_VERIFY=1` on the app server, and the global-RNG-consumed-by-render-order
-→ local-seed fix, are **real-app / Playwright only** (Vitest and Storybook have no SSR, and the capturer
-seeds `Math.random` before app code); scroll-settling, flag/third-party stubbing, and loading-skeleton
+→ local-seed fix, are **real-app only**: Playwright, and a Bun real page, whose `run()` already sets
+`UI_VERIFY=1` on the web server (Vitest and Storybook have no SSR, and the capturer seeds `Math.random`
+before app code); scroll-settling, flag/third-party stubbing, and loading-skeleton
 waits are **real-page only**. The failure this prevents is silent and already happened once: a real-app
 determinism port improved the Playwright skill's coverage of a shared concept (the `<canvas>` fix, the
 data-mocking headline) and left the siblings behind, so an agent reading the Storybook skill would never
 learn it. No lint can diff prose against prose — the guard is porting the learning while it is in your
 hands. (Also note the parity of the record-time markers: the Playwright SDK sets **both** the UA marker
 and the `window` global, but the Vitest SDK's browser provider owns the context, so it sets only the
-global — `isUIVerify()` still matches via the `or`, but don't claim the UA branch works for Vitest.)
+global — `isUIVerify()` still matches via the `or`, but don't claim the UA branch works for Vitest. The Bun
+SDK's page script likewise sets only the global.)
 
 The **same subjects are also taught on the public product docs** (`uiverify.ai/docs`, maintained in the
 service repo — *not* here): a universal determinism change owes those articles a matching pass too.
@@ -133,15 +136,18 @@ service repo — *not* here): a universal determinism change owes those articles
 
 - `pnpm build` — esbuild bundle → `dist/uiverify.js` (gitignored). `prepublishOnly` runs it.
 - `pnpm test` — Vitest, every package but `@uiverify/bun`. `pnpm typecheck` — `tsc --noEmit`.
+- `pnpm check:readmes` — every package README opens with the root README's logo/badges/links header,
+  copied verbatim, so the npm pages match. Edit the root's header, then paste it into each package.
 - `pnpm --filter @uiverify/bun test` — the Bun SDK's units and e2e suite (`bun test`; needs Bun ≥ 1.3.12 and
   Chrome).
 
 ## `examples/` pin published versions — bump them with every release
 
-The standalone example projects under `examples/` (`storybook`, `vitest`, `playwright`, `react-native`)
-are meant to be **copied out and run against the published npm packages**, so their `package.json`s pin
-the **published** versions (`uiverify`, `@uiverify/playwright`, `@uiverify/vitest`) — NOT `workspace:*`.
-That means they don't move when you bump a package here: **whenever you publish a new version of any
-client package, bump the matching `^x.y.z` in every `examples/*/package.json` that depends on it** in the
-same change, or the examples silently install a stale SDK. `grep -rl '@uiverify/\|"uiverify"' examples/*/package.json`
+The standalone example projects under `examples/` (`storybook`, `vitest`, `playwright`, `bun`,
+`react-native`) are meant to be **copied out and run against the published npm packages**, so their
+`package.json`s pin the **published** versions (`uiverify`, `@uiverify/playwright`, `@uiverify/vitest`,
+`@uiverify/bun`) — NOT `workspace:*`. That means they don't move when you bump a package here: **whenever
+you publish a new version of any client package, bump the matching `^x.y.z` in every
+`examples/*/package.json` that depends on it** in the same change, or the examples silently install a stale
+SDK. `grep -rl '@uiverify/\|"uiverify"' examples/*/package.json`
 finds them; the current published versions are what `npm view <pkg> version` reports.

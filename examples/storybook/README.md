@@ -64,5 +64,6 @@ Full list + a copy-in-by-hand alternative: [`packages/skills`](https://github.co
 
 - [`../vitest`](../vitest) — capture from Vitest browser-mode tests with `@uiverify/vitest`
 - [`../playwright`](../playwright) — capture from Playwright end-to-end tests with `@uiverify/playwright`
+- [`../bun`](../bun) — capture from Bun visual tests (`bun test`) with `@uiverify/bun`
 - [`../react-native`](../react-native) — upload finished screenshots (native / mobile / React Native) with
   `uiverify upload --screenshots`

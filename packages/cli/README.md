@@ -15,9 +15,11 @@ Catch unintended UI changes on every pull request. UI Verify renders your compon
 
 [![uiverify](https://img.shields.io/npm/v/uiverify?label=uiverify&color=2ea44f)](https://www.npmjs.com/package/uiverify)
 [![@uiverify/playwright](https://img.shields.io/npm/v/@uiverify/playwright?label=%40uiverify%2Fplaywright&color=2ea44f)](https://www.npmjs.com/package/@uiverify/playwright)
+[![@uiverify/vitest](https://img.shields.io/npm/v/@uiverify/vitest?label=%40uiverify%2Fvitest&color=2ea44f)](https://www.npmjs.com/package/@uiverify/vitest)
+[![@uiverify/bun](https://img.shields.io/npm/v/@uiverify/bun?label=%40uiverify%2Fbun&color=2ea44f)](https://www.npmjs.com/package/@uiverify/bun)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/uiverify/uiverify/blob/main/LICENSE)
 
-[uiverify.ai](https://uiverify.ai) &nbsp;·&nbsp; [GitHub](https://github.com/uiverify/uiverify) &nbsp;·&nbsp; [CLI](https://www.npmjs.com/package/uiverify) &nbsp;·&nbsp; [Playwright SDK](https://www.npmjs.com/package/@uiverify/playwright) &nbsp;·&nbsp; [Skills](https://github.com/uiverify/uiverify/tree/main/packages/skills)
+[uiverify.ai](https://uiverify.ai) &nbsp;·&nbsp; [GitHub](https://github.com/uiverify/uiverify) &nbsp;·&nbsp; [CLI](https://www.npmjs.com/package/uiverify) &nbsp;·&nbsp; [Playwright SDK](https://www.npmjs.com/package/@uiverify/playwright) &nbsp;·&nbsp; [Vitest SDK](https://www.npmjs.com/package/@uiverify/vitest) &nbsp;·&nbsp; [Bun SDK](https://www.npmjs.com/package/@uiverify/bun) &nbsp;·&nbsp; [Skills](https://github.com/uiverify/uiverify/tree/main/packages/skills)
 
 </div>
 
@@ -25,7 +27,7 @@ Catch unintended UI changes on every pull request. UI Verify renders your compon
 
 # uiverify
 
-The CI uploader for UI Verify. `uiverify upload` uploads your prebuilt Storybook bundle (or a Playwright/Vitest archive, or a directory of finished screenshots), streams render progress (`Rendered X / N`), and reflects the visual verdict (`changed` / `failed`) in its exit code so CI can gate on it.
+The CI uploader for UI Verify. `uiverify upload` uploads your prebuilt Storybook bundle (or a Playwright/Vitest/Bun archive, or a directory of finished screenshots), streams render progress (`Rendered X / N`), and reflects the visual verdict (`changed` / `failed`) in its exit code so CI can gate on it.
 
 ## Usage
 

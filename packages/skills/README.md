@@ -15,9 +15,11 @@ Catch unintended UI changes on every pull request. UI Verify renders your compon
 
 [![uiverify](https://img.shields.io/npm/v/uiverify?label=uiverify&color=2ea44f)](https://www.npmjs.com/package/uiverify)
 [![@uiverify/playwright](https://img.shields.io/npm/v/@uiverify/playwright?label=%40uiverify%2Fplaywright&color=2ea44f)](https://www.npmjs.com/package/@uiverify/playwright)
+[![@uiverify/vitest](https://img.shields.io/npm/v/@uiverify/vitest?label=%40uiverify%2Fvitest&color=2ea44f)](https://www.npmjs.com/package/@uiverify/vitest)
+[![@uiverify/bun](https://img.shields.io/npm/v/@uiverify/bun?label=%40uiverify%2Fbun&color=2ea44f)](https://www.npmjs.com/package/@uiverify/bun)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/uiverify/uiverify/blob/main/LICENSE)
 
-[uiverify.ai](https://uiverify.ai) &nbsp;·&nbsp; [GitHub](https://github.com/uiverify/uiverify) &nbsp;·&nbsp; [CLI](https://www.npmjs.com/package/uiverify) &nbsp;·&nbsp; [Playwright SDK](https://www.npmjs.com/package/@uiverify/playwright) &nbsp;·&nbsp; [Skills](https://github.com/uiverify/uiverify/tree/main/packages/skills)
+[uiverify.ai](https://uiverify.ai) &nbsp;·&nbsp; [GitHub](https://github.com/uiverify/uiverify) &nbsp;·&nbsp; [CLI](https://www.npmjs.com/package/uiverify) &nbsp;·&nbsp; [Playwright SDK](https://www.npmjs.com/package/@uiverify/playwright) &nbsp;·&nbsp; [Vitest SDK](https://www.npmjs.com/package/@uiverify/vitest) &nbsp;·&nbsp; [Bun SDK](https://www.npmjs.com/package/@uiverify/bun) &nbsp;·&nbsp; [Skills](https://github.com/uiverify/uiverify/tree/main/packages/skills)
 
 </div>
 
@@ -25,7 +27,7 @@ Catch unintended UI changes on every pull request. UI Verify renders your compon
 
 # @uiverify/skills
 
-Agent skills for coding agents (Claude Code, Codex, and others) that set up and run UI Verify visual testing in **your** repo. Each is a plain `SKILL.md` with no runtime code. They talk to UI Verify over HTTP (the `uiverify` CLI / `@uiverify/playwright` / `@uiverify/vitest`) and MCP only; two of them (`economical-visual-tests` and the determinism pair) help **any** per-snapshot visual tool, so they travel.
+Agent skills for coding agents (Claude Code, Codex, and others) that set up and run UI Verify visual testing in **your** repo. Each is a plain `SKILL.md` with no runtime code. They talk to UI Verify over HTTP (the `uiverify` CLI / `@uiverify/playwright` / `@uiverify/vitest` / `@uiverify/bun`) and MCP only; some of them (`economical-visual-tests` and the determinism skills) help **any** per-snapshot visual tool, so they travel.
 
 Installed as a Claude Code, Cursor or Codex plugin, or a Gemini CLI extension, this also connects the UI Verify MCP server (`https://uiverify.ai/mcp`), so your agent can read builds and diffs after one browser login.
 
@@ -42,7 +44,10 @@ Looking for the agentic-development loop (`factory`, `review-loop`, `babysit-pr`
 | **[economical-visual-tests](skills/economical-visual-tests)** | Full visual coverage in the fewest billable snapshots: collapse a variant matrix into one gallery shot, drive states from data. Works with any per-snapshot visual tool. | either |
 | **[storybook-visual-testing](skills/storybook-visual-testing)** | Flaky story diffs: make Storybook stories deterministic (only what the capturer can't neutralize for you). | Storybook |
 | **[playwright-visual-testing](skills/playwright-visual-testing)** | Flaky real-page diffs: make `@uiverify/playwright` archive-replay captures deterministic (feature flags, live data, the clock, overlays, dynamic layout). | Playwright |
+| **[vitest-visual-testing](skills/vitest-visual-testing)** | Flaky component diffs in Vitest browser mode: make `@uiverify/vitest` captures deterministic (live data, the clock, infinite animations, capturing before the component settled). | Vitest |
+| **[bun-visual-testing](skills/bun-visual-testing)** | Flaky diffs in Bun visual tests: make `@uiverify/bun` captures deterministic on a real page or a `serveBundle()` component page (live data via `page.route`, the running clock, infinite animations, fonts, the Bun setup traps). | Bun |
 | **[implement-figma-design](skills/implement-figma-design)** | "Build this Figma design": gets the design as a PNG (Figma MCP export, or asks you for one), declares it as the story's baseline, then converges the render to it section by section using UI Verify's diff. Stops without accepting, so the design stays the baseline. | Storybook |
+| **[check-visual-changes](skills/check-visual-changes)** | Mid-edit, before pushing: render just the stories or tests you touched on the UI Verify fleet with `uiverify check` and diff them against the real CI baseline, without a PR check or moving a baseline. | either |
 | **[triage-visual-changes](skills/triage-visual-changes)** | A build came back "changed": bucket real regressions vs cosmetic noise, summarize for a PR comment, accept baselines in bulk, all via the UI Verify MCP. | either |
 
 ## Install

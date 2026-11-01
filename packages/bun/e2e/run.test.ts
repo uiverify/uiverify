@@ -55,7 +55,7 @@ const dom = (run: Run, id: string) => {
 beforeAll(async () => {
   const build = Bun.spawnSync(["pnpm", "build"], { cwd: packageDir, stdout: "inherit", stderr: "inherit" });
   if (build.exitCode !== 0) throw new Error("building @uiverify/bun failed");
-});
+}, E2E_TIMEOUT_MS);
 
 describe("a passing run", () => {
   let run: Run;

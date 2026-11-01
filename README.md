@@ -16,9 +16,10 @@ Catch unintended UI changes on every pull request. UI Verify renders your compon
 [![uiverify](https://img.shields.io/npm/v/uiverify?label=uiverify&color=2ea44f)](https://www.npmjs.com/package/uiverify)
 [![@uiverify/playwright](https://img.shields.io/npm/v/@uiverify/playwright?label=%40uiverify%2Fplaywright&color=2ea44f)](https://www.npmjs.com/package/@uiverify/playwright)
 [![@uiverify/vitest](https://img.shields.io/npm/v/@uiverify/vitest?label=%40uiverify%2Fvitest&color=2ea44f)](https://www.npmjs.com/package/@uiverify/vitest)
+[![@uiverify/bun](https://img.shields.io/npm/v/@uiverify/bun?label=%40uiverify%2Fbun&color=2ea44f)](https://www.npmjs.com/package/@uiverify/bun)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/uiverify/uiverify/blob/main/LICENSE)
 
-[uiverify.ai](https://uiverify.ai) &nbsp;·&nbsp; [GitHub](https://github.com/uiverify/uiverify) &nbsp;·&nbsp; [CLI](https://www.npmjs.com/package/uiverify) &nbsp;·&nbsp; [Playwright SDK](https://www.npmjs.com/package/@uiverify/playwright) &nbsp;·&nbsp; [Vitest SDK](https://www.npmjs.com/package/@uiverify/vitest) &nbsp;·&nbsp; [Skills](https://github.com/uiverify/uiverify/tree/main/packages/skills)
+[uiverify.ai](https://uiverify.ai) &nbsp;·&nbsp; [GitHub](https://github.com/uiverify/uiverify) &nbsp;·&nbsp; [CLI](https://www.npmjs.com/package/uiverify) &nbsp;·&nbsp; [Playwright SDK](https://www.npmjs.com/package/@uiverify/playwright) &nbsp;·&nbsp; [Vitest SDK](https://www.npmjs.com/package/@uiverify/vitest) &nbsp;·&nbsp; [Bun SDK](https://www.npmjs.com/package/@uiverify/bun) &nbsp;·&nbsp; [Skills](https://github.com/uiverify/uiverify/tree/main/packages/skills)
 
 </div>
 
@@ -28,7 +29,7 @@ Catch unintended UI changes on every pull request. UI Verify renders your compon
 
 UI Verify is a hosted visual-testing service that plugs into your CI. On each PR it:
 
-1. **Captures** your UI, from Storybook stories, from your existing Playwright or Vitest browser-mode tests via a drop-in capture SDK, or from finished screenshots your own harness already produces (native, mobile, React Native) uploaded straight for diffing.
+1. **Captures** your UI, from Storybook stories, from your existing Playwright or Vitest browser-mode tests via a drop-in capture SDK, from visual tests on `bun test` with the Bun SDK, or from finished screenshots your own harness already produces (native, mobile, React Native) uploaded straight for diffing.
 2. **Renders & diffs** every state in the cloud against the baseline from your default branch.
 3. **Reports** the verdict back as a GitHub check, and gates the PR on it.
 4. **Triages**: a coding agent (Claude Code, Codex, and others) buckets real regressions vs. cosmetic noise and can accept new baselines in bulk, all over MCP.
@@ -65,18 +66,19 @@ While an agent is editing, it can render just the stories it is touching and dif
 
 ```sh
 npm run build-storybook
-npx uiverify check --story 'components-button--*' --static-dir storybook-static
+npx uiverify check --target 'components-button--*' --static-dir storybook-static
 ```
 
-It renders only the stories you name (repeatable `--story`, globs or exact ids), posts no PR check, and never moves a CI baseline. A `changed` result is informational (exit 0) - review the pixels over the UI Verify MCP (`get_build` / `render_diff_image`) and accept in the dashboard or with `accept_build` to set a branch-scoped preview baseline, so your own accepted changes stop re-flagging on the next check. CI stays the only path to a `main` baseline.
+It renders only the stories you name (repeatable `--target`, globs or exact ids), posts no PR check, and never moves a CI baseline. A `changed` result is informational (exit 0) - review the pixels over the UI Verify MCP (`get_build` / `render_diff_image`) and accept in the dashboard or with `accept_build` to set a branch-scoped preview baseline, so your own accepted changes stop re-flagging on the next check. CI stays the only path to a `main` baseline.
 
 ## Packages
 
 | Package | Install | What it does |
 |---|---|---|
-| **[`uiverify`](packages/cli)** | `npm i -D uiverify` | The CLI. `uiverify upload` is the CI uploader (Storybook bundle, Playwright/Vitest archive, or a directory of finished screenshots) - streams render progress and reflects the visual verdict in its exit code. `uiverify check` is the agent edit-loop check - renders just the stories you name against the real CI baseline, without posting a check or moving a baseline. |
+| **[`uiverify`](packages/cli)** | `npm i -D uiverify` | The CLI. `uiverify upload` is the CI uploader (Storybook bundle, Playwright/Vitest/Bun archive, or a directory of finished screenshots) - streams render progress and reflects the visual verdict in its exit code. `uiverify check` is the agent edit-loop check - renders just the stories you name against the real CI baseline, without posting a check or moving a baseline. |
 | **[`@uiverify/playwright`](packages/playwright)** | `npm i -D @uiverify/playwright` | The Playwright capture SDK. Swap `@playwright/test` for it and each test archives its final UI state (serialized DOM + resource bytes) for UI Verify to replay and diff. |
 | **[`@uiverify/vitest`](packages/vitest)** | `npm i -D @uiverify/vitest` | The Vitest capture SDK. Add `uiverifyPlugin()` to your Vitest config and each browser-mode test archives its final DOM (serialized DOM + resource bytes) for UI Verify to replay and diff; `takeSnapshot()` takes named snapshots instead. |
+| **[`@uiverify/bun`](packages/bun)** | `bun add -d @uiverify/bun` | The Bun capture SDK. Write visual tests on `bun test` that drive your installed Chrome, and each test archives its final page (serialized DOM + resource bytes) for UI Verify to replay and diff; `run()` starts your app and runs the test files. |
 | **[`@uiverify/skills`](packages/skills)** | `npx skills add`, see below | Agent skills: `SKILL.md` workflows a coding agent runs in your repo to set up visual testing, author economical + deterministic stories, and triage builds. As a Claude Code or Cursor plugin, or a Gemini CLI extension, it also connects the UI Verify MCP server. |
 | **[`@uiverify/workflow-skills`](packages/workflow-skills)** | Claude Code plugin, see below | The agentic-development loop we build UI Verify with: `factory`, `design`, `review-loop`, `e2e-verify`, `babysit-pr`, and the skills that tune it. |
 
@@ -143,9 +145,10 @@ Complete, runnable projects under [`examples/`](examples) — one per capture pa
 | **[`examples/storybook`](examples/storybook)** | Storybook stories (no SDK, `upload --static-dir`) |
 | **[`examples/vitest`](examples/vitest)** | Vitest browser-mode tests with `@uiverify/vitest` |
 | **[`examples/playwright`](examples/playwright)** | Playwright end-to-end tests with `@uiverify/playwright` |
+| **[`examples/bun`](examples/bun)** | Bun visual tests (`bun test`) with `@uiverify/bun` |
 | **[`examples/react-native`](examples/react-native)** | Finished screenshots (native / mobile / React Native) with `upload --screenshots` |
 
-The first three capture a slice of the same Shoppy storefront; the React Native one is a small Expo app driven by Maestro. Each folder has its own CI workflow.
+The first four capture a slice of the same Shoppy storefront; the React Native one is a small Expo app driven by Maestro. Each folder has its own CI workflow.
 
 ## Development
 

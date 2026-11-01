@@ -1,6 +1,6 @@
 ---
 name: check-visual-changes
-description: Check the visual impact of an edit mid-task with `uiverify check` — render just the components you're touching on the UI Verify fleet and diff them against the real CI baseline, without opening a PR, posting a check, or moving a baseline. Works for every capture method (Storybook, Playwright, Vitest archives, and raw screenshots). Use when a coding agent has changed UI and wants a fast, authoritative "would this pass" answer before pushing — "check my visual changes", "did I break anything visually", "preview this diff", "run uiverify check". Hands off to triage-visual-changes for the pixel review.
+description: Check the visual impact of an edit mid-task with `uiverify check` — render just the components you're touching on the UI Verify fleet and diff them against the real CI baseline, without opening a PR, posting a check, or moving a baseline. Works for every capture method (Storybook, Playwright, Vitest and Bun archives, and raw screenshots). Use when a coding agent has changed UI and wants a fast, authoritative "would this pass" answer before pushing — "check my visual changes", "did I break anything visually", "preview this diff", "run uiverify check". Hands off to triage-visual-changes for the pixel review.
 ---
 
 # Check your visual changes mid-edit
@@ -38,9 +38,9 @@ exhaustive CI build catches it later. Name the few things that matter.
 `check` is a **dumb HTTP client**: it uploads what you built or captured and asks the fleet to render it.
 It does **not** run your build or your tests for you — you prepare the capture input first, exactly the
 same input the matching capture skill produces (`storybook-visual-testing`, `playwright-visual-testing`,
-`vitest-visual-testing`), then point `check` at it.
+`vitest-visual-testing`, `bun-visual-testing`), then point `check` at it.
 
-`UIVERIFY_API_KEY` (a `uv_proj_…` project key) must be set. All four methods take `--strict`/`--no-strict`
+`UIVERIFY_API_KEY` (a `uv_proj_…` project key) must be set. Every method takes `--strict`/`--no-strict`
 and `--working-directory` like `uiverify upload`.
 
 ### Storybook — `--target` is required
@@ -57,7 +57,7 @@ Pass `--target` per id; each is an exact story id (`components-button--default`)
 (`components-button--*`). Render the component you changed **plus** the one or two pages where it actually
 appears — not the whole `components-*` tree.
 
-### Playwright / Vitest archives — `--target` optional
+### Playwright / Vitest / Bun archives — `--target` optional
 
 Run **only the tests you care about** to produce the capture archive, then check it. The archive already
 contains just those captures, so the uploaded artifact *is* the render set — no `--target` needed.
@@ -70,6 +70,10 @@ uiverify check --static-dir <archive-dir>
 # Vitest browser-mode component tests: run only the touched files
 npx vitest run src/components/Button.test.tsx
 uiverify check --static-dir <archive-dir>
+
+# Bun (@uiverify/bun): pass the runner only the touched files (or -t <test name pattern>)
+bun tests/visual/run.ts tests/visual/checkout.visual.ts
+uiverify check --static-dir uiverify-archive
 ```
 
 You *can* still pass `--target` to narrow further (it matches the capture/test ids the SDK emitted, e.g.

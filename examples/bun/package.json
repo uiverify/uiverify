@@ -1,0 +1,27 @@
+{
+  "name": "uiverify-example-bun",
+  "private": true,
+  "type": "module",
+  "description": "UI Verify example: capturing Bun visual tests with @uiverify/bun.",
+  "scripts": {
+    "dev": "bun server.ts",
+    "typecheck": "tsc --noEmit",
+    "test:visual": "bun tests/visual/run.ts",
+    "upload": "uiverify upload --static-dir uiverify-archive"
+  },
+  "dependencies": {
+    "@fontsource/fraunces": "^5.2.0",
+    "@fontsource/plus-jakarta-sans": "^5.2.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.1.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.12",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@uiverify/bun": "^0.1.0",
+    "typescript": "^5.7.2",
+    "uiverify": "^1.8.0"
+  }
+}

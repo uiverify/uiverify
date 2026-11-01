@@ -1,6 +1,6 @@
 ---
 name: setup-visual-testing
-description: Set up UI Verify visual regression testing in a repo end to end — detect or scaffold the capture path (Storybook stories, a Playwright suite, or Vitest browser-mode component tests), install the uiverify CLI and wire it into CI, and author the first stories the economical, deterministic way from the start. Use when adding visual/screenshot regression testing to a project for the first time, wiring UI Verify into CI, or onboarding a repo that has no visual tests yet.
+description: Set up UI Verify visual regression testing in a repo end to end — detect or scaffold the capture path (Storybook stories, a Playwright suite, Vitest browser-mode component tests, or Bun visual tests), install the uiverify CLI and wire it into CI, and author the first stories the economical, deterministic way from the start. Use when adding visual/screenshot regression testing to a project for the first time, wiring UI Verify into CI, or onboarding a repo that has no visual tests yet.
 ---
 
 # Set up UI Verify, end to end
@@ -12,7 +12,7 @@ determinism work to the focused skills.
 
 ## Step 1 — pick the capture path (don't ask the user; detect it)
 
-UI Verify captures UI four ways. Choose by what the repo already has:
+UI Verify captures UI five ways. Choose by what the repo already has:
 
 - **Storybook path** — the repo has `.storybook/` or `@storybook/*` in `package.json`, or is a
   component/design-system library. Each **story** is a snapshot. This is the default; prefer it when
@@ -24,6 +24,11 @@ UI Verify captures UI four ways. Choose by what the repo already has:
   with a Playwright provider), and you want those component renders diffed without adopting Storybook.
   Each browser-mode test archives its final DOM. Prefer this over scaffolding Storybook only when a
   browser-mode suite already exists.
+- **Bun path** — the repo runs on **Bun** (a `bun.lock` / `bun.lockb` or `bunfig.toml`, `bun test` in its
+  scripts, a `Bun.serve` app) and has no Storybook, Playwright or Vitest browser-mode suite to reuse. Visual
+  tests run on `bun test` with `@uiverify/bun`, drive the installed Chrome, and archive each test's final
+  page: real pages of the app (`run({ webServer })`) or components on a page `serveBundle()` builds. No
+  Node test runner or browser download needed.
 - **Screenshot-upload path** — the repo is **native / mobile / React Native** (or otherwise can't
   render in a browser) but already produces finished screenshots from its own harness (Detox, Maestro,
   native snapshot tests). Upload those PNGs directly with `--screenshots`; UI Verify diffs, judges, and
@@ -64,6 +69,32 @@ export default defineConfig({
 npm i -D @uiverify/vitest @vitest/browser-playwright uiverify
 ```
 
+**Bun** — define a suite, write `*.visual.ts` tests, and a runner that starts the app (full setup and the
+component-page variant: `bun-visual-testing`):
+```ts
+// tests/visual/fixtures.ts
+import { DEFAULT_VIEWPORT, defineSuite } from '@uiverify/bun';
+export const visualSuite = defineSuite({ viewports: { '': DEFAULT_VIEWPORT } });
+
+// tests/visual/home.visual.ts
+import { expect } from '@uiverify/bun';
+import { visualSuite } from './fixtures';
+const { test } = visualSuite(import.meta.path);
+test('home', async (page) => {
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Welcome' })).toBeVisible();
+});
+
+// tests/visual/run.ts — run with `bun tests/visual/run.ts`
+import { run } from '@uiverify/bun/run';
+// The server gets PORT and must listen on it; `ready` (optional) is how its "serving" log line begins.
+process.exitCode = await run({ webServer: { command: ['bun', 'server.ts'], port: 3000, ready: 'Listening' } });
+```
+```bash
+bun add -d @uiverify/bun uiverify
+```
+It needs Bun 1.3.12+ and Google Chrome or Chromium.
+
 ## Step 3 — author the first stories the right way
 
 Don't snapshot whatever exists as-is. Author (or refactor) the first few stories using the two
@@ -72,8 +103,8 @@ authoring skills, in this order:
 1. **`economical-visual-tests`** — collapse variant matrices into gallery/data-driven stories so you snapshot
    the fewest billable shots for full coverage. Do this *before* determinism work — fewer stories is
    less to make deterministic.
-2. **`storybook-visual-testing`** (Storybook), **`playwright-visual-testing`** (Playwright), or
-   **`vitest-visual-testing`** (Vitest) — remove the run-to-run variation the tool can't neutralize from
+2. **`storybook-visual-testing`** (Storybook), **`playwright-visual-testing`** (Playwright),
+   **`vitest-visual-testing`** (Vitest), or **`bun-visual-testing`** (Bun) — remove the run-to-run variation the tool can't neutralize from
    outside your app (mostly: the clock, live data, infinite animations).
 
 ## Step 4 — wire CI
@@ -85,6 +116,14 @@ trigger every PR shows all-new until a merge happens to seed it. Store the proje
 Step 2). Change `[main]` to whatever your default branch is (`master`, `develop`) — a repo whose default
 isn't `main` gets a `push` trigger that never fires. Accept that first build once, or add
 `--auto-accept-changes` to the upload on your default branch to seed it automatically.
+
+**Public repo? Write the fork-safe setup instead of the one job below.** GitHub withholds secrets from a
+fork's pull request, so the one-job workflow has no key on a fork PR and the check never posts there.
+Check before writing any YAML: `gh repo view --json visibility --jq .visibility`. If it prints `PUBLIC`,
+write the two workflows in [`references/fork-safe-ci.md`](references/fork-safe-ci.md) (capture with no
+key, then upload from a separate `workflow_run` workflow that never runs the PR's code), and tell the user
+the follow-ups listed at its end. If you can't tell (no `gh`, not on GitHub), ask the user whether the repo
+takes pull requests from forks. Background: https://uiverify.ai/docs/open-source-and-forks
 
 ```yaml
 # .github/workflows/visual.yml
@@ -108,7 +147,11 @@ jobs:
           UIVERIFY_API_KEY: ${{ secrets.UIVERIFY_API_KEY }}
         # Playwright / Vitest instead (browsers aren't preinstalled on the runner): run
         #   "npx playwright install --with-deps && npx playwright test"  (or "npx vitest run"), then
-        #   "npx uiverify upload --static-dir uiverify-archive".
+        #   "npx uiverify upload --static-dir uiverify-archive". Playwright must support the runner's OS (below).
+        # Bun instead: add oven-sh/setup-bun@v2, drop setup-node's "cache: npm" and replace "npm ci"
+        #   with "bun install --frozen-lockfile" (a Bun repo has no package-lock.json), then run
+        #   "bun tests/visual/run.ts" (it drives the runner's preinstalled Chrome) and
+        #   "npx uiverify upload --static-dir uiverify-archive". Keep setup-node: the CLI runs on Node 24.
         # Screenshot upload (native / mobile / React Native): produce your PNGs (Detox, Maestro, etc.),
         #   then "npx uiverify upload --screenshots ./screenshots" in place of the build+upload steps.
 ```
@@ -119,7 +162,18 @@ could have changed" below). Locally the same thing is:
 npm run build-storybook -- --stats-json && UIVERIFY_API_KEY=uv_proj_… npx uiverify upload --static-dir storybook-static
 # Playwright:  npx playwright test && npx uiverify upload --static-dir uiverify-archive
 # Vitest:      npx playwright install --with-deps && npx vitest run && npx uiverify upload --static-dir uiverify-archive
+# Bun:         bun tests/visual/run.ts && npx uiverify upload --static-dir uiverify-archive
 ```
+
+**Playwright / Vitest: Playwright must be new enough for the CI machine's OS.** Each Playwright release
+installs browsers only on the OS versions it knows about. When a CI image moves to a newer OS (a floating
+label like GitHub's `ubuntu-latest`, a `:latest` Docker base image, a hosted-runner upgrade on GitLab or
+CircleCI), an older Playwright fails at `playwright install` with `Playwright does not support chromium on
+<os>`, before any capture runs, so no build reaches UI Verify. When wiring CI, read the resolved
+`playwright` / `@playwright/test` version from the lockfile and bump it if it predates the runner's OS
+(Ubuntu 26.04, for example, needs 1.61+), keeping any `mcr.microsoft.com/playwright` image tag in step.
+If the user can't upgrade, pin the CI image to an OS version their Playwright supports. The bump doesn't
+move baselines: UI Verify renders every screenshot in its own browser, not the one the tests ran in.
 
 **Optional — run only on PRs that can change the UI.** The workflow above fires on every PR, and a
 Playwright archive has no dependency graph of its own, so it renders in full unless you add one (a
@@ -208,6 +262,9 @@ git can't follow (bundler output, as under Angular's unit-test builder, a worksp
 file(s) always render: ...` with the reason. It does nothing for the **Playwright** path out of the box - a Playwright
 archive has no dependency graph, so every test renders unless you add a `preview-stats.json` to the
 archive directory yourself ([module graph format](https://uiverify.ai/docs/skip-unchanged#module-graph-format)).
+A **Bun** archive carries no dependency graph either, so every Bun test renders on every build: the path
+filter above is how a Bun suite stays off PRs that can't change the UI. Add the visual tests themselves
+(`tests/visual/**`) to that filter, or a PR that only edits a test skips its own capture.
 
 Check the Storybook major before you write the build step - the flag is `--stats-json` on Storybook 8+,
 but `--webpack-stats-json` on 7.x, and passing the wrong one fails the build step before the upload ever

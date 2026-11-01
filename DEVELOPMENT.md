@@ -11,7 +11,8 @@ locally in `src/client.ts`). It carries no rendering, diffing, or judging logic;
 server-side. Distributed as `npx <pkg> upload …` once published to npm.
 
 > **Package name:** the npm package is **`uiverify`** (repo `uiverify/uiverify`); the Playwright SDK
-> publishes as **`@uiverify/playwright`** and the Vitest SDK as **`@uiverify/vitest`**.
+> publishes as **`@uiverify/playwright`**, the Vitest SDK as **`@uiverify/vitest`**, and the Bun SDK as
+> **`@uiverify/bun`**.
 
 ## What it does
 
@@ -102,8 +103,9 @@ which leaves the server nothing to skip against, so it can only turn skipping of
 `check` is the same pipeline as `upload` (register → PUT bundle → uploaded → poll) with three
 differences, for a coding agent iterating mid-task rather than a CI gate:
 
-1. **You choose what renders.** `--story <glob>` (repeatable; exact ids or anchored globs like
-   `components-button--*`) is REQUIRED and REPLACES the dependency-graph closure a CI build computes.
+1. **You choose what renders.** `--target <glob>` (repeatable; exact ids or anchored globs like
+   `components-button--*`) is REQUIRED for a Storybook `--static-dir` (optional for an archive or
+   screenshots, which already hold only what you captured) and REPLACES the dependency-graph closure a CI build computes.
    The whole Storybook bundle still uploads (the build is monolithic), but only the named stories render
    on the fleet - so editing one primitive doesn't render the third of the suite it touches.
 2. **It is walled off from CI + main.** The build registers with `preview: true`: it posts no GitHub
@@ -116,7 +118,7 @@ differences, for a coding agent iterating mid-task rather than a CI gate:
 
 ```sh
 npm run build-storybook
-npx uiverify check --story 'components-button--*' --static-dir storybook-static
+npx uiverify check --target 'components-button--*' --static-dir storybook-static
 ```
 
 `check` deliberately does NOT accept the CI gating flags (`--render-all`,
@@ -129,12 +131,12 @@ than silently ignored. Accept/deny happens after review, over the dashboard or t
 uiverify upload (--static-dir <dir> | --screenshots <dir>) [--working-directory <dir>] [--api-url <url>] \
                 [--auto-accept-changes] [--exit-zero-on-changes] [--render-all] [--strict | --no-strict]
 
-uiverify check  --story <glob> [--story <glob> …] (--static-dir <dir> | --screenshots <dir>) \
+uiverify check  [--target <glob> …] (--static-dir <dir> | --screenshots <dir>) \
                 [--working-directory <dir>] [--api-url <url>] [--strict | --no-strict]
 ```
 
 - `UIVERIFY_API_KEY` (env, required) — the project key.
-- `--story <glob>` (`check` only, repeatable, required) — the stories to render for the preview check.
+- `--target <glob>` (`check` only, repeatable; required for a Storybook `--static-dir`) — the stories to render for the preview check.
 - `--static-dir` the prebuilt `storybook-static` directory to upload (build Storybook first).
 - `--api-url` (or `UIVERIFY_API_URL`, default `https://uiverify.ai`; override for self-host/local dev).
 - `--render-all` — render every story, even ones the dependency graph shows a change can't reach, and
@@ -151,7 +153,8 @@ Run locally from the repo root via `pnpm install && pnpm -C packages/cli exec ts
 or build with `pnpm -C packages/cli build` and run `node packages/cli/dist/uiverify.js upload …`.
 
 > **Monorepo:** the CLI lives in `packages/cli`; the Playwright capture SDK (`@uiverify/playwright`) lives
-> in `packages/playwright`; the Vitest capture SDK (`@uiverify/vitest`) lives in `packages/vitest`; and the
-> agent skills live in `packages/skills` (`@uiverify/skills`, the `uiverify` Claude Code plugin) and
-> `packages/workflow-skills` (`@uiverify/workflow-skills`, the `uiverify-workflow` plugin), neither published
-> to npm (see each README). Same "dumb client, no server-side logic" rule.
+> in `packages/playwright`; the Vitest capture SDK (`@uiverify/vitest`) lives in `packages/vitest`; the Bun
+> capture SDK (`@uiverify/bun`) lives in `packages/bun`; and the agent skills live in `packages/skills`
+> (`@uiverify/skills`, the `uiverify` Claude Code plugin) and `packages/workflow-skills`
+> (`@uiverify/workflow-skills`, the `uiverify-workflow` plugin), neither published to npm (see each README).
+> Same "dumb client, no server-side logic" rule.

@@ -1,0 +1,36 @@
+name: Visual tests
+
+# Runs the Bun visual tests (which archive each state to uiverify-archive/ via @uiverify/bun) and uploads
+# the archive to UI Verify, which diffs each capture against the baseline and has the AI judge triage
+# intended changes vs regressions. On a pull request the check gates the merge; on main it accepts changes
+# to move the baseline forward. The tests drive the Google Chrome preinstalled on the runner.
+#
+# Requires the repo secret UIVERIFY_API_KEY (a Bun project's key, uv_proj_…).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  visual:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so baseline ancestry works
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: bun install
+      - run: bun run test:visual
+      - name: Upload to UI Verify
+        env:
+          UIVERIFY_API_KEY: ${{ secrets.UIVERIFY_API_KEY }}
+        run: |
+          FLAGS="--static-dir uiverify-archive"
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then FLAGS="$FLAGS --auto-accept-changes"; fi
+          npx -y uiverify upload $FLAGS

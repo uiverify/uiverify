@@ -69,5 +69,6 @@ Full list + a copy-in-by-hand alternative: [`packages/skills`](https://github.co
 
 - [`../storybook`](../storybook) — capture Storybook stories (no SDK, `upload --static-dir`)
 - [`../vitest`](../vitest) — capture from Vitest browser-mode tests with `@uiverify/vitest`
+- [`../bun`](../bun) — capture from Bun visual tests (`bun test`) with `@uiverify/bun`
 - [`../react-native`](../react-native) — upload finished screenshots (native / mobile / React Native) with
   `uiverify upload --screenshots`

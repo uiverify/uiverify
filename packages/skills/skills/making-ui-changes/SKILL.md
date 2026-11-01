@@ -25,7 +25,7 @@ Not done until you've looked at what moved: `check-visual-changes` mid-edit, or 
 
 ## 5. Kill flake at the source
 
-A story that comes back changed with no real change (clock, live data, animation, randomness) is flake. Fix it at capture time (`storybook-`/`playwright-`/`vitest-visual-testing`) - don't accept it, don't disable the check.
+A story that comes back changed with no real change (clock, live data, animation, randomness) is flake. Fix it at capture time (`storybook-`/`playwright-`/`vitest-`/`bun-visual-testing`) - don't accept it, don't disable the check.
 
 ## Wire it in
 
