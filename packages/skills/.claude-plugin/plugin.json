@@ -1,7 +1,7 @@
 {
   "name": "uiverify",
   "displayName": "UI Verify",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "UI Verify visual testing for coding agents: set up visual regression testing, write economical and deterministic Storybook, Playwright, Vitest and Bun captures, and triage builds over the UI Verify MCP server (bundled).",
   "author": {
     "name": "UI Verify",

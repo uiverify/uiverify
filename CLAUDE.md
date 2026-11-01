@@ -136,8 +136,8 @@ service repo — *not* here): a universal determinism change owes those articles
 
 - `pnpm build` — esbuild bundle → `dist/uiverify.js` (gitignored). `prepublishOnly` runs it.
 - `pnpm test` — Vitest, every package but `@uiverify/bun`. `pnpm typecheck` — `tsc --noEmit`.
-- `pnpm check:readmes` — every package README opens with the root README's logo/badges/links header,
-  copied verbatim, so the npm pages match. Edit the root's header, then paste it into each package.
+- Every package README opens with the root README's logo/badges/links header, copied verbatim, so the npm
+  pages match. Edit the root's header, then paste it into each package.
 - `pnpm --filter @uiverify/bun test` — the Bun SDK's units and e2e suite (`bun test`; needs Bun ≥ 1.3.12 and
   Chrome).
 

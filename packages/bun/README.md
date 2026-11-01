@@ -105,7 +105,12 @@ instantly; the timezone is UTC, the locale en-US, motion reduced, and the colour
 `colorScheme`. Before a snapshot it waits up to 3 s for the fonts in use, then up to 3 s for every image and CSS
 background to load, then for the page to stop moving: a page whose elements keep moving (a `requestAnimationFrame` loop,
 a Lottie) fails after 10 s. A canvas that keeps redrawing in place isn't detected and is captured mid-frame.
-Stop either while UI Verify captures, by checking `isUIVerify()`.
+Stop either while UI Verify captures, by checking an `isUIVerify()` helper you write yourself. The SDK's page
+script sets `window.__UI_VERIFY__` before your app's scripts run:
+
+```ts
+export const isUIVerify = () => typeof window !== "undefined" && "__UI_VERIFY__" in window;
+```
 
 Each test starts on a blank page with no routes or init scripts, the storage of every origin the previous
 test requested cleared, no cookies and no history. Chrome's caches persist, but a route always sees the
@@ -122,4 +127,6 @@ routes before the first.
 - A tab the page opens (a `target=_blank` link, `window.open`) is closed at once; the test stays on its page.
 - A cross-site iframe runs in a process of its own: its requests aren't routed, it gets no init scripts or
   clock, and its storage isn't reset between tests.
-- Capture in CI on Linux: a baseline captured on a Mac renders text differently.
+- The tests can run on any machine: UI Verify screenshots each archive in its own pinned browser, not in the
+  Chrome the tests drove. Only fonts declared in an `@font-face` are archived, so serve them from the app (an
+  npm package or a same-origin file); a system font isn't archived.

@@ -14,8 +14,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r --filter '!@uiverify/bun' test",
-    "check:readmes": "node scripts/check-readme-headers.mjs"
+    "test": "pnpm -r --filter '!@uiverify/bun' test"
   },
   "packageManager": "pnpm@11.22.0"
 }

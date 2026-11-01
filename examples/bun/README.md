@@ -52,9 +52,9 @@ UIVERIFY_API_KEY=uv_proj_… bun run upload
 
 [`.github/workflows/visual-tests.yml`](.github/workflows/visual-tests.yml) runs the tests and uploads on every
 pull request (the check gates the merge — [required checks](https://uiverify.ai/docs/required-checks)) and
-on `main` (with `--auto-accept-changes`). It drives the Chrome preinstalled on GitHub's Ubuntu runners.
-Capture baselines in CI on Linux, not on a Mac: the two render text differently. Add your key as the
-`UIVERIFY_API_KEY` repo secret.
+on `main` (with `--auto-accept-changes`). It drives the Chrome preinstalled on GitHub's Ubuntu runners. Where
+the tests run doesn't move a baseline: UI Verify screenshots every archive in its own pinned browser. Add your
+key as the `UIVERIFY_API_KEY` repo secret.
 
 ## Use it with your coding agent
 

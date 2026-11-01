@@ -278,9 +278,11 @@ handled for you; a component that waits to be visible isn't. Render it eagerly u
 - **One tab per file, one test at a time.** `bun test --parallel` is refused; `run()` runs files in
   parallel itself, and `shards: { 'tests/visual/big.visual.ts': 4 }` splits a large file across processes.
 - **A tab the page opens** (`target=_blank`, `window.open`) is closed at once; the test stays on its page.
-- **Capture in CI on Linux.** A baseline captured on a Mac renders text differently, so every Linux run
-  would diff against it. The SDK needs Bun 1.3.12+ and Chrome or Chromium (`BUN_CHROME_PATH` for another);
-  GitHub's Ubuntu runners have Chrome preinstalled.
+- **Chrome in CI.** The SDK needs Bun 1.3.12+ and Chrome or Chromium (`BUN_CHROME_PATH` for another);
+  GitHub's Ubuntu runners have Chrome preinstalled. Which machine runs the tests doesn't move baselines:
+  UI Verify screenshots every archive in its own pinned browser, not the Chrome the tests drove, so a run on
+  a Mac and one on a Linux runner diff the same. What the archive can't carry is a font the page never
+  declares in an `@font-face` (a system font), so serve fonts from the app (step 6).
 
 Then upload the archive:
 
@@ -305,4 +307,3 @@ and components in isolation on a `serveBundle()` page.
   effort; the SDK already does all three. Spend the effort on data, the running clock, and infinite loops.
 - **Unseeded `crypto`/`uuid`/faker, or a server-rendered `Math.random()` / date** → fixtures, and pin the
   server under `UI_VERIFY`.
-- **Accepting baselines captured on a Mac** → capture in CI on Linux.
