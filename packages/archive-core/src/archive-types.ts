@@ -52,6 +52,11 @@ export interface ArchiveProducer {
   version: string;
 }
 
+/** The interactive pseudo-classes a capture records per element: the DOM serialization can't carry them,
+ *  so a hovered button or a focused input would otherwise replay idle. */
+export const ARCHIVED_PSEUDO_CLASSES = ["hover", "focus", "focus-visible", "focus-within", "active"] as const;
+export type ArchivedPseudoClass = (typeof ARCHIVED_PSEUDO_CLASSES)[number];
+
 /** One captured UI state: the serialized DOM + the resources it references + the capture geometry. */
 export interface ArchivedSnapshot {
   /** Stable, human-readable id — the baseline key, analogous to a Storybook story id. Built from the
@@ -73,6 +78,10 @@ export interface ArchivedSnapshot {
   dom: serializedNodeWithId;
   /** url → captured response, served back during replay instead of re-fetching from the network. */
   resources: Record<string, ArchivedResource>;
+  /** The rrweb node ids (in `dom`) of the elements in each pseudo-class at capture, every element the
+   *  selector matched (a hover's whole ancestor chain, not just the leaf). Written by @uiverify/vitest; absent
+   *  when nothing was in one, and from the other SDKs and older versions. */
+  pseudoClasses?: Partial<Record<ArchivedPseudoClass, number[]>>;
   params?: ArchivedSnapshotParams;
   /** The test file that produced this snapshot (e.g. "components/Button.visual.test.tsx"): relative to the
    *  Vite root for @uiverify/vitest, which emits the module graph itself, and to the Playwright config's

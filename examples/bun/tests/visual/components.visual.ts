@@ -2,8 +2,7 @@ import { afterAll } from "bun:test";
 import { DEFAULT_VIEWPORT, expect, serveBundle } from "@uiverify/bun";
 import { visualSuite } from "./fixtures";
 
-// Components in isolation: Bun builds the component page and serves it, no app server needed. Its entry is
-// named index.html, which is the page served at "/".
+// Components in isolation: Bun builds the component page and serves it at "/", no app server needed.
 const preview = await serveBundle({ entrypoint: `${import.meta.dir}/components/index.html` });
 afterAll(() => preview.stop());
 

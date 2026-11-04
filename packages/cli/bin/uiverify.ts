@@ -218,6 +218,7 @@ function uploadDepsFor(ctx: CommonContext): UploadDeps {
     workingTreeChanges: (headSha) => workingTreeChanges(headSha, ctx.cwd, { exclude: ctx.staticDir }),
     deltaFor: (bases, headSha, uncommitted) => deltaFor(bases, headSha, ctx.cwd, uncommitted),
     createBundle: ctx.isScreenshots ? createScreenshotBundle : createBundle,
+    isStorybook: isStorybookStaticDir,
     bundleContentHash,
     readProducer: ctx.isScreenshots ? () => null : readArchiveProducer,
     bundleGraph,

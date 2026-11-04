@@ -3,6 +3,7 @@ import type { CapturedResource, CapturedSnapshot } from "@uiverify/archive-core"
 import { type FetchedResource, isArchivableResource, MAX_RESOURCE_BYTES } from "@uiverify/archive-core/browser";
 import { chromePath } from "./chrome";
 import { StaleTestError, testScope } from "./context";
+import { sendWithFaults, timeoutWithFaults } from "./faults";
 import { OUTSIDE_PAGE_BINDING, PAGE_CONFIG_GLOBAL, PAGE_HELPERS_GLOBAL } from "./page/protocol";
 import { type RouteDecision, Router } from "./routes";
 import { CALL_TIMEOUT_MS, type Lane, Slot } from "./slot";
@@ -188,18 +189,19 @@ export class Tab {
 
   cdp<T>(lane: Lane, method: string, params?: Record<string, unknown>): Promise<T> {
     const view = this.#requireView();
-    return this.#cdpSlot.call(lane, method, () => view.cdp<T>(method, params), lane === "page" ? this.#guard(method) : undefined);
+    const send = () => sendWithFaults(`${lane} ${method}`, () => view.cdp<T>(method, params));
+    return this.#cdpSlot.call(lane, method, send, lane === "page" ? this.#guard(method) : undefined);
   }
 
   evaluate<T>(script: string): Promise<T> {
     const view = this.#requireView();
-    return this.#evalSlot.call("page", "evaluate", () => view.evaluate<T>(script), this.#guard("evaluate"));
+    return this.#evalSlot.call("page", "evaluate", () => sendWithFaults(script, () => view.evaluate<T>(script)), this.#guard("evaluate"));
   }
 
   /** A `view.click`/`view.type`, which take the view's third slot. */
   native<T>(what: string, act: (view: Bun.WebView) => Promise<T>): Promise<T> {
     const view = this.#requireView();
-    return this.#nativeSlot.call("page", what, () => act(view), this.#guard(what));
+    return this.#nativeSlot.call("page", what, () => sendWithFaults(what, () => act(view)), this.#guard(what));
   }
 
   async navigate(url: string): Promise<void> {
@@ -250,7 +252,8 @@ export class Tab {
     this.#evalSlot = new Slot("evaluate", held);
     this.#nativeSlot = new Slot("input", held);
     try {
-      await withTimeout(view.navigate("about:blank"), OPEN_TIMEOUT_MS, "opening the page");
+      const opening = sendWithFaults("open", () => view.navigate("about:blank"));
+      await withTimeout(opening, timeoutWithFaults("openTimeoutMs", OPEN_TIMEOUT_MS), "opening the page");
       this.#listen(view);
       await this.cdp("reset", "Page.enable");
       const { frameTree } = await this.cdp<{ frameTree: { frame: { id: string } } }>("reset", "Page.getFrameTree");

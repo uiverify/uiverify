@@ -63,11 +63,12 @@ Every test renders on each upload unless the archive carries a module graph. To 
 
 ## How it works
 
-Capture is deliberately cheap and single-browser: it just serializes the DOM (scripts stripped, so the app's JS never re-runs on replay) and buffers resource bytes. All the fidelity work (determinism, cross-browser, the diff, the AI review) happens in UI Verify, off the archive. This package talks to nothing at runtime; it only writes an archive directory the CLI uploads.
+Capture is single-browser: it waits for a stable frame (see Notes), serializes the DOM (scripts stripped, so the app's JS never re-runs on replay) and buffers resource bytes. The rest of the fidelity work (cross-browser, the render's own determinism, the diff, the AI review) happens in UI Verify, off the archive. This package talks to nothing at runtime; it only writes an archive directory the CLI uploads.
 
 ## Notes
 
 - **Peer dependency:** `@playwright/test` (>= 1.40).
-- **Load the assertions you'll snapshot.** Below-the-fold lazy images / content must be loaded (e.g. scroll) before the snapshot, or they replay blank.
-- **Animations:** CSS animations freeze on replay; JS/`requestAnimationFrame`-driven animation is captured at whatever frame is on screen, so pause it (or use `prefers-reduced-motion`) at the snapshot point for stable diffs.
+- **Every snapshot waits for a stable frame.** Before it archives, a snapshot waits for `requestAnimationFrame` animations (a chart's line-draw, a framer-motion entry) to reach their last frame, for fonts and images to load (`loading="lazy"` images below the fold included, so they replay instead of showing broken; their `loading` attribute is put back once the snapshot is taken, but the images stay loaded, so take a mid-test snapshot after any assertion about your own lazy loading), and for the page size to stop changing. Each wait has a deadline, so an animation that never ends is captured as it is after about 4 seconds (sooner when the test is close to its timeout, so the wait never times a test out), with a warning naming the snapshot; stop it while UI Verify captures with `isUIVerify()`. `uiVerify.snapshot(name, { waitForStableFrame: false })` skips the animation and layout wait (fonts and images still load).
+- **Content that loads on scroll** (an infinite list, an IntersectionObserver that mounts a section) is not in the DOM until the test scrolls to it, so scroll there before the snapshot.
+- **Animations:** CSS animations freeze on replay.
 - The test fixture is exposed as `uiVerify` (`async ({ page, uiVerify })`).

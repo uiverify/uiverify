@@ -1,6 +1,6 @@
 {
   "name": "@uiverify/bun",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Bun capture SDK for UI Verify (uiverify.ai): write visual tests with bun test that drive the installed Chrome through Bun.WebView, and each test archives its final DOM (serialized DOM + resource bytes) to be replayed + visually diffed by UI Verify. Produces an archive the uiverify CLI uploads; talks to nothing at runtime.",
   "keywords": [
     "visual-testing",

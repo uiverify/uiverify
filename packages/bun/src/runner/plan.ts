@@ -84,9 +84,10 @@ export function planShards(
   return { shards, servers: options.webServer ? servers : 0 };
 }
 
-/** How many shard processes run at once. `constrained` is what a container allows: an unconstrained process
+/** How many shard processes run at once: one per {@link MEMORY_PER_SHARD} and at most one per CPU, since
+ *  every shard cold-starts its own Chrome. `constrained` is what a container allows: an unconstrained process
  *  can report a huge sentinel, so it is clamped to the machine's memory. */
-export function shardSlots(total: number, constrained: number | undefined): number {
+export function shardSlots(total: number, constrained: number | undefined, cpus: number): number {
   const available = Math.min(constrained || total, total);
-  return Math.max(1, Math.floor(available / MEMORY_PER_SHARD));
+  return Math.max(1, Math.min(Math.floor(available / MEMORY_PER_SHARD), cpus));
 }

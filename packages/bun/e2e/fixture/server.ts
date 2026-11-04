@@ -130,6 +130,17 @@ const pages: Record<string, () => Response | Promise<Response>> = {
         }
       });
     </script>`),
+  "/strict-csp": () =>
+    new Response(
+      `<!doctype html><html><head><link rel="stylesheet" href="/fade.css"></head><body><h1 id="fade">Fading in</h1>
+      <button onclick="this.textContent = 'opacity ' + getComputedStyle(fade).opacity">Read opacity</button>
+      <button onclick="document.adoptedStyleSheets = []">Replace the sheets</button></body></html>`,
+      { headers: { "content-type": "text/html", "content-security-policy": "style-src 'self'" } },
+    ),
+  "/fade.css": () =>
+    new Response("@keyframes fade { from { opacity: 0 } to { opacity: 1 } } #fade { animation: fade 600s forwards; }", {
+      headers: { "content-type": "text/css" },
+    }),
   "/hash": () =>
     html(`<h1>Hash</h1><p id="hash"></p><script>
       const show = () => (document.getElementById("hash").textContent = "hash " + location.hash);

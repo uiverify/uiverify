@@ -7,11 +7,13 @@ published as standalone open-source packages that talk to the UI Verify service 
 - **`packages/playwright`** (`@uiverify/playwright`) — the Playwright capture SDK (swap `@playwright/test`
   for it; each test archives its final UI state for UI Verify to replay + diff). It writes an archive dir the CLI
   uploads; its archive-format types are a **local mirror** of the UI Verify service's wire contract, kept in
-  sync by hand. Build: `tsup` → ESM + d.ts.
+  sync by hand. Build: `tsup` → ESM + d.ts, plus a browser IIFE page script (`src/page/main.ts` →
+  `dist/page-script.js`) it installs in every document to wait for a stable frame before each snapshot.
 - **`packages/vitest`** (`@uiverify/vitest`) and **`packages/bun`** (`@uiverify/bun`) — the Vitest browser-mode and
   Bun capture SDKs, writing the same archive. The in-page capture code both run (settling, seeded random, DOM
   serialization, resource archiving) lives once, in the private **`packages/archive-core`**'s
-  `@uiverify/archive-core/browser` subpath, which may import nothing from Node; each SDK bundles it. The Bun
+  `@uiverify/archive-core/browser` subpath, which may import nothing from Node; each SDK bundles it, and the
+  Playwright SDK's page script bundles its stable-frame wait too. The Bun
   SDK drives Chrome through `Bun.WebView` and is tested on Bun, not Node (see Build / test).
 - **`packages/skills`** (`@uiverify/skills`, `private`) — agent skills: plain `SKILL.md` workflows a coding
   agent runs in the user's repo to set up visual testing, author economical + deterministic stories, and triage

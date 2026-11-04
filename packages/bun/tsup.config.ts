@@ -14,6 +14,8 @@ export default defineConfig([
     sourcemap: false,
     external: ["bun:test", "bun"],
     noExternal: [/^@uiverify\/archive-core/],
+    // Fixed at build time, so only the e2e suite's own build turns the fault seam on (src/faults.ts).
+    define: { "process.env.UIVERIFY_BUN_FAULTS": JSON.stringify(process.env.UIVERIFY_BUN_FAULTS ?? "") },
   },
   {
     entry: { "page-script": "src/page/main.ts" },

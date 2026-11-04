@@ -23,16 +23,20 @@ determinism surface. Integration is one import:
 + import { test, expect } from '@uiverify/playwright';
 ```
 
-**What UI Verify handles server-side (don't hand-fix these):** it re-renders the archived DOM with
-`prefers-reduced-motion` emulated and fonts and images settled. So pixel-level settling — waiting on
-`document.fonts.ready`, sticky-header animation, image decode — is **not** your job. Your job is
-narrower: make sure the **content and state** the archive records is the same every run.
+**What UI Verify handles (don't hand-fix these):** before each snapshot, `@uiverify/playwright` waits for
+the next stable frame: finite `requestAnimationFrame` animations (a chart's line-draw) reach their last
+frame, fonts and images load (`loading="lazy"` images below the fold included), and the page size stops
+changing. Then UI Verify re-renders the archived DOM with `prefers-reduced-motion` emulated. So
+pixel-level settling — waiting on `document.fonts.ready`, a finite entry animation, image decode — is
+**not** your job. Your job is narrower: make sure the **content and state** the archive records is the
+same every run.
 
 One caveat on "animations": the freeze is **replay-side**, via reduced-motion emulation — the archive
 does **not** bake a frozen frame. A CSS animation that honors `prefers-reduced-motion` freezes for free;
 an **infinite** CSS/JS animation that ignores it keeps running on replay and lands on a random frame
-(recipe 8), and a `<canvas>`/`requestAnimationFrame` loop is beyond the media query entirely (recipe 9).
-Those live inside your app, so the fix does too.
+(recipe 8), and a `<canvas>`/`requestAnimationFrame` loop is beyond the media query entirely (recipe 9):
+the snapshot's wait gives up on an endless loop after about 4 s, captures the frame on screen, and prints
+`… was still animating` with the snapshot's id. Those live inside your app, so the fix does too.
 
 ## The core skill: recognize the class, then pull the lever at record time
 
@@ -45,7 +49,7 @@ change; find what injected the variation and pin it before the snapshot.*
 | A list / feed / counts differ | **Live data** from an API | **Mock the endpoint** with a fixed response → recipe 2 |
 | Timestamps, "today", a year, a chart's day axis drift | **The clock** (`Date.now`) at render time | **Freeze `Date`** before navigation → recipe 3 |
 | A banner / chat / consent overlay appears or shifts | **Third-party widget** injecting DOM | **Stub or dismiss** it → recipe 1 + 4 |
-| Blank/placeholder where an image should be | **Lazy content** that never loaded, so its bytes aren't in the archive | **Trigger it at record time** → recipe 5 |
+| Blank/placeholder where a section should be | **Content that mounts on scroll** (an IntersectionObserver, an infinite list), so it never reached the DOM | **Scroll to it at record time** → recipe 5 |
 | Same content, packed or ordered differently each run | **Dynamic layout** that reflows or reorders on its own | **Mask** it (or pin a fixed order/size) → recipe 6 |
 | An infinite JS animation the capturer can't stop (a charting lib's loop, a `<canvas>` spinner) | **App-driven animation** with no final frame | **Branch the component on capture** and render the end state → recipe 7 |
 | A different logo/mascot/hero or list order each run — a whole-*element* diff, not a pixel shift | **`Math.random()` in the render body**, run at **SSR time** in Next.js/Remix | **Pin the variant on `isUIVerify()`** + `UI_VERIFY=1` on the app server → recipe 10 |
@@ -87,9 +91,10 @@ await page.clock.setFixedTime(new Date('2020-01-01T00:00:00Z'));
 await page.getByRole('button', { name: 'Accept All' }).click({ timeout: 4000 }).catch(() => {});
 ```
 
-**5. Trigger lazy content so its bytes land in the archive.** This is the one "settle" that *is* yours —
-not for pixel-stability (UI Verify handles that) but because content that never loaded was never
-recorded. Scroll it into view before the snapshot:
+**5. Trigger content that mounts on scroll so it lands in the archive.** Native `loading="lazy"` images
+(Next.js `<Image>` included) are loaded for you before the snapshot. What isn't is content your app only
+*mounts* once it's scrolled into view (an IntersectionObserver, an infinite list, a "load more" on scroll):
+it was never in the DOM, so it was never recorded. Scroll it into view before the snapshot:
 ```ts
 await page.evaluate(async () => {
   for (let y = 0; y < document.body.scrollHeight; y += innerHeight) {

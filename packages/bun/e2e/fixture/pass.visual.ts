@@ -230,6 +230,20 @@ describe("API", () => {
     await takeSnapshot("panel back");
   });
 
+  test("a page whose CSP allows no inline style still has its animations finished", async (page) => {
+    await page.goto("/strict-csp");
+    await page.getByRole("button", { name: "Read opacity" }).click();
+    await expect(page.getByRole("button", { name: "opacity 1" })).toBeVisible();
+  });
+
+  test("a strict-CSP page that replaces its adopted sheets has its animations finished again by the capture", async (page) => {
+    await page.goto("/strict-csp");
+    await page.getByRole("button", { name: "Replace the sheets" }).click();
+    await takeSnapshot("replaced");
+    await page.getByRole("button", { name: "Read opacity" }).click();
+    await expect(page.getByRole("button", { name: "opacity 1" })).toBeVisible();
+  });
+
   test("an SVG document embedded in the page doesn't break the page script", async (page) => {
     await page.goto("/svg-embed");
     await page.waitUntil("the object", async () => (await page.locator("object").count()) === 1);

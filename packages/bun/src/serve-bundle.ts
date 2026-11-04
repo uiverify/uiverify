@@ -17,11 +17,13 @@ export async function serveBundle({ entrypoint, plugins = [], define = {} }: Ser
   const build = await Bun.build({ entrypoints: [entrypoint], target: "browser", plugins, define });
   if (!build.success) throw new AggregateError(build.logs, `@uiverify/bun: building ${entrypoint} failed`);
   const files = new Map(build.outputs.map((output) => [`/${output.path.replace(/^\.\//, "")}`, output]));
+  // The output keeps the entry's own name (`mount.html`), and its script is an entry point too.
+  const page = build.outputs.find((output) => output.kind === "entry-point" && output.type.startsWith("text/html"));
   const server = Bun.serve({
     port: 0,
     fetch(request) {
       const { pathname } = new URL(request.url);
-      const file = files.get(pathname === "/" ? "/index.html" : pathname);
+      const file = pathname === "/" ? page : files.get(pathname);
       return file ? new Response(file, { headers: { "content-type": file.type } }) : new Response(null, { status: 404 });
     },
   });

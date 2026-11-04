@@ -186,7 +186,7 @@ export function bundleGraph(staticDir: string, producer: ArchiveProducer | null)
  * Storybook build is monolithic — the whole suite is built regardless of what you name — so a preview must
  * name what to render, whereas an archive `--static-dir` is already scoped to the tests you replayed. This
  * is the same positive Storybook sniff `bundleGraph` relies on, kept as one predicate so both decisions
- * read the same marker. A dir that doesn't exist reads as "not Storybook" (an archive/screenshot)
+ * read the same marker; the upload log also uses it to name what it bundles. A dir that doesn't exist reads as "not Storybook" (an archive/screenshot)
  * — the real "missing bundle" error then surfaces at upload, not pre-empted with a misleading hint.
  */
 export function isStorybookStaticDir(staticDir: string): boolean {

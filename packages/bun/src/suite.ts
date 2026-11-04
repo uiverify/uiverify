@@ -6,7 +6,8 @@ import { type CapturedSnapshot, clearArchive, resolveOutDir, writeSnapshot } fro
 import { afterAll, describe as bunDescribe, test as bunTest } from "bun:test";
 import pkg from "../package.json";
 import { StaleTestError, testScope, type TestScope } from "./context";
-import { checkSnapshotName, checkViewportKey, snapshotIds } from "./ids";
+import { timeoutWithFaults } from "./faults";
+import { checkSnapshotName, checkViewportKey, describeDeclaration, describeSnapshotCall, snapshotIds, testId } from "./ids";
 import { type Page, PageImpl } from "./page";
 import { readRunContext } from "./run-context";
 import { Tab, type Viewport } from "./tab";
@@ -62,6 +63,8 @@ interface RunningTest extends TestScope {
   /** Snapshots started, so a test that takes any isn't also snapshotted when it ends. */
   started: number;
   nameUses: Map<string, number>;
+  /** The ids this test's snapshots have taken, and the call that took each. */
+  taken: Map<string, string>;
   pending: Set<Promise<unknown>>;
 }
 
@@ -105,6 +108,16 @@ async function snapshot(running: RunningTest, name: string): Promise<string> {
   const use = (running.nameUses.get(name) ?? 0) + 1;
   running.nameUses.set(name, use);
   const ids = snapshotIds(running, name, use);
+  const call = describeSnapshotCall(name, use);
+  const earlier = running.taken.get(ids.id);
+  if (earlier) {
+    running.nameUses.set(name, use - 1);
+    throw new Error(
+      `@uiverify/bun: ${call} and ${earlier} of this test both get the snapshot id ${JSON.stringify(ids.id)}. Rename one.`,
+    );
+  }
+  // Taken before the capture, so a call made while it runs can't take the id too.
+  running.taken.set(ids.id, call);
   try {
     const page = await running.tab.capture(ids.id);
     running.tab.assertCurrent("takeSnapshot()");
@@ -120,6 +133,7 @@ async function snapshot(running: RunningTest, name: string): Promise<string> {
   } catch (error) {
     // Nothing was written under the id, so a retry of the same name takes it.
     running.nameUses.set(name, use - 1);
+    running.taken.delete(ids.id);
     throw error;
   }
 }
@@ -180,6 +194,8 @@ export function defineSuite<Options extends SuiteOptions>(
     const sourcePath = relative(process.cwd(), file);
     const stack: Frame<Options>[] = [];
     const declarations = new Map<string, number>();
+    /** Each test id, and the declaration that took it: a test named "X (2)" next to a repeated "X". */
+    const testIds = new Map<string, string>();
     let declared = 0;
 
     function describe(name: string, a: Partial<Options> | (() => void), b?: () => void): void {
@@ -207,6 +223,11 @@ export function defineSuite<Options extends SuiteOptions>(
       const key = path.join(" > ");
       const declaration = (declarations.get(key) ?? 0) + 1;
       declarations.set(key, declaration);
+      const id = testId(path, declaration);
+      const declaredAs = describeDeclaration(path, declaration);
+      const other = testIds.get(id);
+      if (other) throw new Error(`@uiverify/bun: ${declaredAs} and ${other} both get the id ${JSON.stringify(id)}. Rename one.`);
+      testIds.set(id, declaredAs);
       const merged = frames.reduce<Options>((options, frame) => ({ ...options, ...frame.options }), defaults);
       const options: Options = { ...merged, ...overrides };
       const viewportKeys = Object.keys(options.viewports);
@@ -231,6 +252,7 @@ export function defineSuite<Options extends SuiteOptions>(
             exclusive: context !== undefined,
             started: 0,
             nameUses: new Map(),
+            taken: new Map(),
             pending: new Set(),
           };
           try {
@@ -242,7 +264,7 @@ export function defineSuite<Options extends SuiteOptions>(
           }
         };
         // Serial even under `bun test --concurrent`: every test of the file drives its one tab.
-        bunTest.serial(variant ? `${name} (${variant})` : name, run, TEST_TIMEOUT_MS);
+        bunTest.serial(variant ? `${name} (${variant})` : name, run, timeoutWithFaults("testTimeoutMs", TEST_TIMEOUT_MS));
       }
     }
 

@@ -4,6 +4,7 @@ import { resolveBrowserApi } from "./browser-api";
 import { clearOncePerRun } from "./clear-once";
 import { fetchResource } from "./fetch-resource";
 import { ensureGraphReporter, graphReporter } from "./graph-reporter";
+import { type IdleResult, recorderFor } from "./network-recorder";
 import type { UiverifyPluginOptions } from "./options";
 import { sharedIdWarning } from "./shared-ids";
 
@@ -20,15 +21,53 @@ const SETUP_MODULE = "@uiverify/vitest/browser-setup";
  *  - registers the `__uiverifyWriteSnapshot` browser command that writes each snapshot to disk (the
  *    browser has no filesystem, so the in-page capture hands the assembled snapshot to this Node command),
  *    and `__uiverifyFetchResource`, which fetches a resource the page itself can't read,
- *  - passes the global `disableAutoSnapshot` option through to the setup file via provide/inject,
+ *  - registers the network-recording commands: on Playwright's Chromium the capture waits for the test's
+ *    requests to finish and archives the bytes the page received (`network-recorder.ts`),
+ *  - passes the global `disableAutoSnapshot` and `networkIdleTimeout` options to the browser via provide/inject,
  *  - clears the previous run's archive when the run starts.
  *
  * The archive lands in the same `./uiverify-archive` directory the `uiverify` CLI uploads.
  */
 declare module "vitest" {
   interface ProvidedContext {
-    __uiverify: { disableAutoSnapshot: boolean };
+    __uiverify: { disableAutoSnapshot: boolean; networkIdleTimeout: number };
   }
+}
+
+/** The default `networkIdleTimeout`. */
+const NETWORK_IDLE_TIMEOUT_MS = 5_000;
+
+/** URLs (without their query) this process already warned were still loading at a capture, so a long poll
+ *  warns once; a watch-mode rerun doesn't repeat the warning. */
+const warnedPending = new Set<string>();
+
+function warnStillLoading(id: string, timeout: number, urls: string[]): void {
+  for (const url of urls) {
+    let key = url;
+    try {
+      const parsed = new URL(url);
+      key = parsed.origin + parsed.pathname;
+    } catch {
+      // Keep the raw URL as the key.
+    }
+    if (warnedPending.has(key)) continue;
+    warnedPending.add(key);
+    console.warn(
+      `[uiverify] "${id}": captured while ${url} was still loading after ${timeout} ms. If it never finishes (a stream or long poll), mock it in the test, or set networkIdleTimeout: 0 to skip the wait.`,
+    );
+  }
+}
+
+const NOTHING_RECORDED: IdleResult = { pending: [], recorded: [] };
+
+/** Move a Playwright page's pointer just outside the viewport, which hovers nothing. Between tests the
+ *  pointer otherwise stays where the last one left it, and hovers whatever the next test renders there, so a
+ *  capture would record a hover the test never made and that comes and goes with test order. */
+async function parkPointer(ctx: unknown): Promise<void> {
+  const page: unknown = typeof ctx === "object" && ctx !== null ? Reflect.get(ctx, "page") : undefined;
+  const mouse: unknown = typeof page === "object" && page !== null ? Reflect.get(page, "mouse") : undefined;
+  const move: unknown = typeof mouse === "object" && mouse !== null ? Reflect.get(mouse, "move") : undefined;
+  if (typeof move === "function") await Reflect.apply(move, mouse, [-1, -1]);
 }
 
 export function uiverifyPlugin(options: UiverifyPluginOptions = {}): Plugin {
@@ -48,7 +87,12 @@ export function uiverifyPlugin(options: UiverifyPluginOptions = {}): Plugin {
       // this project-level setting is ignored (the plugin inside `projects`), `configureVitest` below adds
       // the reporter to the root instead.
       reporters: ["default", graphReporter(outDir)],
-      provide: { __uiverify: { disableAutoSnapshot: options.disableAutoSnapshot ?? false } },
+      provide: {
+        __uiverify: {
+          disableAutoSnapshot: options.disableAutoSnapshot ?? false,
+          networkIdleTimeout: options.networkIdleTimeout ?? NETWORK_IDLE_TIMEOUT_MS,
+        },
+      },
       browser: {
         commands: {
           __uiverifyWriteSnapshot: async (
@@ -61,6 +105,53 @@ export function uiverifyPlugin(options: UiverifyPluginOptions = {}): Plugin {
             writeSnapshot(outDir, snapshot);
           },
           __uiverifyFetchResource: async (_ctx: unknown, url: string) => fetchResource(url),
+          // The network commands are best-effort: a failure answers "nothing recorded" and the capture takes
+          // the path it takes without recording, never failing the test.
+          __uiverifyWatchNetwork: async (ctx: unknown, href: string): Promise<number | null> => {
+            try {
+              return (await recorderFor(ctx)?.register(href)) ?? null;
+            } catch {
+              return null;
+            }
+          },
+          __uiverifyWaitForNetworkIdle: async (
+            ctx: unknown,
+            token: number,
+            timeout: number,
+            id: string,
+            test: string,
+          ): Promise<IdleResult> => {
+            try {
+              const result = (await recorderFor(ctx)?.waitForIdle(token, timeout, test)) ?? NOTHING_RECORDED;
+              warnStillLoading(id, timeout, result.pending);
+              return result;
+            } catch {
+              return NOTHING_RECORDED;
+            }
+          },
+          __uiverifyBeginNetworkTest: async (ctx: unknown, token: number): Promise<void> => {
+            try {
+              recorderFor(ctx)?.beginTest(token);
+            } catch {
+              // Best-effort, like the other network commands.
+            }
+          },
+          // Best-effort too: another provider has no pointer to move, and the capture then records whatever
+          // hover the run leaves behind.
+          __uiverifyParkPointer: async (ctx: unknown): Promise<void> => {
+            try {
+              await parkPointer(ctx);
+            } catch {
+              // Best-effort, like the network commands.
+            }
+          },
+          __uiverifyRecordedResources: async (ctx: unknown, token: number, urls: string[]) => {
+            try {
+              return (await recorderFor(ctx)?.recorded(token, urls)) ?? {};
+            } catch {
+              return {};
+            }
+          },
         },
       },
     },

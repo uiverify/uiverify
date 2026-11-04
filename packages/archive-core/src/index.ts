@@ -22,3 +22,4 @@ export { resolveOutDir } from "./out-dir";
 export { UI_VERIFY_GLOBAL, UI_VERIFY_MARKER_SCRIPT, UI_VERIFY_UA_MARKER, uiVerifyUserAgent } from "./ui-verify";
 export { clearArchive, writeSnapshot } from "./write";
 export { finalizeArchive } from "./finalize";
+export { stillAnimatingWarning } from "./browser/messages";

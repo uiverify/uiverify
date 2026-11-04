@@ -1,12 +1,8 @@
 import path from "node:path";
 import { test as base } from "@playwright/test";
-import {
-  type ArchivedSnapshotParams,
-  resolveOutDir,
-  UI_VERIFY_MARKER_SCRIPT,
-  uiVerifyUserAgent,
-} from "@uiverify/archive-core";
-import { PlaywrightArchiver } from "./archiver";
+import { resolveOutDir, UI_VERIFY_MARKER_SCRIPT, uiVerifyUserAgent } from "@uiverify/archive-core";
+import { PlaywrightArchiver, type SnapshotOptions } from "./archiver";
+import { pageScriptSource } from "./page-script";
 
 /**
  * The `uiVerify` test fixture. Swap `import { test, expect } from "@playwright/test"` for this module
@@ -15,8 +11,9 @@ import { PlaywrightArchiver } from "./archiver";
  * fixture and call `uiVerify.snapshot("after login")`.
  */
 export interface UiVerifyFixture {
-  /** Archive the page's current DOM as a snapshot. `name` distinguishes multiple snapshots in one test. */
-  snapshot: (name?: string, params?: ArchivedSnapshotParams) => Promise<string>;
+  /** Archive the page's DOM as a snapshot, once its frame is stable. `name` distinguishes multiple snapshots
+   *  in one test; `{ waitForStableFrame: false }` captures the page as it is right now. */
+  snapshot: (name?: string, options?: SnapshotOptions) => Promise<string>;
   /** Turn off the automatic end-of-test snapshot for this test (e.g. when you snapshot manually). */
   disableAutoSnapshot: () => void;
 }
@@ -71,16 +68,24 @@ export const test = base.extend<UiVerifyFixtures, UiVerifyWorkerFixtures>({
       // signal the capturer sets at replay). Registered before the test navigates, so it applies to the
       // first goto.
       await page.addInitScript({ content: UI_VERIFY_MARKER_SCRIPT });
+      // The page script tracks the app's animation frames from before its first script runs, so a capture
+      // can wait for a JS animation to finish.
+      await page.addInitScript({ content: pageScriptSource() });
       const idBase = testInfo.titlePath.join(" > ");
       const title =
         testInfo.titlePath.length > 1 ? testInfo.titlePath.slice(0, -1).join(" > ") : (testInfo.titlePath[0] ?? "");
       const configDir = testInfo.config.configFile ? path.dirname(testInfo.config.configFile) : testInfo.config.rootDir;
       const sourcePath = path.relative(configDir, testInfo.file).split(path.sep).join("/");
-      const archiver = new PlaywrightArchiver(page, { outDir: resolveOutDir(), idBase, title, sourcePath });
+      // Fixture setup runs inside the test's timeout, so time counted from here only errs long by the moment
+      // before it.
+      const startedAt = Date.now();
+      const timeLeft = () =>
+        testInfo.timeout > 0 ? testInfo.timeout - (Date.now() - startedAt) : Number.POSITIVE_INFINITY;
+      const archiver = new PlaywrightArchiver(page, { outDir: resolveOutDir(), idBase, title, sourcePath, timeLeft });
       let auto = true;
 
       await use({
-        snapshot: (name, params) => archiver.capture(name ?? "", params ?? {}),
+        snapshot: (name, options) => archiver.capture(name ?? "", options ?? {}),
         disableAutoSnapshot: () => {
           auto = false;
         },

@@ -93,9 +93,9 @@ process.exitCode = await run({
 ```
 
 `run()` starts the web servers (with `PORT` and `UI_VERIFY=1` set), runs every `*.visual.ts` in its own
-`bun test` process, and writes the archive's index. Its test processes ignore the app's `bunfig.toml` (a test
-preload such as happy-dom replaces `fetch`), so fixtures must not import modules that need a loader or
-`define` registered there.
+`bun test` process (at most one at once per CPU and per 768 MiB of memory), and writes the archive's index.
+Its test processes ignore the app's `bunfig.toml` (a test preload such as happy-dom replaces `fetch`), so
+fixtures must not import modules that need a loader or `define` registered there.
 
 ## What every capture pins
 
@@ -120,7 +120,8 @@ routes before the first.
 ## Notes
 
 - `page.addInitScript(fn)` sends `fn` as source: it can't use variables from around it.
-- `serveBundle({ entrypoint, plugins, define })` builds and serves a component page. `Bun.build` inlines no
+- `serveBundle({ entrypoint, plugins, define })` builds and serves a component page at `/`, whatever the HTML
+  entry is named. `Bun.build` inlines no
   env, so a `process.env.PUBLIC_*` the components read goes in `define`. Fonts are waited for once they are in
   use: a component that measures its text on mount should have its entry await `document.fonts.load(…)` before
   rendering.

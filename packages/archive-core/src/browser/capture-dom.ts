@@ -1,15 +1,16 @@
 import type { serializedNodeWithId } from "@rrweb/types";
-import { snapshot } from "rrweb-snapshot";
-import type { CapturedResource } from "../archive-types";
+import { createMirror, type Mirror, snapshot } from "rrweb-snapshot";
+import { ARCHIVED_PSEUDO_CLASSES, type ArchivedSnapshot, type CapturedResource } from "../archive-types";
 import { inlineBlobImages } from "./blob-urls";
+import { allElements } from "./settle";
 import {
   archiveReferencedResources,
   beforeDeadline,
-  type FetchOutsidePage,
   fontFaceKey,
   isModuleOrData,
   MAX_RESOURCE_BYTES,
   nativeFetch,
+  type ResourceSources,
 } from "./resources";
 
 /** Resource Timing, read through the real `performance` captured at module load: a capture can run while a
@@ -27,15 +28,31 @@ export function raiseResourceTimingBuffer(): void {
 /** The live document, serialized by rrweb. `slimDOM.script` drops `<script>` nodes: the archive replays as
  *  static, settled pixels, so the app's JS must not re-run. `inlineStylesheet` folds same-origin CSS into the
  *  DOM; images stay URLs, served from the resource archive. `recordCanvas` captures canvas pixels, but a
- *  tainted canvas makes it throw, so it falls back to skipping canvas. `null` when rrweb serializes nothing. */
-export function serializeDocument(): serializedNodeWithId | null {
+ *  tainted canvas makes it throw, so it falls back to skipping canvas. `mirror` receives each node's id, for
+ *  {@link recordPseudoClasses}. `null` when rrweb serializes nothing. */
+export function serializeDocument(mirror: Mirror = createMirror()): serializedNodeWithId | null {
   const serialize = (recordCanvas: boolean) =>
-    snapshot(document, { inlineStylesheet: true, recordCanvas, slimDOM: { script: true } });
+    snapshot(document, { mirror, inlineStylesheet: true, recordCanvas, slimDOM: { script: true } });
   try {
     return serialize(true);
   } catch {
+    mirror.reset();
     return serialize(false);
   }
+}
+
+/** The elements in each interactive pseudo-class right now (a hovered button and its ancestors, a focused
+ *  input), open shadow roots included, by their id in the `mirror` the document was just serialized with.
+ *  `undefined` when nothing is hovered, focused or pressed. */
+export function recordPseudoClasses(mirror: Mirror): ArchivedSnapshot["pseudoClasses"] {
+  const elements = allElements(document);
+  const recorded: NonNullable<ArchivedSnapshot["pseudoClasses"]> = {};
+  for (const cls of ARCHIVED_PSEUDO_CLASSES) {
+    const ids = elements.filter((el) => el.matches(`:${cls}`)).map((el) => mirror.getId(el));
+    const serialized = ids.filter((id) => id > 0);
+    if (serialized.length > 0) recorded[cls] = serialized;
+  }
+  return Object.keys(recorded).length > 0 ? recorded : undefined;
 }
 
 /** Where a capture's "could not archive" warnings go: the console, unless the page's console isn't the
@@ -81,10 +98,8 @@ export async function inlineBlobs(
 export async function collectResources(
   id: string,
   dom: serializedNodeWithId,
-  options: {
+  options: ResourceSources & {
     loaded?: Iterable<string>;
-    fetchOutsidePage?: FetchOutsidePage;
-    deadline?: number;
     warn?: Warn;
     skipFrames?: boolean;
   } = {},
@@ -104,6 +119,7 @@ export async function collectResources(
   const { resources, missing } = await archiveReferencedResources(loaded, JSON.stringify(dom), {
     pageOrigin: location.origin,
     loadedFontFaces,
+    fetchRecorded: options.fetchRecorded,
     fetchOutsidePage: options.fetchOutsidePage,
     deadline: options.deadline,
   });

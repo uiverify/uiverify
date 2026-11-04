@@ -8,7 +8,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir, totalmem } from "node:os";
+import { availableParallelism, tmpdir, totalmem } from "node:os";
 import { join, relative } from "node:path";
 import { clearArchive, finalizeArchive, resolveOutDir } from "@uiverify/archive-core";
 import { RUN_ENV, type ShardContext } from "./run-context";
@@ -87,7 +87,7 @@ export async function run(options: RunOptions = {}): Promise<number> {
       servers.push(startServer([command === "bun" ? bun : command, ...rest], port, env, webServer?.ready));
     }
     await Promise.all(servers.map((server) => server.ready));
-    const slots = shardSlots(totalmem(), process.constrainedMemory?.());
+    const slots = shardSlots(totalmem(), process.constrainedMemory?.(), availableParallelism());
     const queue = [...plan.shards];
     let failed = false;
     const runShards = async () => {

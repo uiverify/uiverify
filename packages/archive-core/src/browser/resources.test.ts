@@ -80,7 +80,7 @@ describe("archiveResources", () => {
     const favicon = "https://www.google.com/s2/favicons?domain=github.com";
     const { archiveResources } = await loadWithPageFetch(rejecting());
     const outside = vi.fn(async () => ({ resource: { contentType: "image/png", status: 200, body: "iVBO" } }));
-    const archived = await archiveResources([favicon], outside);
+    const archived = await archiveResources([favicon], { fetchOutsidePage: outside });
     expect(outside).toHaveBeenCalledWith(favicon);
     expect(archived.resources[favicon]?.body).toBe("iVBO");
     expect(archived.missing).toEqual([]);
@@ -92,7 +92,7 @@ describe("archiveResources", () => {
     const { archiveResources } = await loadWithPageFetch(
       vi.fn(async () => new Response("busy", { status: 503, headers: { "content-type": "text/html" } })),
     );
-    const archived = await archiveResources([FONT_URL], async () => ({ error: "HTTP 503" }));
+    const archived = await archiveResources([FONT_URL], { fetchOutsidePage: async () => ({ error: "HTTP 503" }) });
     expect(archived.resources).toEqual({});
     expect(archived.missing).toEqual([{ url: FONT_URL, reason: "HTTP 503" }]);
   });
@@ -103,7 +103,7 @@ describe("archiveResources", () => {
       vi.fn(async () => new Response("png", { status: 429, headers: { "content-type": "image/png" } })),
     );
     const outside = vi.fn(async () => ({ resource: { contentType: "image/png", status: 200, body: "cG5n" } }));
-    const archived = await archiveResources([FONT_URL], outside);
+    const archived = await archiveResources([FONT_URL], { fetchOutsidePage: outside });
     expect(outside).toHaveBeenCalledWith(FONT_URL);
     expect(archived.resources[FONT_URL]?.status).toBe(200);
   });
@@ -113,20 +113,51 @@ describe("archiveResources", () => {
   it("reports an error response that isn't a visual asset", async () => {
     const avatar = "https://avatar.example.com/42";
     const { archiveResources } = await loadWithPageFetch(rejecting());
-    const archived = await archiveResources([avatar], async () => ({
-      resource: { contentType: "application/json", status: 429, body: "e30=" },
-    }));
+    const archived = await archiveResources([avatar], {
+      fetchOutsidePage: async () => ({ resource: { contentType: "application/json", status: 429, body: "e30=" } }),
+    });
     expect(archived.missing).toEqual([{ url: avatar, reason: "HTTP 429" }]);
   });
 
   it("skips a resource over the size cap and reports it", async () => {
     const { archiveResources, MAX_RESOURCE_BYTES } = await loadWithPageFetch(rejecting());
     const body = Buffer.alloc(MAX_RESOURCE_BYTES + 3).toString("base64");
-    const archived = await archiveResources([FONT_URL], async () => ({
-      resource: { contentType: "font/woff2", status: 200, body },
-    }));
+    const archived = await archiveResources([FONT_URL], {
+      fetchOutsidePage: async () => ({ resource: { contentType: "font/woff2", status: 200, body } }),
+    });
     expect(archived.resources).toEqual({});
     expect(archived.missing).toEqual([{ url: FONT_URL, reason: "larger than the 10 MB per-resource limit" }]);
+  });
+});
+
+describe("archiveResources with the page's recorded responses", () => {
+  /** Catches a re-fetch replacing the bytes the page drew: a dynamic or one-time URL answers differently the
+   *  second time. */
+  it("uses a recorded response over a fetch, and fetches only what wasn't recorded", async () => {
+    const recordedUrl = "https://cdn.example.com/avatar.png";
+    const pageFetch = serving({
+      [recordedUrl]: ["image/png", "second download"],
+      [FONT_URL]: ["font/woff2", FONT_BYTES],
+    });
+    const { archiveResources } = await loadWithPageFetch(pageFetch);
+    const asked: string[][] = [];
+    const archived = await archiveResources([recordedUrl, FONT_URL], {
+      fetchRecorded: async (urls) => {
+        asked.push(urls);
+        return { [recordedUrl]: { contentType: "image/png", status: 200, body: btoa("what the page drew") } };
+      },
+    });
+    expect(asked).toEqual([[recordedUrl, FONT_URL]]);
+    expect(atob(archived.resources[recordedUrl]?.body ?? "")).toBe("what the page drew");
+    expect(archived.resources[FONT_URL]?.contentType).toBe("font/woff2");
+    expect(pageFetch).toHaveBeenCalledTimes(1);
+  });
+
+  /** Catches a failed lookup costing the snapshot resources it can still fetch. */
+  it("fetches everything when the lookup fails", async () => {
+    const { archiveResources } = await loadWithPageFetch(serving({ [FONT_URL]: ["font/woff2", FONT_BYTES] }));
+    const failed = await archiveResources([FONT_URL], { fetchRecorded: async () => Promise.reject(new Error("gone")) });
+    expect(Object.keys(failed.resources)).toEqual([FONT_URL]);
   });
 });
 
@@ -399,7 +430,7 @@ describe("archiveResources deadline", () => {
     });
     const { archiveResources, PAST_DEADLINE } = await loadWithPageFetch(pageFetch);
     const started = performance.now();
-    const archived = await archiveResources([fast, slow], undefined, performance.now() + 50);
+    const archived = await archiveResources([fast, slow], { deadline: performance.now() + 50 });
     expect(performance.now() - started).toBeLessThan(500);
     expect(Object.keys(archived.resources)).toEqual([fast]);
     expect(archived.missing).toEqual([{ url: slow, reason: PAST_DEADLINE }]);

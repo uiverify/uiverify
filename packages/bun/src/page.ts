@@ -1,4 +1,4 @@
-import { StaleTestError } from "./context";
+import { StaleTestError, testScope } from "./context";
 import { PAGE_HELPERS_GLOBAL } from "./page/protocol";
 import type { RouteHandler, RoutePattern } from "./routes";
 import type { Tab } from "./tab";
@@ -119,9 +119,14 @@ function parseSelector(selector: string): Step {
 
 export class PageImpl implements Page {
   #lock: Promise<unknown> = Promise.resolve();
-  #pendingInitScripts = new Set<Promise<unknown>>();
+  /** Each registration still in flight, by the generation of the test that made it. */
+  #pendingInitScripts = new Map<Promise<unknown>, number>();
 
   constructor(readonly tab: Tab) {}
+
+  #generation(): number {
+    return testScope.getStore()?.generation ?? this.tab.generation;
+  }
 
   #root(): LocatorImpl {
     return new LocatorImpl(this, []);
@@ -147,9 +152,12 @@ export class PageImpl implements Page {
   }
 
   async goto(url: string): Promise<void> {
-    // A registration a timed-out test made fails its generation check, which isn't this test's failure.
-    for (const settled of await Promise.allSettled(this.#pendingInitScripts)) {
-      if (settled.status === "rejected" && !(settled.reason instanceof StaleTestError)) throw settled.reason;
+    // Only this test's: one a timed-out test left waiting on a browser that never answers isn't this test's
+    // to wait out, or to fail with.
+    const generation = this.#generation();
+    const own = [...this.#pendingInitScripts].filter((entry) => entry[1] === generation).map(([registering]) => registering);
+    for (const settled of await Promise.allSettled(own)) {
+      if (settled.status === "rejected") throw settled.reason;
     }
     await this.tab.navigate(this.#resolve(url));
   }
@@ -169,7 +177,7 @@ export class PageImpl implements Page {
 
   addInitScript(script: () => unknown): Promise<void> {
     const registering = this.tab.addInitScript(`(${script.toString()})();`);
-    this.#pendingInitScripts.add(registering);
+    this.#pendingInitScripts.set(registering, this.#generation());
     void registering.finally(() => this.#pendingInitScripts.delete(registering)).catch(() => {});
     return registering;
   }

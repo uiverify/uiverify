@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { checkSnapshotName, checkViewportKey, snapshotIds, testId } from "./ids";
+import { checkSnapshotName, checkViewportKey, describeDeclaration, describeSnapshotCall, snapshotIds, testId } from "./ids";
 
 const path = ["app.visual.ts", "Home", "workspace list"];
 
@@ -47,5 +47,22 @@ describe("snapshot ids", () => {
     expect(() => checkSnapshotName("mobile", ["", "mobile"])).toThrow("also one of this test's viewport keys");
     expect(() => checkSnapshotName("", ["", "mobile"])).not.toThrow();
     expect(() => checkViewportKey("x::y")).toThrow('contains "::"');
+  });
+});
+
+describe("naming tests and snapshot calls in errors", () => {
+  test("a repeat by its ordinal, a first one by name alone", () => {
+    expect(describeDeclaration(path, 1)).toBe('the test "app.visual.ts > Home > workspace list"');
+    expect(describeDeclaration(path, 2)).toBe('the 2nd test named "app.visual.ts > Home > workspace list"');
+    expect(describeSnapshotCall("", 1)).toBe("takeSnapshot()");
+    expect(describeSnapshotCall("open", 3)).toBe('the 3rd takeSnapshot("open")');
+    expect([11, 12, 13, 21, 22, 101].map((n) => describeSnapshotCall("", n).split(" ")[1])).toEqual([
+      "11th",
+      "12th",
+      "13th",
+      "21st",
+      "22nd",
+      "101st",
+    ]);
   });
 });

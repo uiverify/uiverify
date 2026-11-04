@@ -82,6 +82,18 @@ describe("settle", () => {
     expect(lazy.complete).toBe(true);
   });
 
+  /** Catches the rewrite depending on load timing: a lazy image that happened to load before the capture
+   *  would keep `loading="lazy"` in the archived DOM while a slower run archives `eager`, so the same page
+   *  archives differently run to run. */
+  it("switches a lazy image that has already loaded to eager too", async () => {
+    const loaded = new FakeImage();
+    loaded.loading = "lazy";
+    loaded.complete = true;
+    stubPage([loaded]);
+    await settle();
+    expect(loaded.loading).toBe("eager");
+  });
+
   /** Catches settle ignoring CSS backgrounds (incl. ::before/::after): a background still loading at
    *  capture has no resource-timing entry yet, so it would be left out of the archive. */
   it("loads every element and pseudo-element background image before returning", async () => {

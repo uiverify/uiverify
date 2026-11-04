@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
@@ -53,8 +53,19 @@ const dom = (run: Run, id: string) => {
 };
 
 beforeAll(async () => {
-  const build = Bun.spawnSync(["pnpm", "build"], { cwd: packageDir, stdout: "inherit", stderr: "inherit" });
+  const build = Bun.spawnSync(["pnpm", "build"], {
+    cwd: packageDir,
+    env: { ...process.env, UIVERIFY_BUN_FAULTS: "1" },
+    stdout: "inherit",
+    stderr: "inherit",
+  });
   if (build.exitCode !== 0) throw new Error("building @uiverify/bun failed");
+}, E2E_TIMEOUT_MS);
+
+// Leave dist/ as it ships, seam off: CI packs it next for the tarball check.
+afterAll(() => {
+  const build = Bun.spawnSync(["pnpm", "build"], { cwd: packageDir, env: { ...process.env, UIVERIFY_BUN_FAULTS: "" } });
+  if (build.exitCode !== 0) throw new Error("rebuilding @uiverify/bun without the fault seam failed");
 }, E2E_TIMEOUT_MS);
 
 describe("a passing run", () => {
@@ -67,7 +78,7 @@ describe("a passing run", () => {
     expect(run.output).not.toContain("(fail)");
     expect(run.output).not.toContain("could not archive");
     expect(run.code).toBe(0);
-    expect(run.output).toMatch(/Archived 56 snapshots to .+ in [\d.]+s/);
+    expect(run.output).toMatch(/Archived 58 snapshots to .+ in [\d.]+s/);
     expect(Object.keys(run.index.entries).sort()).toEqual([...run.snapshots.keys()].sort());
     expect(run.index.producer?.name).toBe("@uiverify/bun");
   });
@@ -252,6 +263,13 @@ describe("a passing run", () => {
     expect(ports).toEqual([ports[0], ports[1], ports[0], ports[1]]);
   });
 
+  /** Catches a page's style-src CSP blocking the animation-freeze style, so a capture lands mid-animation. */
+  test("a page with a strict style-src is captured with its animations finished", () => {
+    expect(dom(run, "pass.visual.ts > API > a page whose CSP allows no inline style still has its animations finished")).toContain(
+      '"textContent":"opacity 1"',
+    );
+  });
+
   test("a shadow root's marks don't reach the archive", () => {
     expect(dom(run, "pass.visual.ts > API > a role locator inside a shadow root is visible and clickable")).not.toContain("data-vt-ref");
   });
@@ -277,6 +295,10 @@ describe("a run with failing tests", () => {
     expect(run.output).toContain("1 takeSnapshot() call was not awaited");
     expect(run.output).toContain('the snapshot name "a::b" contains "::"');
     expect(run.output).toContain('the snapshot name "mobile" is also one of this test\'s viewport keys');
+    expect(run.output).toContain(
+      'takeSnapshot("same #2") and the 2nd takeSnapshot("same") of this test both get the snapshot id "fails.visual.ts > Failures > a snapshot named like a repeat of another is refused::same #2"',
+    );
+    expect(run.output).toContain('takeSnapshot("both #2") and the 2nd takeSnapshot("both") of this test both get the snapshot id');
     expect(run.output).toContain("Uncaught (in promise) Error: an unhandled rejection");
     expect(run.output).toContain("Uncaught Error: timer threw");
     expect(run.output).toMatch(/the page reported errors:\nGET http:\/\/127\.0\.0\.1:\d+\/routed \(route \*\*\/routed\): the document route broke\n\nThe test failed with: net::ERR_FAILED/);
@@ -290,6 +312,58 @@ describe("a run with failing tests", () => {
     expect(run.snapshots.has("fails.visual.ts > Failures > a page error fails its test")).toBe(false);
     expect(run.snapshots.has("fails.visual.ts > Failures > an error on an earlier document of the test fails it")).toBe(false);
     expect(run.snapshots.has("fails.visual.ts > Failures > an unhandled rejection fails its test")).toBe(false);
+  });
+});
+
+describe("a run whose tests time out, or whose browser calls hang or fail", () => {
+  let run: Run;
+  beforeAll(async () => {
+    run = await runFixture("timeouts.visual.ts", "open.visual.ts");
+  }, E2E_TIMEOUT_MS);
+  const ownPage = (name: string) => {
+    const page = dom(run, `timeouts.visual.ts > Timeouts > ${name}`);
+    expect(page).toContain('"textContent":"Locators"');
+    expect(page).not.toContain('"textContent":"Timers"');
+  };
+
+  test("only the tests that time out or can't open the page fail", () => {
+    expect(run.code).toBe(1);
+    expect(run.output.match(/\(fail\) Timeouts > times out: /g)?.length).toBe(5);
+    expect(run.output.match(/\(fail\) /g)?.length).toBe(7);
+    // Every fault was reached: a test that passed without its fault would test nothing.
+    expect(run.output.match(/^\[fault\] /gm)?.length).toBe(5);
+  });
+
+  /** Catches a capture that outlived its test writing the next test's page under its own id. */
+  test("a capture still running at the timeout writes nothing", () => {
+    expect(run.snapshots.has("timeouts.visual.ts > Timeouts > times out: a capture still running::late")).toBe(false);
+    ownPage("after a capture outlived its test");
+  });
+
+  /** Catches a goto from a timed-out test navigating the next test's page, on either of goto's paths. */
+  test("a goto after the timeout, plain or with a hash, leaves the next test's page alone", () => {
+    ownPage("after a late goto");
+    ownPage("after a late hash goto");
+  });
+
+  /** Catches a timed-out test's late failure being reported once the next test has begun. */
+  test("an error thrown after the timeout isn't reported", () => {
+    expect(run.output).not.toContain("thrown after its test timed out");
+    expect(run.output).not.toContain("Unhandled error between tests");
+    ownPage("after a late error");
+  });
+
+  /** Catches the reset queueing behind a call the browser never answers instead of replacing the view. */
+  test("a wedged view is replaced in time for the next test", () => {
+    ownPage("after a wedged view");
+  });
+
+  /** Catches a half-set-up page being kept (no routes, no page errors), and an open that never finishes
+   *  holding every later test. */
+  test("a page that fails to open fails only its own test, and the next one opens afresh", () => {
+    expect(run.output).toContain("opening the page took longer than 3s");
+    expect(run.output).toContain("reset Page.enable failed (an injected fault)");
+    expect(dom(run, "open.visual.ts > Opening > the next test opens a fresh page, routed")).toContain("routed item");
   });
 });
 
@@ -387,6 +461,18 @@ describe("two files with the same name", () => {
     const run = await runFixture("dup/a/same.visual.ts", "dup/b/same.visual.ts");
     expect(run.code).toBe(1);
     expect(run.output).toContain('Two tests produced the snapshot id "same.visual.ts > same"');
+  }, E2E_TIMEOUT_MS);
+});
+
+describe("a test named like a repeat of another", () => {
+  /** Catches a test literally named "X (2)" next to a repeated "X" failing only at the write, with a message
+   *  that names neither test. */
+  test("fails the run, naming both tests", async () => {
+    const run = await runFixture("numbered.visual.ts");
+    expect(run.code).toBe(1);
+    expect(run.output).toContain(
+      'the test "numbered.visual.ts > X (2)" and the 2nd test named "numbered.visual.ts > X" both get the id "numbered.visual.ts > X (2)"',
+    );
   }, E2E_TIMEOUT_MS);
 });
 

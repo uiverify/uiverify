@@ -1,23 +1,17 @@
+import { sleep } from "./real-timers";
+
 /**
  * Record-time settling: wait for fonts and images (CSS background images included) to finish loading
  * before we serialize, so every visible resource is actually in the archive. The archive is a static snapshot, so a font still loading at
  * capture is absent (it shows as a fallback glyph) and an image still loading is absent (it shows broken) -
  * both are pure run-to-run flakes an author would otherwise chase with a manual settle helper.
  *
- * Time-boxed with the REAL `setTimeout`, captured at module load before a test can install fake timers
- * (`vi.useFakeTimers()` for a frozen clock), so a hung resource can never stall a capture and the cap
- * still fires in wall-clock time.
+ * Time-boxed with the real `setTimeout` ({@link sleep}), so a hung resource can never stall a capture.
  */
 const SETTLE_TIMEOUT_MS = 3000;
-const realSetTimeout: (fn: () => void, ms: number) => unknown =
-  typeof setTimeout === "function" ? setTimeout.bind(globalThis) : () => 0;
-
-function timeout(ms: number): Promise<void> {
-  return new Promise((resolve) => realSetTimeout(() => resolve(), ms));
-}
 
 function cap(work: Promise<unknown>): Promise<unknown> {
-  return Promise.race([work, timeout(SETTLE_TIMEOUT_MS)]);
+  return Promise.race([work, sleep(SETTLE_TIMEOUT_MS)]);
 }
 
 /** Load every registered `@font-face` and wait for the font set to be ready. Exported so a test can call
@@ -56,15 +50,17 @@ export function allElements(root: ParentNode): Element[] {
 }
 
 /** How {@link settle} treats web fonts and lazy images. The defaults suit an isolated component; a real page
- *  that has already mounted and measured wants `{ fonts: "used", lazyToEager: false }`. */
+ *  that has already mounted and measured wants `fonts: "used"`. */
 export interface SettleOptions {
   /** `"all"` (the default) loads every registered `@font-face` first, as {@link preloadFonts} does. `"used"`
    *  only waits for the faces the page already requested: loading every declared face would request subsets a
    *  real page never draws. */
   fonts?: "all" | "used";
-  /** Switch not-yet-loaded `loading="lazy"` images to eager (the default). Off when the browser already loads
-   *  lazy images up front, where rewriting the attribute would only make the DOM differ run to run. */
+  /** Switch `loading="lazy"` images to eager (the default), so one below the viewport loads and is archived.
+   *  Off when the browser already loads lazy images up front, where the rewrite would gain nothing. */
   lazyToEager?: boolean;
+  /** Collects the images switched to eager, for a caller that puts their attribute back after the capture. */
+  switched?: HTMLImageElement[];
 }
 
 async function waitForUsedFonts(): Promise<void> {
@@ -85,12 +81,19 @@ async function waitForUsedFonts(): Promise<void> {
  *  viewport would never start loading on their own, so they're switched to eager first unless
  *  `lazyToEager` is off. A background image is only archived once the browser has fetched it, so each is
  *  loaded through an `Image` (a cache hit when it already is). */
-export async function settle({ fonts = "all", lazyToEager = true }: SettleOptions = {}): Promise<void> {
+export async function settle({ fonts = "all", lazyToEager = true, switched }: SettleOptions = {}): Promise<void> {
   if (typeof document === "undefined") return;
   await (fonts === "used" ? waitForUsedFonts() : preloadFonts());
   const elements = allElements(document);
   const images = elements.filter((el): el is HTMLImageElement => el instanceof HTMLImageElement);
-  if (lazyToEager) for (const img of images) if (img.loading === "lazy" && !img.complete) img.loading = "eager";
+  // Every lazy image, loaded or not, so the archived attribute doesn't depend on which had loaded in time.
+  if (lazyToEager) {
+    for (const img of images) {
+      if (img.loading !== "lazy") continue;
+      img.loading = "eager";
+      switched?.push(img);
+    }
+  }
   const backgrounds = new Set<string>();
   for (const el of elements) {
     for (const pseudo of [null, "::before", "::after"]) {

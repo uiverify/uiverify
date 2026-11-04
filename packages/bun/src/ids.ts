@@ -12,6 +12,24 @@ export function testId(path: string[], declaration: number): string {
   return declaration > 1 ? `${joined} (${declaration})` : joined;
 }
 
+function ordinal(n: number): string {
+  const suffixes = ["th", "st", "nd", "rd"];
+  const last = n % 100;
+  return `${n}${suffixes[(last - 20) % 10] ?? suffixes[last] ?? "th"}`;
+}
+
+/** A test declaration in words, for an error that names two of them. */
+export function describeDeclaration(path: string[], declaration: number): string {
+  const joined = JSON.stringify(path.join(" > "));
+  return declaration > 1 ? `the ${ordinal(declaration)} test named ${joined}` : `the test ${joined}`;
+}
+
+/** A `takeSnapshot` call in words: the `use`-th of that name in its test. */
+export function describeSnapshotCall(name: string, use: number): string {
+  const call = `takeSnapshot(${name ? JSON.stringify(name) : ""})`;
+  return use > 1 ? `the ${ordinal(use)} ${call}` : call;
+}
+
 export interface SnapshotIds {
   id: string;
   /** The dashboard's grouping label. */

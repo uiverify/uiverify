@@ -67,3 +67,22 @@ describe("uiverifyPlugin resolving the browser API", () => {
     expect(await resolveFrom(root)).toBe(fs.realpathSync(path.join(root, "node_modules/vitest/browser.js")));
   });
 });
+
+describe("uiverifyPlugin options", () => {
+  /** The value the browser reads for `networkIdleTimeout`, from the config the plugin hands Vitest. */
+  function providedTimeout(plugin: ReturnType<typeof uiverifyPlugin>): unknown {
+    const config: unknown = typeof plugin.config === "function" ? Reflect.apply(plugin.config, plugin, [{}, {}]) : undefined;
+    const test: unknown = typeof config === "object" && config ? Reflect.get(config, "test") : undefined;
+    const provide: unknown = typeof test === "object" && test ? Reflect.get(test, "provide") : undefined;
+    const ours: unknown = typeof provide === "object" && provide ? Reflect.get(provide, "__uiverify") : undefined;
+    return typeof ours === "object" && ours ? Reflect.get(ours, "networkIdleTimeout") : undefined;
+  }
+
+  /** Catches `networkIdleTimeout` (`0` above all, which skips the wait) never reaching the browser; the e2e's
+   *  run with it set to 0 checks the capture reads it. */
+  it("hands networkIdleTimeout to the browser, 5 s unless set", () => {
+    expect(providedTimeout(uiverifyPlugin())).toBe(5000);
+    expect(providedTimeout(uiverifyPlugin({ networkIdleTimeout: 0 }))).toBe(0);
+    expect(providedTimeout(uiverifyPlugin({ networkIdleTimeout: 1500 }))).toBe(1500);
+  });
+});

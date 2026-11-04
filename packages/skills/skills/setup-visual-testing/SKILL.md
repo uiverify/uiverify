@@ -36,6 +36,8 @@ UI Verify captures UI five ways. Choose by what the repo already has:
   capture harness, so Steps 2-3 (client SDK + story authoring) don't apply — install the CLI
   (`npm i -D uiverify`), then jump to Step 4 and wire the CI upload with `--screenshots ./screenshots`
   in place of `--static-dir`. Upload only the screens a PR changed and the rest carry forward.
+  **iOS / Swift app with no screenshot harness yet:** use swift-snapshot-testing; the helper, test, run
+  command and macOS CI job are in [`references/ios-swift-screenshots.md`](references/ios-swift-screenshots.md).
 
 If none exists and the repo is a browser app, scaffold Storybook (`npx storybook@latest init`) — it's
 the lower-friction path and gives you deterministic isolation for free (see `storybook-visual-testing`).
@@ -109,13 +111,15 @@ authoring skills, in this order:
 
 ## Step 4 — wire CI
 
-Add a CI workflow so every PR gets a check, **and** so it runs once on your default branch — that
-first default-branch build is what becomes the baseline every PR diffs against, so without the `push`
-trigger every PR shows all-new until a merge happens to seed it. Store the project's `UIVERIFY_API_KEY`
-(a `uv_proj_…` key from the dashboard) as a repo secret, then run the `uiverify` CLI (installed in
-Step 2). Change `[main]` to whatever your default branch is (`master`, `develop`) — a repo whose default
-isn't `main` gets a `push` trigger that never fires. Accept that first build once, or add
-`--auto-accept-changes` to the upload on your default branch to seed it automatically.
+Add a CI workflow that runs on every PR **and on every push to the default branch. Both triggers are
+required; never write a PR-only workflow.** Default-branch builds are the baseline every PR compares
+against, and they are what lets a PR render only the stories it touches. Without them every PR sees every
+story as new, compares nothing, and renders (and bills) the whole suite. Keep `--auto-accept-changes` on
+the upload: the expression below adds it only on the push run, so each merge becomes the baseline without
+a second review while PRs still wait for one. Store the project's `UIVERIFY_API_KEY` (a `uv_proj_…` key
+from the dashboard) as a repo secret, then run the `uiverify` CLI (installed in Step 2). Change `[main]`
+to whatever your default branch is (`master`, `develop`) — a repo whose default isn't `main` gets a
+`push` trigger that never fires.
 
 **Public repo? Write the fork-safe setup instead of the one job below.** GitHub withholds secrets from a
 fork's pull request, so the one-job workflow has no key on a fork PR and the check never posts there.
@@ -130,7 +134,7 @@ takes pull requests from forks. Background: https://uiverify.ai/docs/open-source
 name: Visual
 on:
   push:
-    branches: [main]                           # your default branch, so the first build seeds the baseline
+    branches: [main]                           # required: your default branch's builds are the baseline
   pull_request:
 jobs:
   uiverify:
@@ -142,18 +146,20 @@ jobs:
         with: { node-version: 24, cache: npm }
       - run: npm ci
       - run: npm run build-storybook -- --stats-json    # ./storybook-static + the dependency graph
-      - run: npx uiverify upload --static-dir storybook-static
+      - run: npx uiverify upload --static-dir storybook-static ${{ github.event_name == 'push' && '--auto-accept-changes' || '' }}
         env:
           UIVERIFY_API_KEY: ${{ secrets.UIVERIFY_API_KEY }}
+        # Whatever you capture, keep the --auto-accept-changes expression at the end of the upload line.
         # Playwright / Vitest instead (browsers aren't preinstalled on the runner): run
         #   "npx playwright install --with-deps && npx playwright test"  (or "npx vitest run"), then
         #   "npx uiverify upload --static-dir uiverify-archive". Playwright must support the runner's OS (below).
         # Bun instead: add oven-sh/setup-bun@v2, drop setup-node's "cache: npm" and replace "npm ci"
         #   with "bun install --frozen-lockfile" (a Bun repo has no package-lock.json), then run
         #   "bun tests/visual/run.ts" (it drives the runner's preinstalled Chrome) and
-        #   "npx uiverify upload --static-dir uiverify-archive". Keep setup-node: the CLI runs on Node 24.
+        #   "npx uiverify upload --static-dir uiverify-archive". Keep setup-node: the CLI runs on Node 22.12 or later.
         # Screenshot upload (native / mobile / React Native): produce your PNGs (Detox, Maestro, etc.),
         #   then "npx uiverify upload --screenshots ./screenshots" in place of the build+upload steps.
+        #   iOS / Swift: "runs-on: macos-15" and the xcodebuild step from references/ios-swift-screenshots.md.
 ```
 
 Keep `--stats-json` on the build - it is the default, not a tuning step (see "Render only what the PR
@@ -218,7 +224,8 @@ jobs:
         uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       # ...the setup-node / install / build / upload steps from Step 4, each guarded the same way.
-      # On main, add --auto-accept-changes to the upload so the post-merge render becomes the baseline.
+      # Keep the upload's ${{ github.event_name == 'push' && '--auto-accept-changes' || '' }} from Step 4,
+      # so the post-merge render becomes the baseline.
 ```
 
 **A missed render is silent — bias to include.** An unnecessary run costs a few CI minutes; a *missed*

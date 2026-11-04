@@ -53,6 +53,9 @@ export interface UploadDeps {
    *  given the checkout's uncommitted list. */
   deltaFor: (bases: string[], headSha: string, uncommitted: string[] | null) => Record<string, ClientDeltaEntry>;
   createBundle: (dir: string, out: string) => Promise<void>;
+  /** Whether the static dir is a built Storybook (`isStorybookStaticDir`), read before bundling so the log
+   *  names what it bundles. Injected so the flow is unit-tested without a real dir. */
+  isStorybook: (staticDir: string) => boolean;
   /** The deterministic content hash of the built `.tgz`, computed after `createBundle`. Sent at register
    *  so the server can skip the rebuild of an already-passed commit. Injected so the flow is unit-tested
    *  without hashing a real archive. */
@@ -86,7 +89,8 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
   }
 
   const tgz = deps.tmpFile();
-  deps.log("Bundling Storybook…");
+  const bundled = opts.screenshots ? "screenshots" : deps.isStorybook(opts.staticDir) ? "Storybook" : "capture archive";
+  deps.log(`Bundling ${bundled}…`);
   await deps.createBundle(opts.staticDir, tgz);
 
   // Read after createBundle: it finalizes the archive manifest (index.json), which carries the producer.

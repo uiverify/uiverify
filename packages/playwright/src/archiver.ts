@@ -4,8 +4,11 @@ import {
   type CapturedResource,
   type CapturedSnapshot,
   type ArchivedSnapshotParams,
+  stillAnimatingWarning,
   writeSnapshot,
 } from "@uiverify/archive-core";
+import { PAGE_HELPERS_GLOBAL } from "./page/protocol";
+import { pageScriptSource } from "./page-script";
 import { rrwebRuntimeSource, RRWEB_GLOBAL } from "./rrweb-runtime";
 import pkg from "../package.json";
 
@@ -15,13 +18,14 @@ const PRODUCER = { name: pkg.name, version: pkg.version };
 
 /**
  * PlaywrightArchiver — the producer half of the E2E archive flow. It rides along a live Playwright
- * `page` during a test: it buffers the bytes of every resource the app loads, and on `capture()` it
- * serializes the current DOM (via rrweb, injected into the page) into an {@link ArchivedSnapshot}
+ * `page` during a test: it buffers the bytes of every resource the app loads, and on `capture()` it waits
+ * for a stable frame (the page script) and serializes the DOM (via rrweb, injected into the page) into an
+ * {@link ArchivedSnapshot}
  * written to disk, its resource bytes into the archive's shared `resources/` store. Those files are later assembled into a bundle by
  * `finalizeArchive` and replayed + diffed by UI Verify.
  *
- * Nothing here screenshots or diffs — capture is intentionally cheap and single-browser; the fidelity
- * work (determinism, cross-browser) happens on replay, off the archive.
+ * Nothing here screenshots or diffs. Capture is single-browser; the rest of the fidelity work
+ * (cross-browser, the render's own determinism) happens on replay, off the archive.
  */
 
 /** Resource types worth archiving for a static re-render: the visual assets. We deliberately skip
@@ -32,6 +36,15 @@ const ARCHIVE_RESOURCE_TYPES = new Set(["image", "font", "stylesheet", "media", 
 /** Per-resource size cap — a single asset larger than this is skipped (it would dominate the archive;
  *  a missed asset degrades to a blank on replay, which is a visible, debuggable gap rather than a hang). */
 const MAX_RESOURCE_BYTES = 10 * 1024 * 1024;
+
+/** Longer than the page script's own deadlines add up to (about 4 s for animation and 2 s more after the
+ *  images, 3 s each for fonts and images, 1 s for layout), so it only fires when the page couldn't run them
+ *  at all. */
+const SETTLE_TIMEOUT_MS = 20_000;
+
+/** What a capture keeps back from the test's remaining time for draining resource bodies and serializing, so
+ *  the stable-frame wait alone never times a passing test out. */
+const CAPTURE_MARGIN_MS = 6_000;
 
 /** Bound how long `capture()` waits for still-in-flight resource bodies to buffer, so a slow/never-
  *  ending response (a hanging analytics beacon) can't wedge the test. */
@@ -48,6 +61,16 @@ export interface ArchiverOptions {
   /** The spec file, relative to the Playwright config's directory, so UI Verify can locate this test in a
    *  module graph (`preview-stats.json`) put into the archive directory. */
   sourcePath?: string;
+  /** How many ms the test has left before its timeout, read at each capture; absent or infinite when it has
+   *  no timeout. */
+  timeLeft?: () => number;
+}
+
+/** What a snapshot call can set: the archive's own snapshot params, plus how the capture waits. */
+export interface SnapshotOptions extends ArchivedSnapshotParams {
+  /** `false` captures the page as it is right now, without waiting for animations and layout to finish
+   *  (fonts and images still finish loading). On by default. */
+  waitForStableFrame?: boolean;
 }
 
 export class PlaywrightArchiver {
@@ -92,11 +115,14 @@ export class PlaywrightArchiver {
   }
 
   /**
-   * Serialize the page's CURRENT DOM into a snapshot file. Call it once the test has driven the UI to
-   * the state you want checked (after your assertions). `name` distinguishes multiple snapshots within
-   * one test; omit it for a test's single state.
+   * Serialize the page's DOM into a snapshot file, once its frame is stable: animations finished, fonts
+   * and images loaded (below-the-fold lazy images included), layout still. Call it once the test has driven
+   * the UI to the state you want checked (after your assertions). `name` distinguishes multiple snapshots
+   * within one test; omit it for a test's single state.
    */
-  async capture(name = "", params: ArchivedSnapshotParams = {}): Promise<string> {
+  async capture(name = "", { waitForStableFrame = true, ...params }: SnapshotOptions = {}): Promise<string> {
+    if (await this.settle(waitForStableFrame)) console.warn(stillAnimatingWarning(PRODUCER.name, this.snapshotId(name)));
+
     // Let outstanding resource bodies finish buffering (bounded), so late-loaded assets make the archive.
     await Promise.race([
       Promise.allSettled(this.bodyJobs),
@@ -132,6 +158,8 @@ export class PlaywrightArchiver {
       domJson = await serialize(true);
     } catch {
       domJson = await serialize(false);
+    } finally {
+      await this.page.evaluate(`globalThis.${PAGE_HELPERS_GLOBAL}?.restore()`).catch(() => undefined);
     }
     if (!domJson) throw new Error(`@uiverify/playwright: rrweb failed to serialize the DOM for "${this.opts.idBase}"`);
     const dom: ArchivedSnapshot["dom"] = JSON.parse(domJson);
@@ -146,7 +174,7 @@ export class PlaywrightArchiver {
         colorScheme: matchMedia("(prefers-color-scheme: dark)").matches ? ("dark" as const) : ("light" as const),
       }))
       .catch(() => ({ deviceScaleFactor: undefined, colorScheme: undefined }));
-    const id = name ? `${this.opts.idBase}::${name}` : this.opts.idBase;
+    const id = this.snapshotId(name);
     const snapshot: CapturedSnapshot = {
       id,
       title: this.opts.title,
@@ -164,5 +192,33 @@ export class PlaywrightArchiver {
     writeSnapshot(this.opts.outDir, snapshot);
     this.captureCount++;
     return id;
+  }
+
+  private snapshotId(name: string): string {
+    return name ? `${this.opts.idBase}::${name}` : this.opts.idBase;
+  }
+
+  /** Run the page script's settle, evaluating the script first into a document that missed the init script.
+   *  Resolves `true` when an animation was still running at the deadline. Best effort: a page that
+   *  navigates or closes mid-wait is left for the serialize step to report. */
+  private async settle(stableFrame: boolean): Promise<boolean> {
+    try {
+      if (!(await this.page.evaluate((global) => global in window, PAGE_HELPERS_GLOBAL))) {
+        await this.page.evaluate(pageScriptSource());
+      }
+      const timeLeft = this.opts.timeLeft?.() ?? Number.POSITIVE_INFINITY;
+      const budget = Number.isFinite(timeLeft) ? Math.max(0, timeLeft - CAPTURE_MARGIN_MS) : null;
+      const settled = this.page.evaluate(`${PAGE_HELPERS_GLOBAL}.settle(${JSON.stringify(stableFrame)}, ${JSON.stringify(budget)})`);
+      settled.catch(() => undefined);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = new Promise((resolve) => (timer = setTimeout(() => resolve(false), SETTLE_TIMEOUT_MS)));
+      try {
+        return (await Promise.race([settled, timedOut])) === true;
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch {
+      return false;
+    }
   }
 }

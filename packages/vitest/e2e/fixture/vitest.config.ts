@@ -13,7 +13,11 @@ const dist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../d
 /** A browser project running `include` with the SDK. */
 function visualProject(name: string, include: string[]) {
   return {
-    plugins: [uiverifyPlugin()],
+    plugins: [
+      uiverifyPlugin(
+        process.env.UIVERIFY_E2E_IDLE_TIMEOUT ? { networkIdleTimeout: Number(process.env.UIVERIFY_E2E_IDLE_TIMEOUT) } : {},
+      ),
+    ],
     resolve: { alias: [{ find: /^@uiverify\/vitest$/, replacement: path.join(dist, "index.js") }] },
     optimizeDeps: { exclude: ["@uiverify/vitest", "@uiverify/vitest/browser-setup"] },
     define: { __ASSETS__: JSON.stringify(process.env.UIVERIFY_E2E_ASSETS ?? "") },

@@ -31,6 +31,18 @@ describe("Failures", { viewports: { "": { width: 800, height: 600 }, mobile: { w
     await takeSnapshot("mobile");
   });
 
+  test("a snapshot named like a repeat of another is refused", async (page) => {
+    await page.goto("/");
+    await takeSnapshot("same");
+    await takeSnapshot("same");
+    await takeSnapshot("same #2");
+  });
+
+  test("a snapshot named like a repeat of another taken at the same time is refused", async (page) => {
+    await page.goto("/");
+    await Promise.all([takeSnapshot("both"), takeSnapshot("both"), takeSnapshot("both #2")]);
+  });
+
   test("an error on an earlier document of the test fails it", async (page) => {
     await page.goto("/error");
     await page.goto("/");

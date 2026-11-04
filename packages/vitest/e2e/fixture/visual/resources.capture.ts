@@ -45,3 +45,13 @@ test("blob image revoked once it loaded", async () => {
   await loaded(img);
   URL.revokeObjectURL(img.src);
 });
+
+test("more images than the Resource Timing buffer's default 250 entries", async () => {
+  const images = Array.from({ length: 300 }, (_, i) => {
+    const img = document.createElement("img");
+    img.src = `${__ASSETS__}/many/${i}.png`;
+    return img;
+  });
+  document.body.replaceChildren(...images);
+  await Promise.all(images.map(loaded));
+});

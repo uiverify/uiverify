@@ -39,6 +39,20 @@ describe("snapshotFileName", () => {
 
   it("never emits an empty basename", () => {
     expect(snapshotFileName("///")).toMatch(/^snapshot-[0-9a-f]{10}\.json$/);
+    expect(snapshotFileName("../..")).toMatch(/^snapshot-[0-9a-f]{10}\.json$/);
+  });
+
+  it("never emits a dot-file for a test outside the project root", () => {
+    // `actions/upload-artifact` skips hidden files by default, so a `..-..-apps-…json` capture vanished
+    // from fork-PR uploads.
+    const outside = "../../apps/chat/tests/visual/x.browser.tsx > renders";
+    expect(snapshotFileName(outside)).toMatch(/^apps-chat-tests-visual-x\.browser\.tsx-renders-[0-9a-f]{10}\.json$/);
+    expect(snapshotFileName(".hidden.test.tsx > renders")).not.toMatch(/^\./);
+  });
+
+  it("keeps ids that differ only by leading ../ segments apart", () => {
+    const names = ["apps/x.test.tsx > a", "../apps/x.test.tsx > a", "../../apps/x.test.tsx > a"].map(snapshotFileName);
+    expect(new Set(names).size).toBe(3);
   });
 });
 
@@ -186,6 +200,23 @@ describe("finalizeArchive", () => {
       expect(entry.name).toBe("after");
       // The recorded path resolves to a real snapshot file inside the bundle.
       expect(fs.existsSync(path.join(bundle, entry.snapshot))).toBe(true);
+    } finally {
+      fs.rmSync(bundle, { recursive: true, force: true });
+    }
+  });
+
+  it("indexes tests outside the project root under their own ids, from files that aren't hidden", () => {
+    const bundle = fs.mkdtempSync(path.join(os.tmpdir(), "uiverify-finalize-outside-"));
+    try {
+      const ids = ["../../apps/chat/x.browser.tsx > renders", "../apps/chat/x.browser.tsx > renders"];
+      for (const id of ids) seedSnapshot(bundle, { id, title: "../../apps/chat/x.browser.tsx", name: "" });
+
+      const files = fs.readdirSync(path.join(bundle, "snapshots"));
+      expect(files.filter((f) => f.startsWith("."))).toEqual([]);
+      expect(finalizeArchive(bundle)).toBe(2);
+      const index = readIndex(bundle);
+      expect(new Set(Object.keys(index.entries))).toEqual(new Set(ids));
+      for (const id of ids) expect(fs.existsSync(path.join(bundle, index.entries[id].snapshot))).toBe(true);
     } finally {
       fs.rmSync(bundle, { recursive: true, force: true });
     }

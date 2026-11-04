@@ -266,8 +266,9 @@ handled for you; a component that waits to be visible isn't. Render it eagerly u
   `fetch`, which the SDK needs, so the runner keeps it out. The flip side: fixtures and test files must not
   import modules that need a loader, plugin or `define` registered there.
 - **`serveBundle()` builds with `Bun.build`, which reads no bunfig and inlines no env.** Pass `plugins`
-  (e.g. `bun-plugin-tailwind`) and `define` (a `process.env.PUBLIC_*` the components read) explicitly. Name
-  the HTML entry `index.html`: that is the page served at `/`, with every other built file at its own path.
+  (e.g. `bun-plugin-tailwind`) and `define` (a `process.env.PUBLIC_*` the components read) explicitly. The
+  HTML entry is the page served at `/` (on `@uiverify/bun` 0.1.0, only when it is named `index.html`), with
+  every other built file at its own path.
   Point the file's suite at it and stop it when the file ends:
   ```ts
   const preview = await serveBundle({ entrypoint: `${import.meta.dir}/components/index.html` });

@@ -73,7 +73,8 @@ transitions (killed at render) and the Web Animations API (disabled); `prefers-r
 (**emulated**); `Math.random` (**seeded** before your app code runs); web fonts, `<img>` and CSS
 background images (`::before`/`::after` included) (**waited for** — the fonts your app actually loads, see
 the setup file above; `loading="lazy"` images below the viewport are switched to eager so they load too); **finite** JS animations
-(captured at their settled final frame). And unlike a real
+(each snapshot waits for a `requestAnimationFrame` animation to reach its last frame, and for the page size
+to stop changing, before it archives). And unlike a real
 page (`playwright-visual-testing`), a browser-mode test has **no SSR** — no server-rendered random pick
 to reconcile. So the checklist below is only the remainder — what lives *inside your app*.
 
@@ -116,6 +117,13 @@ share. On Vitest 4.1 and later the automatic snapshot is taken as soon as the te
 `afterEach` hook (except for concurrent tests and with `sequence.hooks: "parallel"`), so a wait in an `afterEach` comes too late: call the helper from the test (or have that hook
 call `takeSnapshot()` itself). If you turn the automatic snapshot off (`disableAutoSnapshot()`) and call
 `takeSnapshot()` at the end of that helper, every capture is guaranteed to come after the wait.
+
+With the Playwright provider on Chromium, every snapshot also waits for the test's network requests to finish (nothing loading for 100 ms, at most the
+plugin's `networkIdleTimeout`, 5 s by default), so a fetch that lands after the test returns is usually
+caught. Keep the waits above anyway: that wait sees requests, not rendering, so it misses a lazy `import()`
+and a React Suspense reveal that lands after the network went quiet. A request that never finishes (a mock
+with an infinite delay, kept pending to show a skeleton) costs `networkIdleTimeout` on every test that starts
+it and prints a "still loading" warning: mock it to answer, or lower `networkIdleTimeout` for that suite.
 
 ## The checklist (only what the tool can't do for you)
 
@@ -177,7 +185,9 @@ If a component animates on mount and fake timers freeze it half-way, advance to 
 
 A CSS/WAAPI/finite animation is handled for you (above). What's left is an **infinite** JS loop with no
 final frame — framer-motion pulsing dots, a Lottie loop, an autoplay spinner, or a `<canvas>` /
-`requestAnimationFrame` loop (which no media query can reach). Two fixes:
+`requestAnimationFrame` loop (which no media query can reach). The snapshot's wait gives up on it after about
+4 s and captures whatever frame is on screen, printing `… was still animating (a requestAnimationFrame
+loop)` with the snapshot's id, so that warning names the component to fix. Two fixes:
 
 - **Preferred — honor reduced motion.** The capturer emulates `prefers-reduced-motion: reduce`, so make
   the component respect it (framer-motion: `<MotionConfig reducedMotion="user">`, or gate the loop with

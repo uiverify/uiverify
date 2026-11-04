@@ -1,7 +1,8 @@
 import type { CapturedSnapshot } from "@uiverify/archive-core";
 import { capture, writeCaptured } from "./capture";
-import type { DesignImage } from "./design";
+import type { SnapshotOptions } from "./snapshot-options";
 import { snapshotIds, type TaskLike } from "./snapshot-id";
+import { testWaitLimit } from "./wait-limit";
 
 /**
  * Per-test capture state, shared between the public `takeSnapshot`/`disableAutoSnapshot` API (called
@@ -20,9 +21,15 @@ const idUses = new Map<string, number>();
  *  the test itself to report then. */
 let endOfTest: { snapshot?: CapturedSnapshot; captureError?: unknown; testError?: Error } = {};
 
+/** The real clock, captured before a test can install fake timers. */
+const realDateNow: () => number = Date.now.bind(Date);
+/** When the current attempt of the current test began (a retry starts its own timeout). */
+let attemptStartedAt = 0;
+
 /** Reset state and mark `task` current. Called by the setup hook before each test. */
 export function beginTest(task: TaskLike): void {
   currentTask = task;
+  attemptStartedAt = realDateNow();
   manualCount = 0;
   autoDisabledForTest = false;
   pendingCaptures.clear();
@@ -36,7 +43,7 @@ export function beginTest(task: TaskLike): void {
  *  `baselineImage` is a design PNG to compare against until a render is accepted: an image import (`import
  *  design from "./home.png"`, passed as-is) or a PNG data URI. `takeSnapshot("", { baselineImage })` keeps
  *  the auto-snapshot's id. */
-export async function takeSnapshot(name = "", options: { baselineImage?: DesignImage } = {}): Promise<string> {
+export async function takeSnapshot(name = "", options: SnapshotOptions = {}): Promise<string> {
   if (!currentTask) {
     throw new Error(
       "@uiverify/vitest: takeSnapshot() was called outside a test. Add uiverifyPlugin() to your vitest.config so the setup hooks run.",
@@ -47,7 +54,12 @@ export async function takeSnapshot(name = "", options: { baselineImage?: DesignI
   const uses = (idUses.get(ids.id) ?? 0) + 1;
   idUses.set(ids.id, uses);
   const id = uses > 1 ? `${ids.id} #${uses}` : ids.id;
-  const capturing = capture(currentTask, { ...ids, id }, name, options).then(writeCaptured);
+  const capturing = capture(currentTask, { ...ids, id }, name, {
+    ...options,
+    waitLimit: testWaitLimit(Reflect.get(currentTask, "timeout"), attemptStartedAt, realDateNow()),
+  }).then(
+    writeCaptured,
+  );
   pendingCaptures.add(capturing);
   try {
     await capturing;
@@ -71,7 +83,12 @@ export function disableAutoSnapshot(): void {
  *  while a story that vanished from the build would hide that its UI changed. Never throws: it runs among the
  *  user's `afterEach` hooks, and a throw there skips every teardown hook after it, leaving the test's UI
  *  mounted under the next test. */
-export async function captureEndOfTest(passed: boolean, autoEnabled: boolean, concurrent = false): Promise<void> {
+export async function captureEndOfTest(
+  passed: boolean,
+  autoEnabled: boolean,
+  concurrent = false,
+  waitLimit = Number.POSITIVE_INFINITY,
+): Promise<void> {
   const task = currentTask;
   // Concurrent tests share this state, so a capture still in flight may be another test's, awaited there.
   if (pendingCaptures.size && !concurrent) {
@@ -82,7 +99,7 @@ export async function captureEndOfTest(passed: boolean, autoEnabled: boolean, co
   }
   if (!task || !autoEnabled || autoDisabledForTest || manualCount > 0) return;
   try {
-    endOfTest.snapshot = await capture(task, snapshotIds(task, ""), "");
+    endOfTest.snapshot = await capture(task, snapshotIds(task, ""), "", { waitLimit });
   } catch (error) {
     endOfTest.captureError = error;
   }

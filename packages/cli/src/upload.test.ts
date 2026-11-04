@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { BuildStatus, IngestClient, RegisterBody } from "./client";
 import type { ClientDeltaEntry, GitMeta } from "./git";
 import type { BundleGraph } from "./skip";
-import { runUpload, type UploadDeps } from "./upload";
+import { runUpload, type UploadDeps, type UploadOptions } from "./upload";
 
 interface CallLog {
   register?: RegisterBody;
@@ -97,6 +97,8 @@ function deps(
     skippedBuildNumber?: number;
     /** When true, bundle hashing throws - the upload must proceed without the rebuild-skip hint. */
     hashThrows?: boolean;
+    /** Whether the static dir reads as a built Storybook (default true); false for a capture archive. */
+    storybook?: boolean;
   } = {},
 ): UploadDeps {
   return {
@@ -118,6 +120,7 @@ function deps(
       return opts.delta ? opts.delta(bases, head) : {};
     },
     createBundle: async () => {},
+    isStorybook: () => opts.storybook ?? true,
     bundleContentHash: async () => {
       if (opts.hashThrows) throw new Error("tar stream broke");
       return "v1:deadbeef";
@@ -144,6 +147,17 @@ describe("runUpload", () => {
     expect(log.uploaded).toEqual({ url: "http://cp/api/storage/bundles/b1.tgz", tgz: "/tmp/bundle.tgz" });
     expect(log.marked).toBe("b1");
     expect(log.statusPolls).toBe(3);
+  });
+
+  it("names what it bundles: Storybook, a capture archive, or screenshots", async () => {
+    const bundlingLine = async (opts: Partial<UploadOptions>, storybook: boolean): Promise<string[]> => {
+      const lines: string[] = [];
+      await runUpload({ staticDir: "/dir", ...opts }, deps({ statusPolls: 0 }, ["passed"], lines, { storybook }));
+      return lines.filter((l) => l.startsWith("Bundling"));
+    };
+    expect(await bundlingLine({}, true)).toEqual(["Bundling Storybook…"]);
+    expect(await bundlingLine({}, false)).toEqual(["Bundling capture archive…"]);
+    expect(await bundlingLine({ screenshots: true }, false)).toEqual(["Bundling screenshots…"]);
   });
 
   it("prints the watch-command hint while rendering when one is supplied, and stays silent otherwise", async () => {

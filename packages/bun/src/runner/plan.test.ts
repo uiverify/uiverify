@@ -58,9 +58,16 @@ describe("planShards", () => {
 describe("shardSlots", () => {
   /** Catches a huge unconstrained-memory sentinel letting every shard's Chrome start at once. */
   test("one shard per 768 MiB of the smaller of the machine and the container, at least one", () => {
-    expect(shardSlots(6.8 * GiB, undefined)).toBe(9);
-    expect(shardSlots(16 * GiB, 2 * GiB)).toBe(2);
-    expect(shardSlots(8 * GiB, Number.MAX_SAFE_INTEGER)).toBe(Math.floor((8 * GiB) / MEMORY_PER_SHARD));
-    expect(shardSlots(512 * 1024 * 1024, 0)).toBe(1);
+    expect(shardSlots(6.8 * GiB, undefined, 64)).toBe(9);
+    expect(shardSlots(16 * GiB, 2 * GiB, 64)).toBe(2);
+    expect(shardSlots(8 * GiB, Number.MAX_SAFE_INTEGER, 64)).toBe(Math.floor((8 * GiB) / MEMORY_PER_SHARD));
+    expect(shardSlots(512 * 1024 * 1024, 0, 64)).toBe(1);
+  });
+
+  /** Catches a 16 GB, 4-vCPU CI runner starting all seven shards of a project's run (and their Chromes) at
+   *  once, which made every shard's first test take up to 60 s. */
+  test("no more shards at once than CPUs, at least one", () => {
+    expect(shardSlots(16 * GiB, undefined, 4)).toBe(4);
+    expect(shardSlots(16 * GiB, undefined, 0)).toBe(1);
   });
 });

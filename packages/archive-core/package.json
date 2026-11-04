@@ -6,7 +6,7 @@
   "license": "MIT",
   "author": "UI Verify",
   "engines": {
-    "node": ">=24"
+    "node": ">=22.12"
   },
   "type": "module",
   "main": "./dist/index.js",

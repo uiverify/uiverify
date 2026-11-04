@@ -52,12 +52,24 @@ Reflect.set(globalThis, "confirm", () => false);
 Reflect.set(globalThis, "prompt", () => null);
 window.addEventListener("beforeunload", (event) => event.stopImmediatePropagation(), { capture: true });
 
+// A `style-src` without 'unsafe-inline' blocks the `<style>` (kept: it is what the archive carries), but not
+// a constructed sheet, which the archive doesn't carry.
+let finishSheet: CSSStyleSheet | undefined;
+/** Adopted again before a capture if the app has since assigned `document.adoptedStyleSheets` without it. */
+const adoptFinishSheet = () => {
+  if (finishSheet && !document.adoptedStyleSheets.includes(finishSheet)) {
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, finishSheet];
+  }
+};
 const finishAnimations = () => {
   // An SVG or XML document (an `<object>`'s, a frame's) has no head and no CSS animations of this kind.
   if (!document.head) return;
   const style = document.createElement("style");
   style.textContent = FINISH_ANIMATIONS;
   document.head.append(style);
+  finishSheet = new CSSStyleSheet();
+  finishSheet.replaceSync(FINISH_ANIMATIONS);
+  adoptFinishSheet();
 };
 // Run into a page that has already loaded (the blank page a test starts on), the event is long gone.
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", finishAnimations);
@@ -80,7 +92,10 @@ Reflect.set(globalThis, PAGE_HELPERS_GLOBAL, {
   ...dom,
   pause: () => clock.pause(),
   resume: () => clock.resume(),
-  settle: () => settle({ fonts: "used", lazyToEager: false }),
+  settle: () => {
+    adoptFinishSheet();
+    return settle({ fonts: "used", lazyToEager: false });
+  },
   answerOutside: (id: number, result: FetchedResource) => {
     outsideAnswers.get(id)?.(result);
     outsideAnswers.delete(id);

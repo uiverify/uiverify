@@ -1,8 +1,16 @@
 import * as vitest from "vitest";
 import { afterEach, beforeEach, inject } from "vitest";
 import { server } from "vitest/browser";
+import { beginNetworkTest, parkPointer, watchNetwork } from "./capture";
 import { beginTest, captureEndOfTest, finishTest } from "./runtime";
-import { installSeededRandom, preloadFonts, raiseResourceTimingBuffer, resetSeed } from "@uiverify/archive-core/browser";
+import { hookWaitLimit } from "./wait-limit";
+import {
+  installRafProbe,
+  installSeededRandom,
+  preloadFonts,
+  raiseResourceTimingBuffer,
+  resetSeed,
+} from "@uiverify/archive-core/browser";
 
 // Flag the page as a UI Verify capture at RECORD time, as this setup module loads - before any test
 // renders a component - so `isUIVerify()` is true while the app renders in the test browser (the
@@ -19,10 +27,21 @@ Reflect.set(globalThis, "__UI_VERIFY__", true);
 // any test renders), so no asset a capture rediscovers from Resource Timing is ever evicted.
 raiseResourceTimingBuffer();
 
+// Record what this test file's document loads from here on, so a capture archives the bytes the page received
+// and can wait for its requests to finish. Before the test file's imports, so what they load is recorded too.
+// The pointer is wherever the previous test file left it. After this it is parked only once a test has been
+// captured and no concurrent test is still running (below), so no park ever runs alongside a test's hooks.
+await Promise.all([watchNetwork(), parkPointer()]);
+
 // Seed Math.random at record time, before any component renders, so a random-paced pick (a shuffled list,
 // a randomly chosen image) is deterministic in the archive: the archive is a static snapshot, so whatever
 // the pick produced at capture is what's baked in.
 installSeededRandom();
+
+// Track the app's requestAnimationFrame callbacks from before any component renders, so a capture can wait
+// for a JS-driven animation (a recharts line-draw) to reach its last frame instead of archiving a frame
+// mid-tween.
+installRafProbe();
 
 /**
  * The setup file `uiverifyPlugin()` injects into every browser-mode test run. It is what turns the bare
@@ -32,7 +51,7 @@ installSeededRandom();
  */
 declare module "vitest" {
   interface ProvidedContext {
-    __uiverify: { disableAutoSnapshot: boolean };
+    __uiverify: { disableAutoSnapshot: boolean; networkIdleTimeout: number };
   }
 }
 
@@ -100,6 +119,9 @@ function captureBeforeOtherHooks(registry: HookRegistry, ctx: TestContext): void
   hookedTests.add(ctx.task);
 }
 
+/** Concurrent tests still running, any of which may be hovering with the shared pointer. */
+let concurrentRunning = 0;
+
 beforeEach(async (ctx) => {
   resetSeed();
   // Preload fonts before the test renders, so a component that measures text width on mount (e.g. a
@@ -108,10 +130,22 @@ beforeEach(async (ctx) => {
   // already imported by now (module load precedes beforeEach), so the @font-faces are registered.
   await preloadFonts();
   beginTest(ctx.task);
+  await beginNetworkTest();
   if (hookRegistry) captureBeforeOtherHooks(hookRegistry, ctx);
   // Written once every `afterEach` has run, so a hook that takes a snapshot of its own, or calls
-  // `disableAutoSnapshot()`, still decides whether the automatic one is kept.
-  ctx.onTestFinished(() => finishTest(ctx.task.result?.state !== "fail", ctx.task.concurrent));
+  // `disableAutoSnapshot()`, still decides whether the automatic one is kept. The pointer is parked after that
+  // rather than before the next test, so a hover made in a `beforeEach` (even under `sequence.hooks:
+  // "parallel"`) is never undone, and only once no concurrent test is still running, since moving it would
+  // un-hover a sibling mid-test.
+  if (ctx.task.concurrent) concurrentRunning++;
+  ctx.onTestFinished(async () => {
+    try {
+      await finishTest(ctx.task.result?.state !== "fail", ctx.task.concurrent);
+    } finally {
+      if (ctx.task.concurrent) concurrentRunning--;
+      if (concurrentRunning === 0) await parkPointer();
+    }
+  });
 });
 
 // Where the hook above can't be installed (Vitest before 4.1 exposes no hook registry, hooks run in
@@ -119,5 +153,5 @@ beforeEach(async (ctx) => {
 // the default "stack" order runs after any `afterEach` the test file registered.
 afterEach(async (ctx) => {
   if (hookedTests.has(ctx.task)) return;
-  await captureEndOfTest(ctx.task.result?.state !== "fail", !globalAutoDisabled(), ctx.task.concurrent);
+  await captureEndOfTest(ctx.task.result?.state !== "fail", !globalAutoDisabled(), ctx.task.concurrent, hookWaitLimit(server.config.hookTimeout));
 });
