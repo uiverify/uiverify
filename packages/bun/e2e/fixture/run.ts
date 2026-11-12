@@ -1,7 +1,7 @@
 import { run } from "../../dist/run.js";
 
 process.exitCode = await run({
-  shards: { "pass.visual.ts": 2, "stateful.visual.ts": 2 },
+  shards: { "pass.visual.ts": 2, "stateful.visual.ts": 2, "spare-shard.visual.ts": 2 },
   webServer: {
     command: ["bun", "server.ts"],
     port: Number(process.env.FIXTURE_PORT),

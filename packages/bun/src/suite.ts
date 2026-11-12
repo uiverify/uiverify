@@ -3,14 +3,14 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
 import { type CapturedSnapshot, clearArchive, resolveOutDir, writeSnapshot } from "@uiverify/archive-core";
-import { afterAll, describe as bunDescribe, test as bunTest } from "bun:test";
+import { afterAll, beforeAll, describe as bunDescribe, test as bunTest } from "bun:test";
 import pkg from "../package.json";
 import { StaleTestError, testScope, type TestScope } from "./context";
 import { timeoutWithFaults } from "./faults";
 import { checkSnapshotName, checkViewportKey, describeDeclaration, describeSnapshotCall, snapshotIds, testId } from "./ids";
 import { type Page, PageImpl } from "./page";
 import { readRunContext } from "./run-context";
-import { Tab, type Viewport } from "./tab";
+import { STARTUP_HOOK_TIMEOUT_MS, Tab, type Viewport } from "./tab";
 
 /** Stamped into every snapshot so the CLI can report the capture SDK's version at upload; inlined at build. */
 const PRODUCER = { name: pkg.name, version: pkg.version };
@@ -188,6 +188,10 @@ export function defineSuite<Options extends SuiteOptions>(
     const shard = context?.shard ?? { index: 0, count: 1 };
     const tab = new Tab(baseUrl ?? context?.baseUrl);
     const page = new PageImpl(tab);
+    // Its own budget, so a slow Chrome start isn't the first test's timeout. Bun runs a file's hook even when
+    // this shard was dealt none of its tests, and such a shard must not start Chrome.
+    let hasTests = false;
+    beforeAll(() => (hasTests ? tab.start() : undefined), STARTUP_HOOK_TIMEOUT_MS);
     afterAll(() => tab.close());
 
     const fileName = basename(file);
@@ -238,6 +242,7 @@ export function defineSuite<Options extends SuiteOptions>(
 
       for (const [variant, viewport] of Object.entries(options.viewports)) {
         if (declared++ % shard.count !== shard.index) continue;
+        hasTests = true;
         const run = async () => {
           const generation = await tab.begin({ viewport, now, colorScheme });
           const running: RunningTest = {

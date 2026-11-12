@@ -16,10 +16,27 @@ export interface GitMeta {
    *  CI env or the git remote. Host-agnostic: the remote parse works for any host. Empty only when it
    *  can't be determined (no remote) — the server keeps whatever it already had. */
   repoFullName: string;
+  /** The PR head commit the checked-out tree was built from, when it can be proven (see
+   *  {@link prHeadShaFromEvent}); the server posts the PR's check there. Null otherwise. */
+  prHeadSha: string | null;
+  /** `owner/repo` of the `upstream` remote, when the checkout has one (a fork's checkout names the repo it
+   *  forked from there). Only the remote, never CI env: the server tries it for a login upload when
+   *  `repoFullName` matches no project. */
+  upstreamRepoFullName?: string;
 }
 
 function git(args: string[], cwd: string): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+/** The repository's top-level directory, or null outside a git checkout. Quiet: git's own error never
+ *  reaches the user's output. */
+export function repoRoot(cwd: string): string | null {
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return null;
+  }
 }
 
 /** Run git, swallowing a non-zero exit (e.g. no `origin` remote) into null instead of throwing. */
@@ -94,9 +111,35 @@ export function parseRepoFromRemote(remoteUrl: string): string | null {
 /** The repo full name, preferring an explicit override, then each host's CI env (GitHub Actions
  *  `GITHUB_REPOSITORY`, Bitbucket Pipelines `BITBUCKET_REPO_FULL_NAME`), then the git remote. */
 export function repoFullNameFromEnv(env: NodeJS.ProcessEnv, remoteUrl: string | null): string {
-  const fromEnv = env.UIVERIFY_REPO || env.GITHUB_REPOSITORY || env.BITBUCKET_REPO_FULL_NAME;
-  if (fromEnv) return fromEnv;
-  return (remoteUrl && parseRepoFromRemote(remoteUrl)) || "";
+  return repoFromCiEnv(env) || (remoteUrl && parseRepoFromRemote(remoteUrl)) || "";
+}
+
+function repoFromCiEnv(env: NodeJS.ProcessEnv): string | undefined {
+  return env.UIVERIFY_REPO || env.GITHUB_REPOSITORY || env.BITBUCKET_REPO_FULL_NAME || undefined;
+}
+
+export type RemoteRepos = Pick<GitMeta, "repoFullName" | "upstreamRepoFullName">;
+
+/** The repository and its `upstream`, as register names them. `readGit` runs one git command, null on any
+ *  failure; `origin` isn't asked when CI env already names the repository. */
+export function remoteRepos(env: NodeJS.ProcessEnv, readGit: (args: string[]) => string | null): RemoteRepos {
+  return {
+    repoFullName: repoFullNameFromEnv(env, repoFromCiEnv(env) ? null : readGit(["remote", "get-url", "origin"])),
+    // `config --get` exits 1 silently when there is no such remote, where `remote get-url` prints an error.
+    upstreamRepoFullName: parseRepoFromRemote(readGit(["config", "--get", "remote.upstream.url"]) ?? "") ?? undefined,
+  };
+}
+
+/** {@link remoteRepos} for a failure report, on the way to an exit: git's output never reaches the user, each
+ *  call is cut off after 1 s, and nothing throws. */
+export function reportRemoteRepos(cwd: string, env: NodeJS.ProcessEnv): RemoteRepos {
+  return remoteRepos(env, (args) => {
+    try {
+      return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 1000 }).trim();
+    } catch {
+      return null;
+    }
+  });
 }
 
 function isShallowRepo(cwd: string): boolean {
@@ -165,8 +208,27 @@ function gitDeltaOrNull(args: string[], cwd: string, timeoutMs: number): string 
 
 /** Whether this runs in CI. `CI` covers most hosts; Azure Pipelines, Jenkins and TeamCity don't set it by
  *  default. */
-function isCi(env: NodeJS.ProcessEnv): boolean {
+export function isCi(env: NodeJS.ProcessEnv): boolean {
   return Boolean(env.CI || env.TF_BUILD || env.JENKINS_URL || env.TEAMCITY_VERSION);
+}
+
+/** Whether this run's output may end up in a log other people can read. Broader than {@link isCi}, which
+ *  decides what counts as an uncommitted change and must not move: it adds the hosts that set their own
+ *  variable, and deliberately has no container check, since devcontainers, Codespaces and cloud agent
+ *  sandboxes are the edit loop that should see review comments. */
+export function outputMayBePublic(env: NodeJS.ProcessEnv): boolean {
+  return (
+    isCi(env) ||
+    Boolean(
+      env.GITHUB_ACTIONS ||
+        env.GITLAB_CI ||
+        env.BUILDKITE ||
+        env.CIRCLECI ||
+        env.BITBUCKET_BUILD_NUMBER ||
+        env.CODEBUILD_BUILD_ID ||
+        (env.BUILD_ID && env.PROJECT_ID),
+    )
+  );
 }
 
 /** The pathspec that scopes a delta git call to the repo, minus the upload dir (an untracked
@@ -341,14 +403,63 @@ export function deltaFor(
   return out;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
+}
+
+const FULL_SHA = /^[0-9a-f]{40}$/;
+
+/**
+ * The PR head commit (`pull_request.head.sha` of the GitHub Actions event payload), but only when the
+ * checkout at `head` (the real `git rev-parse HEAD`) is provably built from it: `head` is the PR head
+ * itself, or, on `pull_request`, the event's own test merge commit (`GITHUB_SHA`), which GitHub built
+ * from that head when it wrote the payload. Anything else is null, because naming a head the tree wasn't
+ * built from would put this build's verdict on code it never rendered: a `pull_request_target` default
+ * checkout (the base tip), a ref checked out by name that has since moved past the payload, a
+ * `COMMIT_SHA` override that is not the checked-out commit, or a payload for another PR. `readEvent` is only called once the env qualifies.
+ */
+export function prHeadShaFromEvent(
+  env: NodeJS.ProcessEnv,
+  head: string | null,
+  prNumber: number | null,
+  readEvent: () => unknown,
+): string | null {
+  if (env.GITHUB_ACTIONS !== "true") return null;
+  const eventName = env.GITHUB_EVENT_NAME;
+  if (eventName !== "pull_request" && eventName !== "pull_request_target") return null;
+  if (head === null || prNumber === null) return null;
+  if (env.COMMIT_SHA && env.COMMIT_SHA !== head) return null;
+  const event = readEvent();
+  const pr = isRecord(event) ? event.pull_request : null;
+  if (!isRecord(pr) || pr.number !== prNumber || !isRecord(pr.head)) return null;
+  const sha = pr.head.sha;
+  if (typeof sha !== "string" || !FULL_SHA.test(sha)) return null;
+  if (head === sha) return sha;
+  if (eventName === "pull_request" && head === env.GITHUB_SHA) return sha;
+  return null;
+}
+
+function readJsonFile(file: string | undefined): unknown {
+  if (!file) return null;
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 export function collectGitMeta(cwd: string, env: NodeJS.ProcessEnv = process.env): GitMeta {
   const commitSha = env.COMMIT_SHA || git(["rev-parse", "HEAD"], cwd);
+  const head = env.COMMIT_SHA ? gitOrNull(["rev-parse", "HEAD"], cwd) : commitSha;
   const headBranch = git(["rev-parse", "--abbrev-ref", "HEAD"], cwd);
+  const prNumber = prNumberFromEnv(env);
   return {
     commitSha,
     branch: branchFromEnv(env, headBranch),
-    prNumber: prNumberFromEnv(env),
+    prNumber,
     parentShas: parseParents(git(["log", "-1", "--format=%P"], cwd)),
-    repoFullName: repoFullNameFromEnv(env, gitOrNull(["remote", "get-url", "origin"], cwd)),
+    prHeadSha: prHeadShaFromEvent(env, head, prNumber, () => readJsonFile(env.GITHUB_EVENT_PATH)),
+    ...remoteRepos(env, (args) => gitOrNull(args, cwd)),
   };
 }

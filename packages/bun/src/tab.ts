@@ -7,6 +7,7 @@ import { sendWithFaults, timeoutWithFaults } from "./faults";
 import { OUTSIDE_PAGE_BINDING, PAGE_CONFIG_GLOBAL, PAGE_HELPERS_GLOBAL } from "./page/protocol";
 import { type RouteDecision, Router } from "./routes";
 import { CALL_TIMEOUT_MS, type Lane, Slot } from "./slot";
+import { seconds, StartupSteps } from "./startup";
 
 export interface Viewport {
   width: number;
@@ -43,8 +44,20 @@ const CHROME_FLAGS = [
 const H = PAGE_HELPERS_GLOBAL;
 const STILL_FOR = 3;
 const STILL_TIMEOUT_MS = 10_000;
-/** The first page also launches Chrome, which on a busy CI runner takes well over a call's 15 s. */
+/** What Chrome gets to start when a test has to reopen it, inside that test's own budget. */
 const OPEN_TIMEOUT_MS = 60_000;
+/** What Chrome gets to start before the first test, outside any test's budget: on a fresh CI runner its files
+ *  are on a cold disk, and its first start has taken nearly two minutes under disk load (`run()` now reads them
+ *  into memory first, which brought that to seconds). A browser that never comes up fails the file at this
+ *  budget, not at a test's timeout. */
+const STARTUP_TIMEOUT_MS = 120_000;
+/** The CDP setup after the launch: three calls in turn (`Page.enable`, `Page.getFrameTree`, then the rest at
+ *  once), each with a call's own limit. */
+const SETUP_MAX_MS = 3 * CALL_TIMEOUT_MS;
+/** The `beforeAll` that starts the browser gets the startup budget plus the longest CDP setup and a margin, so
+ *  a start that fails at either limit still ends in the SDK's message, not bun's. */
+export const STARTUP_HOOK_TIMEOUT_MS = STARTUP_TIMEOUT_MS + SETUP_MAX_MS + 5_000;
+const SLOW_MS = 15_000;
 const NATIVE_DRAIN_MS = 5_000;
 /** How long a navigation an action asked for may take to start before it counts as cancelled. */
 const NAVIGATION_START_MS = 3_000;
@@ -149,6 +162,9 @@ export class Tab {
   #network = new Map<string, Logged>();
   #archiving = false;
   #beginning: Promise<unknown> = Promise.resolve();
+  /** This process's first page load is the cold one (the page's assets, Chrome's caches), so it alone warns
+   *  when slow; a view reopened later finds them warm. */
+  #navigated = false;
 
   constructor(readonly baseUrl: string | undefined) {}
 
@@ -218,7 +234,17 @@ export class Tab {
       }
       this.assertCurrent("goto");
     }
-    await this.#requireView().navigate(url);
+    const first = !this.#navigated;
+    this.#navigated = true;
+    const slowMs = timeoutWithFaults("slowMs", SLOW_MS);
+    const slow = first
+      ? setTimeout(() => console.warn(`@uiverify/bun: the first page load is taking longer than ${seconds(slowMs)}`), slowMs)
+      : undefined;
+    try {
+      await this.#requireView().navigate(url);
+    } finally {
+      clearTimeout(slow);
+    }
   }
 
   async addInitScript(source: string): Promise<void> {
@@ -241,7 +267,8 @@ export class Tab {
     this.#view = undefined;
   }
 
-  async #open(): Promise<void> {
+  async #open(budgetMs: number): Promise<void> {
+    const steps = new StartupSteps();
     const view = new Bun.WebView({
       ...DEFAULT_VIEWPORT,
       backend: { type: "chrome", path: chromePath(), argv: CHROME_FLAGS },
@@ -252,28 +279,50 @@ export class Tab {
     this.#evalSlot = new Slot("evaluate", held);
     this.#nativeSlot = new Slot("input", held);
     try {
-      const opening = sendWithFaults("open", () => view.navigate("about:blank"));
-      await withTimeout(opening, timeoutWithFaults("openTimeoutMs", OPEN_TIMEOUT_MS), "opening the page");
+      await steps.run("Chrome launch and about:blank", () =>
+        withTimeout(
+          sendWithFaults("open", () => view.navigate("about:blank")),
+          budgetMs,
+          "starting Chrome (its launch and about:blank)",
+        ),
+      );
       this.#listen(view);
-      await this.cdp("reset", "Page.enable");
-      const { frameTree } = await this.cdp<{ frameTree: { frame: { id: string } } }>("reset", "Page.getFrameTree");
-      this.#mainFrameId = frameTree.frame.id;
-      await Promise.all([
-        this.cdp("reset", "DOM.enable"),
-        this.cdp("reset", "Accessibility.enable"),
-        this.cdp("reset", "Runtime.enable"),
-        this.cdp("reset", "Runtime.addBinding", { name: OUTSIDE_PAGE_BINDING }),
-        this.cdp("reset", "Network.enable", { maxTotalBufferSize: 256 * 1024 * 1024, maxResourceBufferSize: 16 * 1024 * 1024 }),
-        this.cdp("reset", "Fetch.enable", { patterns: [{ urlPattern: "*" }] }),
-        this.cdp("reset", "Target.setDiscoverTargets", { discover: true }),
-        this.cdp("reset", "Emulation.setTimezoneOverride", { timezoneId: "UTC" }),
-        this.cdp("reset", "Emulation.setLocaleOverride", { locale: "en-US" }),
-      ]);
+      await steps.run("CDP setup", () => this.#setup());
     } catch (error) {
       // Half set up, a view would run later tests without interception or page errors: the next one opens anew.
+      console.warn(`@uiverify/bun: the browser failed to start (${steps.summary()})`);
       this.close();
       throw error;
     }
+    if (steps.totalMs > timeoutWithFaults("slowMs", SLOW_MS)) {
+      console.warn(`@uiverify/bun: the browser took ${seconds(steps.totalMs)} to start (${steps.summary()})`);
+    }
+  }
+
+  async #setup(): Promise<void> {
+    await this.cdp("reset", "Page.enable");
+    const { frameTree } = await this.cdp<{ frameTree: { frame: { id: string } } }>("reset", "Page.getFrameTree");
+    this.#mainFrameId = frameTree.frame.id;
+    await Promise.all([
+      this.cdp("reset", "DOM.enable"),
+      this.cdp("reset", "Accessibility.enable"),
+      this.cdp("reset", "Runtime.enable"),
+      this.cdp("reset", "Runtime.addBinding", { name: OUTSIDE_PAGE_BINDING }),
+      this.cdp("reset", "Network.enable", { maxTotalBufferSize: 256 * 1024 * 1024, maxResourceBufferSize: 16 * 1024 * 1024 }),
+      this.cdp("reset", "Fetch.enable", { patterns: [{ urlPattern: "*" }] }),
+      this.cdp("reset", "Target.setDiscoverTargets", { discover: true }),
+      this.cdp("reset", "Emulation.setTimezoneOverride", { timezoneId: "UTC" }),
+      this.cdp("reset", "Emulation.setLocaleOverride", { locale: "en-US" }),
+    ]);
+  }
+
+  /** Start the browser before the first test, so its start isn't charged to that test's budget. */
+  start(): Promise<void> {
+    const starting = this.#beginning.then(async () => {
+      if (!this.#view) await this.#open(timeoutWithFaults("startupTimeoutMs", STARTUP_TIMEOUT_MS));
+    });
+    this.#beginning = starting.catch(() => {});
+    return starting;
   }
 
   /** Close a wedged view and open a fresh one, in the same Chrome. */
@@ -284,7 +333,7 @@ export class Tab {
     this.#paused.clear();
     this.#pausedDocuments.clear();
     this.#initScripts = [];
-    await this.#open();
+    await this.#open(timeoutWithFaults("openTimeoutMs", OPEN_TIMEOUT_MS));
   }
 
   #listen(view: Bun.WebView): void {
@@ -470,7 +519,7 @@ export class Tab {
   begin(setup: TestSetup): Promise<number> {
     // One at a time: a reset bun:test gave up on must finish before the next test's starts.
     const beginning = this.#beginning.then(async () => {
-      if (!this.#view) await this.#open();
+      if (!this.#view) await this.#open(timeoutWithFaults("openTimeoutMs", OPEN_TIMEOUT_MS));
       this.#generation++;
       try {
         await this.#reset(setup);

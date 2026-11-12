@@ -1,10 +1,11 @@
 import os from "node:os";
 import path from "node:path";
 import type { ArchiveProducer } from "./bundle";
-import type { IngestClient } from "./client";
-import type { ClientDeltaEntry, GitMeta } from "./git";
+import type { CaptureShape, IngestClient, RegisteredProject } from "./client";
+import type { UploadProgress } from "./failure-report";
+import { type ClientDeltaEntry, type GitMeta, outputMayBePublic } from "./git";
 import { type BundleGraph, type SkipMode, planSkip } from "./skip";
-import { formatVerdictSummary } from "./summary";
+import { formatOpenComments, formatVerdictSummary } from "./summary";
 
 /**
  * The `uiverify upload` flow: collect git metadata, zip the static bundle, register the build, PUT the
@@ -38,6 +39,17 @@ export interface UploadOptions {
   /** The agent's explicit render targets for a preview check (story-id globs / exact ids). Replaces the
    *  dep-graph closure server-side; only meaningful with `preview: true`. */
   previewTargets?: string[];
+  /** `--project` verbatim (`slug` or `team/slug`). */
+  project?: string;
+  /** `--confirm-new`: the code a signed-in upload's "is one of these your project?" refusal printed, answering
+   *  "none of them": the upload then creates the `--project` it names. */
+  confirmNew?: string;
+  /** What is being uploaded (`--screenshots`, a Storybook dir, or an archive), sent so the server can tell
+   *  which kind of project a signed-in upload belongs to. */
+  captureShape?: CaptureShape;
+  /** Signed in with `uiverify login` rather than a project key. The MCP handoff then points at the
+   *  browser-login MCP endpoint and names the project, since that login spans every team you're in. */
+  signedIn?: boolean;
 }
 
 export interface UploadDeps {
@@ -68,18 +80,33 @@ export interface UploadDeps {
   tmpFile: () => string;
   log: (msg: string) => void;
   sleep?: (ms: number) => Promise<void>;
+  /** Updated as the run moves through its steps, so a failure can be reported with the step it failed at. */
+  progress?: UploadProgress;
 }
 
-// `blocked` (shot-quota / payment hard-pause) never renders and never advances, so from the poll's
+// `blocked` (paused at the snapshot allowance or billing check) never renders and never advances, so from the poll's
 // vantage it is terminal — including it stops a blocked build from polling to the timeout below.
 const TERMINAL = new Set(["passed", "changed", "failed", "blocked"]);
 
 const POLL_INTERVAL_MS = 2000;
 const MAX_WAIT_MS = 60 * 60 * 1000;
 
+/** Where a signed-in upload landed, and what this run created to get there. */
+export function projectLine(project: RegisteredProject): string {
+  const name = `${project.team}/${project.slug}`;
+  const what = !project.created
+    ? `Project ${name}`
+    : project.teamCreated
+      ? `Created team ${project.team} and project ${name}`
+      : `Created project ${name}`;
+  return project.url ? `${what}: ${project.url}` : what;
+}
+
 export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<{ buildId: string; status?: string }> {
   // The story list is no longer read here — the server enumerates it (and the per-story render
   // params) from the uploaded bundle.
+  const progress: UploadProgress = deps.progress ?? { stage: "git", producer: null, project: null };
+  progress.stage = "git";
   const meta = deps.gitMeta();
   const pr = meta.prNumber ? ` · PR #${meta.prNumber}` : "";
   deps.log(`Commit ${meta.commitSha.slice(0, 7)} on ${meta.branch}${pr}`);
@@ -91,10 +118,12 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
   const tgz = deps.tmpFile();
   const bundled = opts.screenshots ? "screenshots" : deps.isStorybook(opts.staticDir) ? "Storybook" : "capture archive";
   deps.log(`Bundling ${bundled}…`);
+  progress.stage = "archive";
   await deps.createBundle(opts.staticDir, tgz);
 
   // Read after createBundle: it finalizes the archive manifest (index.json), which carries the producer.
   const producer = deps.readProducer(opts.staticDir);
+  progress.producer = producer;
   const skipMode = opts.preview ? "render-all" : (opts.skip ?? "default");
   const plan = planSkip(skipMode, opts.screenshots ? null : deps.bundleGraph(opts.staticDir, producer));
   if (plan.notice) deps.log(plan.notice);
@@ -133,11 +162,13 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
   }
 
   deps.log("Registering build…");
+  progress.stage = "register";
   const reg = await deps.client.register({
     commitSha: meta.commitSha,
     branch: meta.branch,
     prNumber: meta.prNumber,
     parentShas: meta.parentShas,
+    prHeadSha: meta.prHeadSha ?? undefined,
     autoAcceptChanges: opts.autoAcceptChanges ?? false,
     onlyChanged: plan.onlyChanged,
     uncommittedChanges,
@@ -146,9 +177,14 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
     preview: opts.preview ?? false,
     previewTargets: opts.preview ? (opts.previewTargets ?? []) : undefined,
     repoFullName: meta.repoFullName || undefined,
+    upstreamRepoFullName: meta.upstreamRepoFullName,
+    project: opts.project,
+    confirmNew: opts.confirmNew,
+    captureShape: opts.captureShape,
     sdkName: producer?.name,
     sdkVersion: producer?.version,
     bundleContentHash,
+    ci: outputMayBePublic(process.env),
   });
 
   // The server skipped the rebuild of an already-passed commit: this exact commit already has a green
@@ -156,14 +192,22 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
   // exit clean (status `passed`). A build only reaches here on a byte-identical re-upload of a
   // fully-accepted build at the same commit; the dashboard's Re-run button forces a fresh capture.
   if (reg.outcome === "skipped") {
+    progress.stage = "done";
+    for (const line of formatOpenComments(reg.openComments)) deps.log(line);
     const buildUrl = opts.appUrl ? `${opts.appUrl.replace(/\/$/, "")}/builds/${reg.buildId}` : reg.buildId;
     deps.log(`Skipping rebuild of already-passed build #${reg.buildNumber} (same commit, nothing changed): ${buildUrl}`);
     return { buildId: reg.buildId, status: "passed" };
   }
-  const { buildId, uploadUrl, baselineCommits, deltaBases, warnings } = reg;
+  const { buildId, uploadUrl, baselineCommits, deltaBases, warnings, project } = reg;
+  if (project) {
+    progress.project = `${project.team}/${project.slug}`;
+    deps.log(projectLine(project));
+  }
   // Advisory, non-blocking — e.g. the GitHub App isn't installed on the repo. Print loudly so the
   // "it did nothing on my PR" case is explained right in the CI log; never affects the exit code.
   for (const w of warnings) deps.log(`⚠ ${w}`);
+  // Printed before anything renders, so an agent starting work on the branch reads its open notes first.
+  for (const line of formatOpenComments(reg.openComments)) deps.log(line);
 
   // Confirm which candidate baselines are true git ancestors of this head, locally — so a branch
   // behind the default branch doesn't inherit the default branch's drifted baseline. Empty for a
@@ -191,8 +235,10 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
   }
 
   deps.log(`Registered build ${buildId} — uploading bundle…`);
+  progress.stage = "upload";
   await deps.client.upload(uploadUrl, tgz);
   await deps.client.markUploaded(buildId, ancestorShas, changedFiles);
+  progress.stage = "done";
   const buildUrl = opts.appUrl ? `${opts.appUrl.replace(/\/$/, "")}/builds/${buildId}` : buildId;
   deps.log(`Build uploaded: ${buildUrl}`);
 
@@ -218,7 +264,8 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
       // A blocked build rendered nothing, so its 0/0 counts would read as a misleading "all clear" —
       // say why it stopped and point at the dashboard instead.
       if (s.status === "blocked") {
-        deps.log(`Build ${buildId} blocked — shot quota reached or payment required. Review: ${buildUrl}`);
+        for (const line of blockedLines(buildId, s.blocked?.message ?? null)) deps.log(line);
+        deps.log(`Review: ${buildUrl}`);
         return { buildId, status: s.status };
       }
       const detail = s.total > 0 ? ` — ${s.changed} changed, ${s.failed} failed of ${s.total}` : "";
@@ -229,8 +276,13 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
       // status now (no body), so this log is the agent's only recipe. `passed` prints nothing;
       // `summary` is absent on an older server, so this no-ops there. Exit code is unchanged.
       if (s.summary && (s.status === "changed" || s.status === "failed")) {
+        const signedIn = opts.signedIn ?? false;
         const agent = opts.appUrl
-          ? { mcpUrl: `${opts.appUrl.replace(/\/$/, "")}/api/mcp`, selector: agentSelector(meta, buildId, opts.preview ?? false) }
+          ? {
+              mcpUrl: `${opts.appUrl.replace(/\/$/, "")}${signedIn ? "/mcp" : "/api/mcp"}`,
+              signedIn,
+              selector: agentSelector(meta, buildId, opts.preview ?? false, signedIn ? project?.id : undefined),
+            }
           : undefined;
         for (const line of formatVerdictSummary(s.summary, buildUrl, agent)) deps.log(line);
       }
@@ -241,11 +293,28 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
   throw new Error(`timed out waiting for build ${buildId}`);
 }
 
+/** What to print for a blocked build. The server's `message` is already worded for the user and ends by
+ *  telling an agent not to retry and to tell the user; an older server sends none, so the fallback says that
+ *  last part itself. */
+export function blockedLines(buildId: string, message: string | null): string[] {
+  if (message === null) {
+    return [
+      `Build ${buildId} blocked: UI Verify paused it at the team's snapshot allowance or billing check before rendering anything.`,
+      "Retrying this build won't help until the block is lifted. Please tell the user.",
+    ];
+  }
+  return [`Build ${buildId} blocked.`, ...message.split("\n")];
+}
+
 /** The MCP selector that addresses this build - its PR if it has one, else its commit. A preview build is
- *  addressable only by its id: the server resolves a PR or commit to the CI build, never a preview one. */
-function agentSelector(meta: GitMeta, buildId: string, preview: boolean): string {
+ *  addressable only by its id: the server resolves a PR or commit to the CI build, never a preview one. A
+ *  browser-login MCP session isn't tied to one project, so a signed-in upload's selector names it. */
+function agentSelector(meta: GitMeta, buildId: string, preview: boolean, projectId: string | undefined): string {
   if (preview) return `{ "buildId": "${buildId}" }`;
-  return meta.prNumber !== null ? `{ "prNumber": ${meta.prNumber} }` : `{ "commitSha": "${meta.commitSha}" }`;
+  const project = projectId ? `"projectId": "${projectId}", ` : "";
+  return meta.prNumber !== null
+    ? `{ ${project}"prNumber": ${meta.prNumber} }`
+    : `{ ${project}"commitSha": "${meta.commitSha}" }`;
 }
 
 export function defaultTmpFile(): string {

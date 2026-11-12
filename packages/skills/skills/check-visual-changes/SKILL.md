@@ -21,6 +21,11 @@ from CI:
 A `changed` verdict exits 0 — it's the expected result to review, not a gate. Only a real `failed`/`blocked`
 or an operational error exits non-zero.
 
+A **`blocked`** build was paused at the team's snapshot allowance or billing check before rendering
+anything. **Stop and relay what the CLI printed to the user**, who has to act on it. Don't re-run
+`check` until the user has resolved the block the way that output says: until then every re-run is
+paused too.
+
 ## The one rule: scope it to what you touched
 
 This is the whole point, and it's the opposite of CI. CI computes the *transitive* affected set from the
@@ -40,7 +45,7 @@ It does **not** run your build or your tests for you — you prepare the capture
 same input the matching capture skill produces (`storybook-visual-testing`, `playwright-visual-testing`,
 `vitest-visual-testing`, `bun-visual-testing`), then point `check` at it.
 
-`UIVERIFY_API_KEY` (a `uv_proj_…` project key) must be set. Every method takes `--strict`/`--no-strict`
+You must be signed in (`npx uiverify login`) or have `UIVERIFY_API_KEY` (a `uv_proj_…` project key) set. In a monorepo, pass the `--project <team>/<slug>` that the package's upload script carries (the repo's AGENTS.md names it too); signed in, `check` without it can't tell which project is meant once the repo has two. Every method takes `--strict`/`--no-strict`
 and `--working-directory` like `uiverify upload`.
 
 ### Storybook — `--target` is required
@@ -91,6 +96,13 @@ uiverify check --screenshots ./screenshots
 Narrow with `--target` against the image path keys if you want (`--target 'settings/*'`), but it's optional.
 
 ## Read the verdict, then hand off to triage
+
+Before it renders anything, `check` prints the branch's **open review notes** (a reviewer's comments that
+nobody has resolved yet), with each one's story, build and link. Read them first: they are part of the task,
+and you resolve each with `resolve_comment` once it's done. `list_comments` with `branch` reads the same
+list over the MCP. Notes follow their story to newer builds until resolved, and accepting a story is refused
+while a note from a person on it is open, including one carried over from an earlier build. On a CI run the
+notes show where they are and not what they say; read the text with `list_comments`.
 
 `check` prints the changed-story list and an MCP handoff. When it comes back **changed**, don't eyeball
 the diff numbers alone — use the **`triage-visual-changes`** skill to review the actual pixels over the

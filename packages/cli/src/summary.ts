@@ -1,4 +1,4 @@
-import type { BuildSummary } from "./client";
+import type { BuildSummary, OpenComments } from "./client";
 
 /**
  * The plaintext verdict printed to the CI log on a changed/failed build - and the agent's handoff. UI
@@ -15,8 +15,10 @@ import type { BuildSummary } from "./client";
 
 /** Where an agent acts on the build: the remote MCP endpoint and the selector that addresses it. */
 export interface AgentHandoff {
-  /** UI Verify's MCP endpoint (`${appUrl}/api/mcp`), driven with the project's API key. */
+  /** UI Verify's MCP endpoint: `${appUrl}/api/mcp` driven with the project's API key, or for a signed-in
+   *  upload `${appUrl}/mcp`, where the MCP client signs in through the browser. */
   mcpUrl: string;
+  signedIn: boolean;
   /** The MCP selector that addresses this build - its id for a preview check, else its PR, else its commit. */
   selector: string;
 }
@@ -39,6 +41,30 @@ function aiVerdictSuffix(s: { aiVerdict: string | null; aiConfidence: string | n
 }
 
 const openNotes = (n: number) => `${n} open review comment${n === 1 ? "" : "s"}`;
+
+const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+/** The branch's open review notes, printed at the start of a run so the agent reads them before it renders
+ *  anything. Empty when the server sent none. The server decides whether the text travels (`textShown`); this
+ *  only prints what arrived. */
+export function formatOpenComments(open: OpenComments | undefined): string[] {
+  if (!open || open.notes.length === 0) return [];
+  const total = Math.max(open.total, open.notes.length);
+  const lines = [
+    `${openNotes(total)} on branch ${open.branch} - address ${total === 1 ? "it" : "them"} as part of this change:`,
+  ];
+  for (const n of open.notes) {
+    const quoted = open.textShown && n.body !== null ? `"${oneLine(n.body)}"` : "(read it with list_comments or at the link)";
+    lines.push(`  ${storyPlainLabel(n)} (${n.viewport}, ${n.browser}), build #${n.buildNumber}, ${oneLine(n.author)}: ${quoted}`);
+    lines.push(`    ${n.reviewUrl}`);
+  }
+  if (total > open.notes.length) lines.push(`  ...and ${total - open.notes.length} more`);
+  const selector = `{ "branch": ${JSON.stringify(open.branch)}, "projectId": ${JSON.stringify(open.projectId)} }`;
+  lines.push(
+    `  When it's done, resolve it: resolve_comment over the UI Verify MCP (list_comments ${selector} lists them), or Resolve in the dashboard.`,
+  );
+  return lines;
+}
 
 export function formatVerdictSummary(summary: BuildSummary, buildUrl: string, agent?: AgentHandoff): string[] {
   const lines: string[] = [];
@@ -84,7 +110,7 @@ export function formatVerdictSummary(summary: BuildSummary, buildUrl: string, ag
   const unresolved = summary.comments?.unresolved ?? 0;
   if (unresolved > 0) {
     lines.push("");
-    lines.push(`${openNotes(unresolved)} on this build. Read and address them before accepting.`);
+    lines.push(`${openNotes(unresolved)} on this branch. Read and address them before accepting.`);
   }
 
   lines.push("");
@@ -111,12 +137,15 @@ export function formatVerdictSummary(summary: BuildSummary, buildUrl: string, ag
       lines.push("");
       lines.push("  Or resolve directly over the UI Verify MCP:");
     }
-    lines.push(`  Endpoint: ${agent.mcpUrl} (authenticate with your project API key)`);
+    const auth = agent.signedIn
+      ? "sign in with your UI Verify account in the browser when your MCP client asks"
+      : "authenticate with your project API key";
+    lines.push(`  Endpoint: ${agent.mcpUrl} (${auth})`);
     lines.push(`  1. get_build ${agent.selector} - the changed-story list, each with a diffResultId.`);
     lines.push(`  2. render_diff_image { "diffResultId": "...", "which": "diff" } - see the changed pixels.`);
     if (unresolved > 0) {
       lines.push(`  3. list_comments ${agent.selector} - read each note, address it, then resolve_comment its thread`);
-      lines.push("     (accepting a story is refused while its note is open).");
+      lines.push("     (accepting a story is refused while a note from a person on it is open).");
     }
     if (summary.changedStories.length > 0) {
       lines.push(`  ${unresolved > 0 ? 4 : 3}. Decide intended-vs-regression, then act:`);

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import type { BuildSummary } from "./client";
-import { formatVerdictSummary } from "./summary";
+import type { BuildSummary, OpenComments } from "./client";
+import { formatOpenComments, formatVerdictSummary } from "./summary";
 
 const BUILD_URL = "https://uiverify.example.com/builds/b1";
 
@@ -131,7 +131,7 @@ describe("formatVerdictSummary", () => {
       changedStoriesTruncated: null,
       failedStories: [],
     };
-    const agent = { mcpUrl: "https://uiverify.example.com/api/mcp", selector: '{ "prNumber": 7 }' };
+    const agent = { mcpUrl: "https://uiverify.example.com/api/mcp", signedIn: false, selector: '{ "prNumber": 7 }' };
 
     const lines = formatVerdictSummary(summary, BUILD_URL, agent);
     expect(lines).toContain("For the agent that opened this PR:");
@@ -186,15 +186,16 @@ describe("formatVerdictSummary", () => {
       changedStoriesTruncated: null,
       failedStories: [],
     };
-    const agent = { mcpUrl: "https://uiverify.example.com/api/mcp", selector: '{ "prNumber": 7 }' };
+    const agent = { mcpUrl: "https://uiverify.example.com/api/mcp", signedIn: false, selector: '{ "prNumber": 7 }' };
 
     const lines = formatVerdictSummary(summary, BUILD_URL, agent);
     expect(lines).toContain("  A › X · awaiting review · 2 open review comments");
     expect(lines).toContain("  B › Y · awaiting review");
-    expect(lines).toContain("2 open review comments on this build. Read and address them before accepting.");
+    expect(lines).toContain("2 open review comments on this branch. Read and address them before accepting.");
     expect(lines).toContain(
       '  3. list_comments { "prNumber": 7 } - read each note, address it, then resolve_comment its thread',
     );
+    expect(lines).toContain("     (accepting a story is refused while a note from a person on it is open).");
     expect(lines).toContain("  4. Decide intended-vs-regression, then act:");
   });
 
@@ -207,7 +208,7 @@ describe("formatVerdictSummary", () => {
       changedStoriesTruncated: null,
       failedStories: [],
     };
-    const agent = { mcpUrl: "https://uiverify.example.com/api/mcp", selector: '{ "prNumber": 7 }' };
+    const agent = { mcpUrl: "https://uiverify.example.com/api/mcp", signedIn: false, selector: '{ "prNumber": 7 }' };
     for (const summary of [base, { ...base, comments: { total: 1, unresolved: 0 } }]) {
       const lines = formatVerdictSummary(summary, BUILD_URL, agent);
       expect(lines.some((l) => l.includes("review comment") || l.includes("list_comments"))).toBe(false);
@@ -224,6 +225,7 @@ describe("formatVerdictSummary", () => {
     };
     const lines = formatVerdictSummary(summary, BUILD_URL, {
       mcpUrl: "https://x/api/mcp",
+      signedIn: false,
       selector: '{ "commitSha": "abc" }',
     });
     expect(lines.some((l) => l.includes("accept_build"))).toBe(false);
@@ -253,5 +255,63 @@ describe("formatVerdictSummary", () => {
     };
     const lines = formatVerdictSummary(summary, BUILD_URL);
     expect(lines).toContain("  components-button--primary · awaiting review");
+  });
+});
+
+describe("formatOpenComments", () => {
+  const note = (over: Partial<OpenComments["notes"][number]> = {}): OpenComments["notes"][number] => ({
+    storyId: "card--default",
+    title: "Card",
+    name: "Default",
+    viewport: "desktop",
+    browser: "chromium",
+    buildNumber: 2,
+    reviewUrl: "https://uiverify.ai/builds/b2?diff=d1",
+    author: "Igor",
+    body: "remove drop shadow from all platforms",
+    replies: 0,
+    ...over,
+  });
+  const open = (over: Partial<OpenComments> = {}): OpenComments => ({
+    branch: "feat/card",
+    projectId: "p1",
+    total: 1,
+    textShown: true,
+    notes: [note()],
+    ...over,
+  });
+
+  /** Would catch a block that drifts from the shape the skills and the server design promise the agent. */
+  it("prints one note with its text, link and the way to resolve it", () => {
+    expect(formatOpenComments(open())).toEqual([
+      "1 open review comment on branch feat/card - address it as part of this change:",
+      '  Card › Default (desktop, chromium), build #2, Igor: "remove drop shadow from all platforms"',
+      "    https://uiverify.ai/builds/b2?diff=d1",
+      '  When it\'s done, resolve it: resolve_comment over the UI Verify MCP (list_comments { "branch": "feat/card", "projectId": "p1" } lists them), or Resolve in the dashboard.',
+    ]);
+  });
+
+  /** Would catch quoting a body the server withheld (null), or one it flagged withheld for the whole list. */
+  it("points at list_comments instead of the text when the server withheld it", () => {
+    const hint = "(read it with list_comments or at the link)";
+    expect(formatOpenComments(open({ textShown: false }))[1]).toContain(`Igor: ${hint}`);
+    expect(formatOpenComments(open({ notes: [note({ body: null })] }))[1]).toContain(`Igor: ${hint}`);
+    expect(formatOpenComments(open({ textShown: false, notes: [note({ body: "secret" })] })).join("\n")).not.toContain("secret");
+  });
+
+  it("pluralizes, and counts the notes it could not list", () => {
+    const lines = formatOpenComments(open({ total: 12, notes: [note(), note({ buildNumber: 3 })] }));
+    expect(lines[0]).toBe("12 open review comments on branch feat/card - address them as part of this change:");
+    expect(lines).toContain("  ...and 10 more");
+  });
+
+  it("keeps a note on one line however its text is laid out", () => {
+    const lines = formatOpenComments(open({ notes: [note({ body: "first\nsecond\t  third" })] }));
+    expect(lines[1]).toContain('"first second third"');
+  });
+
+  it("prints nothing when the server sent no notes", () => {
+    expect(formatOpenComments(undefined)).toEqual([]);
+    expect(formatOpenComments(open({ total: 0, notes: [] }))).toEqual([]);
   });
 });

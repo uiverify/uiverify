@@ -42,8 +42,8 @@ This repository holds the open-source client packages, everything that runs in *
 # 1. Install the CLI in your project
 npm i -D uiverify
 
-# 2. Point it at your account
-export UIVERIFY_API_KEY=...        # from uiverify.ai
+# 2. Point it at your account: sign in on your machine (in CI, set UIVERIFY_API_KEY from uiverify.ai)
+npx uiverify login
 
 # 3. Build your Storybook, then upload; the exit code reflects the visual verdict
 npm run build-storybook
@@ -159,7 +159,7 @@ pnpm -r test
 pnpm -r typecheck
 ```
 
-The CLI requires `UIVERIFY_API_KEY` and talks to `https://uiverify.ai` by default (override with `--api-url` / `UIVERIFY_API_URL` for self-host or local dev). See each package's README and [DEVELOPMENT.md](DEVELOPMENT.md) for internals.
+The CLI uses `UIVERIFY_API_KEY` in CI, or on your own machine a one-time `npx uiverify login` ([details](packages/cli/README.md#signing-in-instead-of-a-key)), and talks to `https://uiverify.ai` by default (override with `--api-url` / `UIVERIFY_API_URL` for self-host or local dev). When a run fails before its build reaches UI Verify, or a login ends without signing in, the CLI sends a short failure report with no code, file contents or environment values (signed in, an upload's report also names the repository); `UIVERIFY_TELEMETRY=0` turns it off ([details](packages/cli/README.md#failure-reports)). See each package's README and [DEVELOPMENT.md](DEVELOPMENT.md) for internals.
 
 ## License
 

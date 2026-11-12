@@ -21,7 +21,7 @@ export interface ParseSpec {
 }
 
 export const UPLOAD_SPEC: ParseSpec = {
-  valueOptions: new Set(["static-dir", "screenshots", "working-directory", "api-url"]),
+  valueOptions: new Set(["static-dir", "screenshots", "working-directory", "api-url", "project", "confirm-new"]),
   multiValueOptions: new Set(),
   booleanFlags: new Set(["auto-accept-changes", "exit-zero-on-changes", "render-all", "strict", "no-strict"]),
 };
@@ -30,9 +30,16 @@ export const UPLOAD_SPEC: ParseSpec = {
  *  the operational-failure switches. Deliberately NOT the upload gating flags (a preview check is not a
  *  CI gate), so passing one is rejected rather than silently ignored. */
 export const CHECK_SPEC: ParseSpec = {
-  valueOptions: new Set(["static-dir", "screenshots", "working-directory", "api-url"]),
+  valueOptions: new Set(["static-dir", "screenshots", "working-directory", "api-url", "project"]),
   multiValueOptions: new Set(["target"]),
   booleanFlags: new Set(["strict", "no-strict"]),
+};
+
+/** `uiverify login` / `logout` / `whoami` take no options: `UIVERIFY_API_URL` says which UI Verify. */
+export const ACCOUNT_SPEC: ParseSpec = {
+  valueOptions: new Set(),
+  multiValueOptions: new Set(),
+  booleanFlags: new Set(),
 };
 
 /**

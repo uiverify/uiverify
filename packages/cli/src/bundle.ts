@@ -7,6 +7,21 @@ import type { BundleGraph } from "./skip";
 
 const ARCHIVE_FORMAT_VERSION = 1;
 
+/** The capture output can't be uploaded: missing, empty, or unreadable. Thrown apart from a tar failure so
+ *  a failure report can say the capture step failed. `reportMessage`, when set, is what a report sends in
+ *  place of `message` (which may quote a user's file). */
+export class CaptureOutputError extends Error {
+  constructor(
+    readonly errorClass: "missing_dir" | "nothing_captured" | "unreadable_capture",
+    message: string,
+    readonly reportMessage?: string,
+  ) {
+    super(message);
+  }
+}
+
+const UNREADABLE_CAPTURE = "a capture file could not be read";
+
 /** The algorithm-version tag on every `bundle_content_hash`. A change to the hashing rules below bumps
  *  this (to `v2`), so a hash computed by a newer CLI can never MATCH one an older CLI stored — drift
  *  falls through to a render (a safe miss), never a wrong skip. */
@@ -71,6 +86,15 @@ const snapshotMeta = z.object({
   baselineImage: z.string().optional(),
 });
 
+function readSnapshotMeta(file: string): z.infer<typeof snapshotMeta> {
+  try {
+    return snapshotMeta.parse(JSON.parse(fs.readFileSync(file, "utf8")));
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    throw new CaptureOutputError("unreadable_capture", `could not read ${file}: ${detail}`, UNREADABLE_CAPTURE);
+  }
+}
+
 /**
  * A Playwright/Vitest archive dir carries per-test `snapshots/*.json` but no `index.json` — the parallel
  * test workers can't safely co-write one shared manifest during the run. Assemble it here, at bundle time,
@@ -98,7 +122,7 @@ export function finalizeArchiveIfNeeded(staticDir: string): void {
   let producer: ArchiveProducer | undefined;
   for (const file of fs.readdirSync(snapshotsDir)) {
     if (!file.endsWith(".json")) continue;
-    const snap = snapshotMeta.parse(JSON.parse(fs.readFileSync(path.join(snapshotsDir, file), "utf8")));
+    const snap = readSnapshotMeta(path.join(snapshotsDir, file));
     entries[snap.id] = {
       id: snap.id,
       type: "story",
@@ -225,7 +249,9 @@ function nothingToUploadMessage(staticDir: string): string {
  *  when the dir holds nothing to render (no `index.json` once finalized, or one listing no entries). */
 export async function createBundle(staticDir: string, outPath: string): Promise<void> {
   finalizeArchiveIfNeeded(staticDir);
-  if (!hasManifestEntries(staticDir)) throw new Error(nothingToUploadMessage(staticDir));
+  if (!hasManifestEntries(staticDir)) {
+    throw new CaptureOutputError(fs.existsSync(staticDir) ? "nothing_captured" : "missing_dir", nothingToUploadMessage(staticDir));
+  }
   await create({ gzip: true, file: outPath, cwd: staticDir }, ["."]);
 }
 
@@ -251,13 +277,20 @@ function collectImages(root: string, dir: string = root, out: string[] = []): st
  * (nothing to upload) or a colliding id (two files that reduce to the same key).
  */
 export function finalizeScreenshots(dir: string): void {
+  if (!fs.existsSync(dir)) throw new CaptureOutputError("missing_dir", `--screenshots ${dir} does not exist`);
   const images = collectImages(dir);
-  if (images.length === 0) throw new Error(`no screenshots (*.png, *.jpg, *.jpeg) found in ${dir}`);
+  if (images.length === 0) throw new CaptureOutputError("nothing_captured", `no screenshots (*.png, *.jpg, *.jpeg) found in ${dir}`);
   const entries: Record<string, { id: string; type: "story"; title: string; name: string; image: string }> = {};
   for (const rel of images) {
     const image = rel.split(path.sep).join("/");
     const id = image.replace(IMAGE_EXT, "");
-    if (entries[id]) throw new Error(`two screenshots map to the same id "${id}" (differ only by extension): ${dir}`);
+    if (entries[id]) {
+      throw new CaptureOutputError(
+        "unreadable_capture",
+        `two screenshots map to the same id "${id}" (differ only by extension): ${dir}`,
+        "two screenshots map to the same id (differ only by extension)",
+      );
+    }
     const posixDir = path.posix.dirname(image);
     entries[id] = {
       id,

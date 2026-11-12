@@ -1,12 +1,44 @@
 import fs from "node:fs";
+import type { Credential } from "./auth";
 import type { ClientDeltaEntry } from "./git";
+import { NOT_SIGNED_IN } from "./login";
 import { HttpStatusError, withRetry } from "./retry";
 import { z } from "zod";
 import pkg from "../package.json";
 
 /** This CLI's own version, reported at register (`x-uiverify-cli-version`) so UI Verify can nudge an
  *  outdated CLI. Inlined at build time (esbuild bundles the JSON import). */
-const CLI_VERSION: string = pkg.version;
+export const CLI_VERSION: string = pkg.version;
+
+// The review notes still open on this build's branch, so the CLI can print them before it renders anything.
+// Optional end to end: an older server omits it, a branch with no open notes omits it, and a shape this client
+// can't read becomes absent too, since a register must never fail over a hint. `body` is null when the server
+// withheld the text (a CI run, or a public project), and `textShown` says so for the whole list.
+const openCommentNote = z.object({
+  storyId: z.string(),
+  title: z.string(),
+  name: z.string(),
+  viewport: z.string(),
+  browser: z.string(),
+  buildNumber: z.number(),
+  reviewUrl: z.string(),
+  author: z.string(),
+  body: z.string().nullable(),
+  replies: z.number(),
+});
+const openComments = z
+  .object({
+    branch: z.string(),
+    projectId: z.string(),
+    total: z.number(),
+    textShown: z.boolean(),
+    notes: z.array(openCommentNote),
+  })
+  .nullish()
+  .catch(undefined)
+  .transform((v) => v ?? undefined);
+
+export type OpenComments = NonNullable<z.output<typeof openComments>>;
 
 // `baselineCommits` are the (sparse) commits a baseline could come from; the CLI intersects them
 // against the head's true local git ancestry and uploads the confirmed subset at markUploaded. An
@@ -23,7 +55,23 @@ const registerResponse = z.object({
   // Advisory, non-blocking messages surfaced into the CI log (e.g. the GitHub App isn't installed on
   // the repo, so no check/comment will post). An older server omits the field ⇒ empty.
   warnings: z.array(z.string()).default([]),
+  openComments,
+  // The project a signed-in upload landed in: the server picks it from the repo and upload type (or
+  // `--project`), and creates it (and the first team) when nothing matches. Absent for a key upload and from an
+  // older server; `teamCreated` and `url` are absent from a server that predates creating them.
+  project: z
+    .object({
+      id: z.string(),
+      team: z.string(),
+      slug: z.string(),
+      created: z.boolean(),
+      teamCreated: z.boolean().optional(),
+      url: z.string().optional(),
+    })
+    .optional(),
 });
+
+export type RegisteredProject = NonNullable<z.infer<typeof registerResponse>["project"]>;
 
 // The server skipped the rebuild of an already-passed commit: a same-commit re-upload whose bundle hash
 // matched a prior fully-accepted, zero-failure build. Nothing was created; `buildNumber` is that prior
@@ -33,13 +81,23 @@ const skippedRegisterResponse = z.object({
   outcome: z.literal("skipped"),
   buildId: z.string(),
   buildNumber: z.number(),
+  openComments,
 });
 
 /** The register outcome: either an upload URL to PUT the bundle to (the normal flow), or a skip of the
  *  rebuild of an already-passed commit (no upload, no poll — just print and exit 0). */
 export type RegisterResult =
-  | { outcome: "upload"; buildId: string; uploadUrl: string; baselineCommits: string[]; deltaBases: string[]; warnings: string[] }
-  | { outcome: "skipped"; buildId: string; buildNumber: number };
+  | {
+      outcome: "upload";
+      buildId: string;
+      uploadUrl: string;
+      baselineCommits: string[];
+      deltaBases: string[];
+      warnings: string[];
+      openComments?: OpenComments;
+      project?: RegisteredProject;
+    }
+  | { outcome: "skipped"; buildId: string; buildNumber: number; openComments?: OpenComments };
 
 const CANONICAL_SHA = /^[0-9a-f]{40}$/;
 const MAX_DELTA_BASES = 16;
@@ -94,25 +152,24 @@ const statusResponse = z.object({
   summary: buildSummary.optional(),
   // Why a build failed as a whole (an unusable upload, a bundle crash). Absent on an older server.
   failureReason: z.string().nullable().optional(),
+  // Why a `blocked` build was paused and what to do next, already worded for the user. The server sends more
+  // structured fields; only the ready-made `message` is read, so the wording stays the server's. Null or absent
+  // for any other status and on an older server; a shape this client can't read becomes null too, so the CLI
+  // prints its generic line instead of failing the poll.
+  blocked: z.object({ message: z.string() }).nullish().catch(null),
 });
 
 export type BuildStatus = z.infer<typeof statusResponse>;
 export type BuildSummary = z.infer<typeof buildSummary>;
 
-/**
- * HTTP client for the ingest contract. Authenticates every call with the project API key; the bundle
- * PUT goes to the presigned URL (no auth header — the URL is the capability). The key only ever
- * travels in the Authorization header, never in logs.
- *
- * Every call is time-bounded per attempt and retried on transport failures + 5xx (never 4xx) via
- * `withRetry`, so a single stalled request no longer fails the run — the retry lands on a healthy
- * response. `markUploaded` is idempotent, so a retry can't double-render.
- */
 export interface RegisterBody {
   commitSha: string;
   branch: string;
   prNumber: number | null;
   parentShas: string[];
+  /** The PR head the checkout was built from, when the CLI could prove it; the server posts the PR's
+   *  check there instead of deriving it from `parentShas` (which a shallow merge checkout lacks). */
+  prHeadSha?: string;
   autoAcceptChanges?: boolean;
   /** Render only the stories this commit's changed files could affect and carry the rest forward
    *  (skip-unchanged). Decided server-side; per build, so it never changes anyone else's builds. */
@@ -131,6 +188,16 @@ export interface RegisterBody {
   /** GitHub `owner/repo`; the server binds it to the project so it knows where to post the check +
    *  PR comment. Omitted when it can't be determined locally. */
   repoFullName?: string;
+  /** `owner/repo` of the checkout's `upstream` remote, when it has one. */
+  upstreamRepoFullName?: string;
+  /** `--project` verbatim (`slug` or `team/slug`): which project a signed-in upload goes to. Sent with a key
+   *  too, and the server refuses one that doesn't name the key's project. */
+  project?: string;
+  /** `--confirm-new`, sent only when given. */
+  confirmNew?: string;
+  /** What was uploaded, by a file sniff: `--screenshots`, a Storybook static dir, or a capture archive. The
+   *  server derives the project type from it (with the SDK header); the CLI never maps one to the other. */
+  captureShape?: CaptureShape;
   /** The capture SDK that produced the bundle (`@uiverify/playwright` | `@uiverify/vitest`) and its
    *  version, read from the archive manifest. Sent as `x-uiverify-sdk-*` headers (never in the JSON
    *  body). Absent for a Storybook upload (no SDK) or an archive from a pre-stamp SDK. */
@@ -140,7 +207,12 @@ export interface RegisterBody {
    *  `v1:<hex>`). Lets the server skip the rebuild of an already-passed commit when it matches a prior
    *  fully-accepted build at the same commit. Omitted under `--render-all`, or if hashing somehow failed. */
   bundleContentHash?: string;
+  /** This run's output may be read by people outside the team (`outputMayBePublic`): the server then
+   *  withholds review-comment text from the response. Absent from an older CLI, which gets none either. */
+  ci?: boolean;
 }
+
+export type CaptureShape = "storybook" | "archive" | "screenshots";
 
 export interface IngestClient {
   register(body: RegisterBody): Promise<RegisterResult>;
@@ -166,31 +238,56 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * status line for a non-JSON / opaque body. (4xx is never retried, so this message goes straight to the
  * CLI's error output.)
  */
-function httpError(label: string, status: number, body: string): HttpStatusError {
+function httpError(label: string, status: number, body: string, fromUiVerify = true): HttpStatusError {
   try {
     const parsed: unknown = JSON.parse(body);
     if (isRecord(parsed) && typeof parsed.error === "string" && parsed.error) {
-      return new HttpStatusError(status, parsed.error);
+      return new HttpStatusError(status, parsed.error, label, fromUiVerify ? parsed.error : null);
     }
   } catch {
     // Not JSON - fall through to the raw status line below.
   }
-  return new HttpStatusError(status, body ? `${label} -> ${status}: ${body}` : `${label} -> ${status}`);
+  return new HttpStatusError(status, body ? `${label} -> ${status}: ${body}` : `${label} -> ${status}`, label, null);
 }
 
-export function httpIngestClient(apiUrl: string, apiKey: string): IngestClient {
-  // Every request identifies the CLI version; the API key only ever travels in Authorization.
-  const auth = { authorization: `Bearer ${apiKey}`, "x-uiverify-cli-version": CLI_VERSION };
+/**
+ * HTTP client for the ingest contract. Every call asks `credential` for its token first and sends it in the
+ * Authorization header, the only place a credential travels (never in logs); the bundle PUT goes to the
+ * presigned URL (no auth header — the URL is the capability).
+ *
+ * Every call is time-bounded per attempt and retried on transport failures + 5xx (never 4xx) via
+ * `withRetry`, so a single stalled request no longer fails the run — the retry lands on a healthy
+ * response. `markUploaded` is idempotent, so a retry can't double-render. A login answered 401 is renewed
+ * once and the call retried once, which covers a clock running behind the server's.
+ */
+export function httpIngestClient(apiUrl: string, credential: Credential): IngestClient {
+  async function authorized<T>(label: string, send: (headers: Record<string, string>, signal: AbortSignal) => Promise<T>): Promise<T> {
+    // Every request identifies the CLI version.
+    const headersFor = (token: string) => ({ authorization: `Bearer ${token}`, "x-uiverify-cli-version": CLI_VERSION });
+    const token = await credential.token();
+    try {
+      return await withRetry({ label }, (signal) => send(headersFor(token), signal));
+    } catch (e) {
+      if (!credential.renew || !(e instanceof HttpStatusError) || e.status !== 401) throw e;
+    }
+    const renewed = await credential.renew(token);
+    try {
+      return await withRetry({ label }, (signal) => send(headersFor(renewed), signal));
+    } catch (e) {
+      if (e instanceof HttpStatusError && e.status === 401) throw new HttpStatusError(401, NOT_SIGNED_IN, e.label, e.serverError);
+      throw e;
+    }
+  }
 
   async function postJson(
     pathname: string,
     body: unknown,
+    headers: Record<string, string>,
     signal: AbortSignal,
-    extraHeaders: Record<string, string> = {},
   ): Promise<unknown> {
     const res = await fetch(`${apiUrl}${pathname}`, {
       method: "POST",
-      headers: { ...auth, "content-type": "application/json", ...extraHeaders },
+      headers: { ...headers, "content-type": "application/json" },
       body: JSON.stringify(body),
       signal,
     });
@@ -207,8 +304,8 @@ export function httpIngestClient(apiUrl: string, apiKey: string): IngestClient {
         ...(sdkName ? { "x-uiverify-sdk-name": sdkName } : {}),
         ...(sdkVersion ? { "x-uiverify-sdk-version": sdkVersion } : {}),
       };
-      const raw = await withRetry({ label: "register" }, (signal) =>
-        postJson("/api/ingest/build", payload, signal, sdkHeaders),
+      const raw = await authorized("register", (headers, signal) =>
+        postJson("/api/ingest/build", payload, { ...headers, ...sdkHeaders }, signal),
       );
       // The server skipped the rebuild of an already-passed commit — no upload URL, nothing to do. Only a
       // new-enough server that got a hash returns this shape; try it first, then fall back to the normal
@@ -227,18 +324,19 @@ export function httpIngestClient(apiUrl: string, apiKey: string): IngestClient {
           body: bytes,
           signal,
         });
-        if (!res.ok) throw httpError("bundle upload", res.status, await res.text());
+        // The PUT goes to the storage host (or a proxy in front of it), so its error text is never ours.
+        if (!res.ok) throw httpError("bundle upload", res.status, await res.text(), false);
       });
     },
     async markUploaded(buildId, ancestorShas, changedFiles) {
       const body = changedFiles ? { ancestorShas, changedFiles } : { ancestorShas };
-      await withRetry({ label: "markUploaded" }, (signal) =>
-        postJson(`/api/ingest/build/${buildId}/uploaded`, body, signal),
+      await authorized("markUploaded", (headers, signal) =>
+        postJson(`/api/ingest/build/${buildId}/uploaded`, body, headers, signal),
       );
     },
     async getStatus(buildId) {
-      const res = await withRetry({ label: "status" }, async (signal) => {
-        const r = await fetch(`${apiUrl}/api/ingest/build/${buildId}`, { headers: auth, signal });
+      const res = await authorized("status", async (headers, signal) => {
+        const r = await fetch(`${apiUrl}/api/ingest/build/${buildId}`, { headers, signal });
         if (!r.ok) throw httpError("status", r.status, await r.text());
         return r.json();
       });

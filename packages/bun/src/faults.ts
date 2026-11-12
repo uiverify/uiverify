@@ -14,7 +14,12 @@ export type Fault = "hang" | "fail" | number;
 export interface Faults {
   /** Read when a test is declared, so a fixture can change it between declarations. */
   testTimeoutMs?: number;
+  /** The budget of a reopen inside a test. */
   openTimeoutMs?: number;
+  /** The budget of the browser's first start, before the first test. */
+  startupTimeoutMs?: number;
+  /** How long a start or a first page load takes before it is reported as slow. */
+  slowMs?: number;
   /** Called for each browser call: `<lane> <method>` for CDP (`page Page.enable`), an evaluated script, an
    *  input's label, or `"open"` (the first navigation of a new view). */
   fault?: (call: string) => Fault | undefined;
@@ -26,7 +31,7 @@ function hook(name: keyof Faults): unknown {
   return typeof faults === "object" && faults !== null ? Reflect.get(faults, name) : undefined;
 }
 
-export function timeoutWithFaults(name: "testTimeoutMs" | "openTimeoutMs", ms: number): number {
+export function timeoutWithFaults(name: "testTimeoutMs" | "openTimeoutMs" | "startupTimeoutMs" | "slowMs", ms: number): number {
   const value = hook(name);
   return typeof value === "number" ? value : ms;
 }

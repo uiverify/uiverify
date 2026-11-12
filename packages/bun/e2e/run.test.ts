@@ -331,7 +331,7 @@ describe("a run whose tests time out, or whose browser calls hang or fail", () =
     expect(run.output.match(/\(fail\) Timeouts > times out: /g)?.length).toBe(5);
     expect(run.output.match(/\(fail\) /g)?.length).toBe(7);
     // Every fault was reached: a test that passed without its fault would test nothing.
-    expect(run.output.match(/^\[fault\] /gm)?.length).toBe(5);
+    expect(run.output.match(/^\[fault\] /gm)?.length).toBe(6);
   });
 
   /** Catches a capture that outlived its test writing the next test's page under its own id. */
@@ -358,13 +358,43 @@ describe("a run whose tests time out, or whose browser calls hang or fail", () =
     ownPage("after a wedged view");
   });
 
-  /** Catches a half-set-up page being kept (no routes, no page errors), and an open that never finishes
+  /** Catches a half-set-up page being kept (no routes, no page errors), and a reopen that never finishes
    *  holding every later test. */
-  test("a page that fails to open fails only its own test, and the next one opens afresh", () => {
-    expect(run.output).toContain("opening the page took longer than 3s");
+  test("a page that fails to reopen fails only its own test, and the next one opens afresh", () => {
+    expect(run.output).toContain("starting Chrome (its launch and about:blank) took longer than 3s");
     expect(run.output).toContain("reset Page.enable failed (an injected fault)");
     expect(dom(run, "open.visual.ts > Opening > the next test opens a fresh page, routed")).toContain("routed item");
   });
+});
+
+describe("a browser that starts slowly, or never", () => {
+  /** Catches the browser's start being charged to the first test's own budget, so a slow start fails it. */
+  test("a start longer than a test's budget leaves the first test green, and says how long it took", async () => {
+    const run = await runFixture("slow-start.visual.ts");
+    expect(run.code).toBe(0);
+    expect(run.output).not.toContain("(fail)");
+    expect(run.output).toMatch(/the browser took \d+\.\ds to start \(Chrome launch and about:blank \d+\.\ds, CDP setup \d+\.\ds\)/);
+    expect(run.output).toContain("the first page load is taking longer than 2.0s");
+    expect(run.snapshots.has("slow-start.visual.ts > Slow start > the first test passes however long the browser took to start")).toBe(true);
+  }, E2E_TIMEOUT_MS);
+
+  /** Catches a browser that never starts holding the shard past the start's budget, silently, or running tests
+   *  on a view that isn't there. */
+  test("a start that never answers fails the file at its budget, naming the browser start, and runs no test", async () => {
+    const run = await runFixture("hung-start.visual.ts");
+    expect(run.code).toBe(1);
+    expect(run.output).toContain("starting Chrome (its launch and about:blank) took longer than 3s");
+    expect(run.output).toMatch(/the browser failed to start \(Chrome launch and about:blank 3\.\ds\)/);
+    expect(run.snapshots.size).toBe(0);
+  }, E2E_TIMEOUT_MS);
+
+  /** Catches a shard with no tests of the file starting Chrome (bun runs the file's hook anyway), which fails it
+   *  when the browser can't start and costs the start's budget when it hangs. */
+  test("a shard dealt none of a file's tests doesn't start the browser", async () => {
+    const run = await runFixture("spare-shard.visual.ts");
+    expect(run.output.match(/^\[fault\] open: fail/gm)?.length).toBe(1);
+    expect(run.output.match(/\(fail\) /g)?.length).toBe(1);
+  }, E2E_TIMEOUT_MS);
 });
 
 describe("-t", () => {

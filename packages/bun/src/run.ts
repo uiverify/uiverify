@@ -11,9 +11,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { availableParallelism, tmpdir, totalmem } from "node:os";
 import { join, relative } from "node:path";
 import { clearArchive, finalizeArchive, resolveOutDir } from "@uiverify/archive-core";
+import { chromePath } from "./chrome";
 import { RUN_ENV, type ShardContext } from "./run-context";
 import { normalizePath, parseArgs, planShards, type RunOptions, shardSlots } from "./runner/plan";
 import { listening, type Server, startServer } from "./runner/servers";
+import { warmChrome } from "./runner/warm";
 
 const TEST_TIMEOUT_MS = 60_000;
 
@@ -27,6 +29,15 @@ function discover(cwd: string): string[] {
     .filter((path) => !path.split(/[\\/]/).includes("node_modules"))
     .map((path) => normalizePath(cwd, path))
     .sort();
+}
+
+/** The Chrome the shards will start, or nothing: a shard reports a missing one itself. */
+function chromeOrNothing(): string | undefined {
+  try {
+    return chromePath();
+  } catch {
+    return undefined;
+  }
 }
 
 /** Run the visual tests and resolve to an exit code: 0 when every shard passed. Never exits the process. */
@@ -65,7 +76,11 @@ export async function run(options: RunOptions = {}): Promise<number> {
 
   const servers: Server[] = [];
   const children = new Set<Bun.Subprocess>();
+  // Started first and never waited for: it runs while the servers start and the shards build their pages, so
+  // each shard's first Chrome start finds Chrome's files in memory.
+  const warming = warmChrome(chromeOrNothing());
   const cleanup = async () => {
+    warming.stop();
     await Promise.all(servers.map((server) => server.stop()));
     rmSync(temp, { recursive: true, force: true });
   };

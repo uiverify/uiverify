@@ -17,7 +17,10 @@ server-side. Distributed as `npx <pkg> upload …` once published to npm.
 ## What it does
 
 1. Collect git metadata (`commit_sha`, `branch`, `pr_number`, `parent_shas`) — env overrides
-   (`COMMIT_SHA`, `BRANCH`, `PR_NUMBER`, or GitHub Actions' `GITHUB_HEAD_REF`/`GITHUB_REF`) win.
+   (`COMMIT_SHA`, `BRANCH`, `PR_NUMBER`, or GitHub Actions' `GITHUB_HEAD_REF`/`GITHUB_REF`) win. On a
+   GitHub Actions `pull_request`/`pull_request_target` run it also sends the PR head (`prHeadSha`, from the
+   event payload) when the checkout is that head or the event's own merge commit, so the server posts the
+   PR's check on the head even when a shallow merge checkout hides the merge's parents.
 2. Tar the static dir → `bundle.tgz` (no story list is read or sent — the UI Verify service enumerates
    the stories, and their render params, from the uploaded bundle's `index.json`). If the build
    emitted `preview-stats.json` (see [skip-unchanged](#skip-unchanged) below), it rides
@@ -128,17 +131,58 @@ than silently ignored. Accept/deny happens after review, over the dashboard or t
 ## CLI
 
 ```
-uiverify upload (--static-dir <dir> | --screenshots <dir>) [--working-directory <dir>] [--api-url <url>] \
-                [--auto-accept-changes] [--exit-zero-on-changes] [--render-all] [--strict | --no-strict]
+uiverify upload (--static-dir <dir> | --screenshots <dir>) [--project <slug|team/slug>] [--working-directory <dir>] \
+                [--api-url <url>] [--auto-accept-changes] [--exit-zero-on-changes] [--render-all] [--strict | --no-strict]
 
-uiverify check  [--target <glob> …] (--static-dir <dir> | --screenshots <dir>) \
+uiverify check  [--target <glob> …] (--static-dir <dir> | --screenshots <dir>) [--project <slug|team/slug>] \
                 [--working-directory <dir>] [--api-url <url>] [--strict | --no-strict]
+
+uiverify login | logout | whoami
 ```
 
-- `UIVERIFY_API_KEY` (env, required) — the project key.
+- `UIVERIFY_API_KEY` (env) — the project key. Wins when set; without it, `upload`/`check` use the confirmed
+  `uiverify login` stored for the API URL's origin (`src/auth.ts`), else fail through `softFail`.
+- `--project` — sent verbatim in the register body with `captureShape` (a file sniff: `storybook` / `archive` /
+  `screenshots`) and `upstreamRepoFullName` (the `upstream` remote); the server picks a signed-in upload's
+  project from them and answers a refusal (`project_ambiguous`, `project_not_found` with candidates, ...) with a
+  message the CLI prints verbatim.
 - `--target <glob>` (`check` only, repeatable; required for a Storybook `--static-dir`) — the stories to render for the preview check.
 - `--static-dir` the prebuilt `storybook-static` directory to upload (build Storybook first).
 - `--api-url` (or `UIVERIFY_API_URL`, default `https://uiverify.ai`; override for self-host/local dev).
+- `UIVERIFY_TELEMETRY=0` (env) — don't send a failure report, and send no CLI version, CI or terminal headers
+  on `login`'s requests. By default, a run that fails before its build reaches
+  UI Verify (every `softFail`, and the exit 2 for an invalid `upload`/`check` option, until `markUploaded`
+  succeeds; a bad or missing subcommand such as `uiverify --version` is never reported) hands a short, sanitized report to a
+  detached process that POSTs it to `/api/ingest/failure-report` (`src/failure-report.ts`), so the exit code never
+  depends on it and nothing waits on its network. It carries `credential` (`key` / `login` / `none`; on the exit-2
+  report, which runs before the store is read, only `key` when a key is set, else absent) and `frameworkSource`. A signed-in run's bearer is the login's newest
+  unexpired access token, held in memory (`Credential.heldToken`): `resolveCommon` renews it once, straight after the
+  credential check, when it is near expiry, and the report path never renews (refresh tokens are single use, and a
+  renewal cut off by the exit would sign the person out). Only a report with that bearer also carries the upload
+  target (`project`: register's `team/slug` once register answered, else `--project`; `repoFullName` /
+  `upstreamRepoFullName` read by the report with a bounded, quiet git), and a signed-in report keeps no server error
+  text.
+- `uiverify login` (`src/login.ts`, store in `src/credentials.ts`) — the AuthKit device flow against the CLI app the
+  server names at `GET /api/cli/login`. Approved tokens are stored at once as an **unconfirmed** login, then
+  confirmed with `POST /api/cli/session` (which fires `cli_login`); only a confirmed login authenticates an upload,
+  and a rerun finishes an unconfirmed one without a second approval. Without a TTY a run returns within 60 s (at
+  once when it couldn't open a browser) so an agent shell sees the link; a rerun resumes the same code. The store is
+  one `0600` file under the config dir, every read-modify-write under a lockfile with a re-read, and renewal adopts a
+  concurrent winner's rotated tokens (refresh tokens are single use). A `login` write that starts a store seals the
+  file with AES-256-GCM under a key the OS keeps, each tool run by absolute path with the key over stdin: the macOS
+  login keychain (`/usr/bin/security`, one fixed item); on Linux, only inside a graphical desktop session (not SSH,
+  WSL or a container display), the Secret Service through `secret-tool` (one item per key, under a random id); on
+  Windows, DPAPI through Windows PowerShell (the protected key travels in the file). A Linux or Windows file names
+  its key store and key (`version: 2`); a macOS one keeps the original `version: 1` shape. Other writes keep the form
+  they read, a store a shell can't open is renamed aside by `login`, and a store sealed by another system's key
+  store is replaced by a plain one. `login`/`logout`/`whoami` send no setup failure report. A login that ends without signing
+  in (`start_failed`, `denied`, `expired`, `expired_unwatched` for a code that died while no run polled it,
+  `code_used`, `account_not_ready`, `rejected`, `refresh_refused`) reports it once to `/api/cli/login/failure`, from
+  the run whose own store write ended it (`start_failed`, which has no code, from the run whose start failed;
+  `reportEnded`); a run that ends "still waiting" never reports its own code. The login config and confirming
+  requests carry `x-uiverify-cli-version` / `x-uiverify-ci` / `x-uiverify-tty` for UI Verify's login funnel. The `login-store-macos`,
+  `login-store-linux` (gnome-keyring under `dbus-run-session`) and `login-store-windows` CI jobs run the store
+  tests against the real tools.
 - `--render-all` — render every story, even ones the dependency graph shows a change can't reach, and
   even if this exact commit already passed (see [Skip-unchanged](#skip-unchanged)).
 - `--exit-zero-on-changes` — detect but don't block: a `changed` (needs-review) verdict exits 0 and

@@ -1,8 +1,9 @@
-import { describe, it, expect } from "vitest";
-import type { BuildStatus, IngestClient, RegisterBody } from "./client";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import type { BuildStatus, IngestClient, OpenComments, RegisterBody } from "./client";
 import type { ClientDeltaEntry, GitMeta } from "./git";
 import type { BundleGraph } from "./skip";
-import { runUpload, type UploadDeps, type UploadOptions } from "./upload";
+import type { UploadProgress } from "./failure-report";
+import { projectLine, runUpload, type UploadDeps, type UploadOptions } from "./upload";
 
 interface CallLog {
   register?: RegisterBody;
@@ -26,6 +27,7 @@ type FakeStatus =
       failed?: number;
       summary?: BuildStatus["summary"];
       failureReason?: string | null;
+      blocked?: BuildStatus["blocked"];
     };
 
 function fakeClient(
@@ -35,6 +37,7 @@ function fakeClient(
   warnings: string[] = [],
   deltaBases: string[] = [],
   skippedBuildNumber?: number,
+  openComments?: OpenComments,
 ): IngestClient {
   let i = 0;
   return {
@@ -42,7 +45,7 @@ function fakeClient(
       log.register = body;
       // The server skipped the rebuild of an already-passed commit — no upload URL, just the prior build.
       if (skippedBuildNumber !== undefined) {
-        return { outcome: "skipped", buildId: "prior1", buildNumber: skippedBuildNumber };
+        return { outcome: "skipped", buildId: "prior1", buildNumber: skippedBuildNumber, openComments };
       }
       return {
         outcome: "upload",
@@ -51,6 +54,7 @@ function fakeClient(
         baselineCommits,
         deltaBases,
         warnings,
+        openComments,
       };
     },
     async upload(url, tgz) {
@@ -76,6 +80,7 @@ const meta: GitMeta = {
   prNumber: 9,
   parentShas: ["p0"],
   repoFullName: "acme/web",
+  prHeadSha: null,
 };
 
 function deps(
@@ -95,6 +100,8 @@ function deps(
     uncommitted?: string[] | null;
     /** When set, the fake server skips the rebuild and returns this prior build number. */
     skippedBuildNumber?: number;
+    /** The open review notes the fake server reports for the branch. */
+    openComments?: OpenComments;
     /** When true, bundle hashing throws - the upload must proceed without the rebuild-skip hint. */
     hashThrows?: boolean;
     /** Whether the static dir reads as a built Storybook (default true); false for a capture archive. */
@@ -109,6 +116,7 @@ function deps(
       opts.warnings ?? [],
       opts.deltaBases ?? [],
       opts.skippedBuildNumber,
+      opts.openComments,
     ),
     gitMeta: () => meta,
     // Default: every candidate is a confirmed ancestor; tests that care override `confirm`.
@@ -134,7 +142,76 @@ function deps(
   };
 }
 
+const openComments: OpenComments = {
+  branch: "feat",
+  projectId: "p1",
+  total: 1,
+  textShown: true,
+  notes: [
+    {
+      storyId: "card--default",
+      title: "Card",
+      name: "Default",
+      viewport: "desktop",
+      browser: "chromium",
+      buildNumber: 2,
+      reviewUrl: "https://cp/builds/b2?diff=d1",
+      author: "Igor",
+      body: "remove drop shadow",
+      replies: 0,
+    },
+  ],
+};
+
 describe("runUpload", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("sends ci from the environment: true on a CI host, false on a local run", async () => {
+    vi.stubEnv("CI", "");
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    const ciLog: CallLog = { statusPolls: 0 };
+    await runUpload({ staticDir: "/sb" }, deps(ciLog, ["passed"]));
+    expect(ciLog.register?.ci).toBe(true);
+
+    vi.stubEnv("GITHUB_ACTIONS", "");
+    const localLog: CallLog = { statusPolls: 0 };
+    await runUpload({ staticDir: "/sb" }, deps(localLog, ["passed"]));
+    expect(localLog.register?.ci).toBe(false);
+  });
+
+  /** Would catch the block printing after the upload line, or not at all, so an agent starting work on the
+   *  branch scrolls past its notes or never sees them. */
+  it("prints the branch's open review notes after the warnings and before the upload", async () => {
+    const lines: string[] = [];
+    await runUpload(
+      { staticDir: "/sb" },
+      deps({ statusPolls: 0 }, ["passed"], lines, { warnings: ["⚠-source"], openComments }),
+    );
+    const at = (needle: string): number => lines.findIndex((l) => l.includes(needle));
+    expect(lines).toContain("1 open review comment on branch feat - address it as part of this change:");
+    expect(lines).toContain('  Card › Default (desktop, chromium), build #2, Igor: "remove drop shadow"');
+    expect(at("open review comment")).toBeGreaterThan(at("⚠-source"));
+    expect(at("open review comment")).toBeLessThan(at("Registered build"));
+  });
+
+  it("prints the notes on a skipped rebuild too", async () => {
+    const lines: string[] = [];
+    await runUpload(
+      { staticDir: "/sb", appUrl: "http://cp" },
+      deps({ statusPolls: 0 }, [], lines, { skippedBuildNumber: 42, openComments }),
+    );
+    expect(lines).toContain("1 open review comment on branch feat - address it as part of this change:");
+    expect(lines.findIndex((l) => l.includes("open review comment"))).toBeLessThan(
+      lines.findIndex((l) => l.includes("Skipping rebuild")),
+    );
+  });
+
+  it("prints no review lines when the server sends none", async () => {
+    const lines: string[] = [];
+    await runUpload({ staticDir: "/sb" }, deps({ statusPolls: 0 }, ["passed"], lines));
+    expect(lines.some((l) => l.includes("review comment"))).toBe(false);
+  });
+
   it("default: register -> upload -> markUploaded, then waits and reflects the verdict", async () => {
     const log: CallLog = { statusPolls: 0 };
     const res = await runUpload({ staticDir: "/sb" }, deps(log, ["running", "running", "changed"]));
@@ -172,6 +249,15 @@ describe("runUpload", () => {
     const noHint: string[] = [];
     await runUpload({ staticDir: "/sb" }, deps({ statusPolls: 0 }, ["running", "passed"], noHint));
     expect(noHint.some((l) => l.includes("gh pr checks"))).toBe(false);
+  });
+
+  it("sends the proven PR head at register, and leaves the field out of the body when there is none", async () => {
+    const withHead: CallLog = { statusPolls: 0 };
+    await runUpload({ staticDir: "/sb" }, { ...deps(withHead, ["passed"]), gitMeta: () => ({ ...meta, prHeadSha: "a".repeat(40) }) });
+    expect(withHead.register?.prHeadSha).toBe("a".repeat(40));
+    const without: CallLog = { statusPolls: 0 };
+    await runUpload({ staticDir: "/sb" }, deps(without, ["passed"]));
+    expect(JSON.parse(JSON.stringify(without.register))).not.toHaveProperty("prHeadSha");
   });
 
   it("sends the bundle content hash at register", async () => {
@@ -512,20 +598,50 @@ describe("runUpload", () => {
     expect(uploadLines).toContain('  1. get_build { "prNumber": 9 } - the changed-story list, each with a diffResultId.');
   });
 
-  it("treats blocked as terminal — stops polling and reports the quota/payment block", async () => {
+  /** Catches a blocked build polling on to the timeout, and an older server's block being blamed on payment. */
+  it("treats blocked as terminal and, with no explanation from the server, prints a generic line that tells the agent to stop", async () => {
     const log: CallLog = { statusPolls: 0 };
     const lines: string[] = [];
     const res = await runUpload(
       { staticDir: "/sb", appUrl: "https://uiverify.example.com" },
       // 'blocked' isn't in {passed,changed,failed}; without it being terminal the poll would spin to
-      // the timeout. It must stop on the first blocked tick.
+      // the timeout. It must stop on the first blocked tick. An older server sends no `blocked` field.
       deps(log, ["running", { status: "blocked", total: 67 }], lines),
     );
     expect(res.status).toBe("blocked");
     expect(log.statusPolls).toBe(2);
-    expect(lines.some((l) => l.startsWith("Build b1 blocked — shot quota reached or payment required."))).toBe(true);
+    const at = lines.indexOf(
+      "Build b1 blocked: UI Verify paused it at the team's snapshot allowance or billing check before rendering anything.",
+    );
+    expect(at).toBeGreaterThan(-1);
+    expect(lines.slice(at)).toEqual([
+      "Build b1 blocked: UI Verify paused it at the team's snapshot allowance or billing check before rendering anything.",
+      "Retrying this build won't help until the block is lifted. Please tell the user.",
+      "Review: https://uiverify.example.com/builds/b1",
+    ]);
+    expect(lines.some((l) => /payment/i.test(l))).toBe(false);
     // No misleading "0 changed, 0 failed" all-clear line for a build that rendered nothing.
     expect(lines.some((l) => l.includes("finished: blocked"))).toBe(false);
+  });
+
+  /** Catches the CLI dropping or rewording the server's explanation, or losing the build link after it. */
+  it("prints the server's explanation of a blocked build line by line, then the build link", async () => {
+    const message = [
+      "UI Verify paused this build before rendering anything: your team has used (or reserved for builds still running) 9,620 of its 10,000 snapshots for this month, and this build needs 1,104. Nothing was rendered or counted. The allowance resets on December 1, 2026.",
+      "Likely cause: this project has no accepted baseline on `main` yet, so pull request builds often have nothing to compare against.",
+      "What to do: 1. Get a baseline onto `main`. 2. To raise the limit, upgrade the team's plan from its Usage page in UI Verify, or book a call at https://uiverify.ai/talk-to-us.",
+      "Retrying this build won't help until the allowance resets or is raised. Please tell the user.",
+    ].join("\n");
+    const log: CallLog = { statusPolls: 0 };
+    const lines: string[] = [];
+    const res = await runUpload(
+      { staticDir: "/sb", appUrl: "https://uiverify.example.com" },
+      deps(log, [{ status: "blocked", total: 1104, blocked: { message } }], lines),
+    );
+    expect(res.status).toBe("blocked");
+    const at = lines.indexOf("Build b1 blocked.");
+    expect(at).toBeGreaterThan(-1);
+    expect(lines.slice(at)).toEqual(["Build b1 blocked.", ...message.split("\n"), "Review: https://uiverify.example.com/builds/b1"]);
   });
 
   it("prints the server's reason on a build that failed as a whole", async () => {
@@ -554,5 +670,128 @@ describe("runUpload", () => {
     const lines: string[] = [];
     await runUpload({ staticDir: "/sb", appUrl: "https://uiverify.example.com/" }, deps(log, ["passed"], lines));
     expect(lines.some((l) => l.includes("https://uiverify.example.com/builds/b1"))).toBe(true);
+  });
+});
+
+describe("runUpload progress", () => {
+  const opts: UploadOptions = { staticDir: "storybook-static" };
+
+  /** Catches a failure being reported under the wrong step, or a run whose build already reached the server
+   *  being reported at all. */
+  it.each([
+    ["git", (d: UploadDeps) => ({ ...d, gitMeta: () => { throw new Error("fatal: not a git repository"); } })],
+    ["archive", (d: UploadDeps) => ({ ...d, createBundle: async () => { throw new Error("tar failed"); } })],
+    ["register", (d: UploadDeps) => ({ ...d, client: { ...d.client, register: async () => { throw new Error("401"); } } })],
+    ["upload", (d: UploadDeps) => ({ ...d, client: { ...d.client, upload: async () => { throw new Error("403"); } } })],
+    ["upload", (d: UploadDeps) => ({ ...d, client: { ...d.client, markUploaded: async () => { throw new Error("502"); } } })],
+  ] as const)("is at %s when that step throws", async (stage, breakDeps) => {
+    const progress: UploadProgress = { stage: "git", producer: null, project: null };
+    await expect(runUpload(opts, { ...breakDeps(deps({ statusPolls: 0 }, ["passed"])), progress })).rejects.toThrow();
+    expect(progress.stage).toBe(stage);
+  });
+
+  it("is done once the bundle is marked uploaded, and keeps the producer it read", async () => {
+    const progress: UploadProgress = { stage: "git", producer: null, project: null };
+    const producer = { name: "@uiverify/vitest", version: "1.6.2" };
+    const d = deps({ statusPolls: 0 }, [{ status: "running" }, "passed"], [], { producer });
+    const d2: UploadDeps = { ...d, client: { ...d.client, getStatus: async () => { throw new Error("poll failed"); } }, progress };
+    await expect(runUpload(opts, d2)).rejects.toThrow("poll failed");
+    expect(progress).toEqual({ stage: "done", producer, project: null });
+  });
+});
+describe("runUpload signed in", () => {
+  const changed: FakeStatus = {
+    status: "changed",
+    total: 1,
+    changed: 1,
+    failed: 0,
+    summary: {
+      aiReview: null,
+      changedStories: [{ storyId: "a", title: "A", name: "X", decision: null, aiVerdict: null, aiConfidence: null, aiSummary: null }],
+      changedStoriesTruncated: null,
+      failedStories: [],
+    },
+  };
+
+  /** The server answers register with the project the build landed in, as it does for a signed-in upload. */
+  function withProject(d: UploadDeps, project: { id: string; team: string; slug: string; created: boolean }): UploadDeps {
+    const inner = d.client;
+    return {
+      ...d,
+      client: {
+        ...inner,
+        async register(body) {
+          const reg = await inner.register(body);
+          return reg.outcome === "upload" ? { ...reg, project } : reg;
+        },
+      },
+    };
+  }
+
+  it("sends --project and the capture shape, and the upstream remote from git", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    const d = deps(log, ["passed"]);
+    await runUpload(
+      { staticDir: "/sb", project: "acme/web", captureShape: "storybook" },
+      { ...d, gitMeta: () => ({ ...meta, upstreamRepoFullName: "upstream-org/web" }) },
+    );
+    expect(log.register).toMatchObject({ project: "acme/web", captureShape: "storybook", upstreamRepoFullName: "upstream-org/web" });
+  });
+
+  /** Would catch: `--confirm-new` parsed but never reaching the server, so "none of these" can't create. */
+  it("sends --confirm-new only when given", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    await runUpload({ staticDir: "/sb", project: "acme/web", confirmNew: "abc123" }, deps(log, ["passed"]));
+    expect(log.register).toMatchObject({ project: "acme/web", confirmNew: "abc123" });
+    const plain: CallLog = { statusPolls: 0 };
+    await runUpload({ staticDir: "/sb" }, deps(plain, ["passed"]));
+    expect(plain.register?.confirmNew).toBeUndefined();
+  });
+
+  /** Would catch: a signed-in upload, whose project the server picked, never saying where the build went. */
+  it("names the project the server picked, and says when it created it", async () => {
+    const created: string[] = [];
+    await runUpload({ staticDir: "/sb" }, withProject(deps({ statusPolls: 0 }, ["passed"], created), { id: "p1", team: "acme", slug: "web", created: true }));
+    expect(created).toContain("Created project acme/web");
+
+    const existing: string[] = [];
+    await runUpload({ staticDir: "/sb" }, withProject(deps({ statusPolls: 0 }, ["passed"], existing), { id: "p1", team: "acme", slug: "web", created: false }));
+    expect(existing).toContain("Project acme/web");
+    expect(existing.some((l) => l.startsWith("Created project"))).toBe(false);
+  });
+
+  /** Would catch: a first signed-in upload that created the team and project without saying so, or without the
+   *  dashboard link, or a server that predates `teamCreated`/`url` breaking the line. */
+  it("says what the first upload created, with the dashboard link", () => {
+    const url = "https://uiverify.ai/dashboard/teams/acme/projects/web";
+    const base = { id: "p1", team: "acme", slug: "web" };
+    expect(projectLine({ ...base, created: true, teamCreated: true, url })).toBe(
+      `Created team acme and project acme/web: ${url}`,
+    );
+    expect(projectLine({ ...base, created: true, teamCreated: false, url })).toBe(`Created project acme/web: ${url}`);
+    expect(projectLine({ ...base, created: false, teamCreated: false, url })).toBe(`Project acme/web: ${url}`);
+    expect(projectLine({ ...base, created: true })).toBe("Created project acme/web");
+  });
+
+  /** Would catch: a signed-in upload's agent told to use a project API key it doesn't have, or handed a
+   *  selector a cross-team browser login can't resolve. */
+  it("points a signed-in upload's agent at the browser-login MCP with a project-scoped selector", async () => {
+    const lines: string[] = [];
+    await runUpload(
+      { staticDir: "/sb", appUrl: "https://uiverify.example.com", signedIn: true },
+      withProject(deps({ statusPolls: 0 }, [changed], lines), { id: "proj_1", team: "acme", slug: "web", created: false }),
+    );
+    expect(lines).toContain(
+      "  Endpoint: https://uiverify.example.com/mcp (sign in with your UI Verify account in the browser when your MCP client asks)",
+    );
+    expect(lines).toContain('  1. get_build { "projectId": "proj_1", "prNumber": 9 } - the changed-story list, each with a diffResultId.');
+
+    const keyLines: string[] = [];
+    await runUpload(
+      { staticDir: "/sb", appUrl: "https://uiverify.example.com" },
+      withProject(deps({ statusPolls: 0 }, [changed], keyLines), { id: "proj_1", team: "acme", slug: "web", created: false }),
+    );
+    expect(keyLines).toContain("  Endpoint: https://uiverify.example.com/api/mcp (authenticate with your project API key)");
+    expect(keyLines).toContain('  1. get_build { "prNumber": 9 } - the changed-story list, each with a diffResultId.');
   });
 });

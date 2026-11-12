@@ -1,6 +1,6 @@
 ---
 name: setup-visual-testing
-description: Set up UI Verify visual regression testing in a repo end to end — detect or scaffold the capture path (Storybook stories, a Playwright suite, Vitest browser-mode component tests, or Bun visual tests), install the uiverify CLI and wire it into CI, and author the first stories the economical, deterministic way from the start. Use when adding visual/screenshot regression testing to a project for the first time, wiring UI Verify into CI, or onboarding a repo that has no visual tests yet.
+description: Set up UI Verify visual regression testing in a repo end to end — pick the capture path the same way the one-line setup does (Storybook stories, a Playwright suite, Bun visual tests, Vitest browser-mode component tests, or uploaded screenshots), install the uiverify CLI and wire it into CI, and author the first stories the economical, deterministic way from the start. Use when adding visual/screenshot regression testing to a project for the first time, wiring UI Verify into CI, or onboarding a repo that has no visual tests yet.
 ---
 
 # Set up UI Verify, end to end
@@ -10,25 +10,56 @@ stories authored the cheap + deterministic way so the setup doesn't start flaky 
 skill is the conductor — it decides the capture path, wires CI, then hands the authoring and
 determinism work to the focused skills.
 
+## Step 0 — sign in
+
+Before the first upload, sign in the way `https://uiverify.ai/install.md` does: run `npx -y uiverify login`.
+It prints a link and a short code (and opens the browser when it can). Show the user the link and the code,
+tell them to sign in or sign up there and approve, and while it says it is still waiting, run the same command
+again (same code). It exits 0 once signed in and prints "Signed in as ...". Say that line to the user. The
+first signed-in upload creates their team and project, and passes `--project <team>/<slug>` when they already
+made one on the website.
+
+If `npx uiverify login` can't finish for any reason (it can't write its config folder, the keychain can't be
+reached, there is no browser and the user can't open the link, the approval never comes before the code
+expires, the CLI doesn't know a `login` command, or any other error), stop retrying it. Ask the user for a
+project key instead: it starts with `uv_proj_`, and their UI Verify project's settings show it under API key (no
+project yet: they create one at uiverify.ai/onboarding, under "Create a project"). Then run the same upload
+with the key as `UIVERIFY_API_KEY`. In CI the key is always what authenticates the upload (Step 4).
+
 ## Step 1 — pick the capture path (don't ask the user; detect it)
 
-UI Verify captures UI five ways. Choose by what the repo already has:
+UI Verify captures UI five ways. If the request is the one-line setup (it says to fetch
+`https://uiverify.ai/install.md`), follow that guide's framework step instead of this one: a setup line that
+carries the project (a project key, or "My UI Verify project is <team>/<slug>") and names Storybook may be the project's preselected default, and the guide decides
+when to set up the framework the repo already uses. Otherwise, if the user named one ("set up UI Verify for
+Storybook"), use it.
+Otherwise pick it the way the one-line setup (`https://uiverify.ai/install.md`) does, so a repo gets the
+same framework whichever way it was set up:
 
-- **Storybook path** — the repo has `.storybook/` or `@storybook/*` in `package.json`, or is a
-  component/design-system library. Each **story** is a snapshot. This is the default; prefer it when
-  components exist in isolation.
-- **Playwright path** — the repo has a `@playwright/test` suite and you want to test **assembled real
-  pages** (the app, staging, or prod), not isolated components. Each test archives its final UI state
-  for UI Verify to replay + diff.
-- **Vitest path** — the repo already runs component tests in **Vitest browser mode** (`@vitest/browser`
-  with a Playwright provider), and you want those component renders diffed without adopting Storybook.
-  Each browser-mode test archives its final DOM. Prefer this over scaffolding Storybook only when a
-  browser-mode suite already exists.
-- **Bun path** — the repo runs on **Bun** (a `bun.lock` / `bun.lockb` or `bunfig.toml`, `bun test` in its
-  scripts, a `Bun.serve` app) and has no Storybook, Playwright or Vitest browser-mode suite to reuse. Visual
-  tests run on `bun test` with `@uiverify/bun`, drive the installed Chrome, and archive each test's final
-  page: real pages of the app (`run({ webServer })`) or components on a page `serveBundle()` builds. No
-  Node test runner or browser download needed.
+- A **native-only app** (iOS, Android, React Native) with no web front end: the **screenshot-upload
+  path**. A repo that also has a web front end uses the list below, and you mention the native app at the end.
+- A **web app**: the first that matches.
+  1. **Storybook** — the repo has Storybook (a `.storybook/` folder or a `storybook` / `@storybook/*`
+     dependency).
+  2. **Playwright** — the repo already has Playwright tests (`@playwright/test` and a `playwright.config`).
+  3. **Bun** — the repo runs its tests with `bun test`.
+  4. **Vitest** — the repo uses Vitest, has tests in another runner (Jest, Mocha), or has no tests at all.
+
+If more than one matches, set up the first in this order and, at the end, tell the user which others UI
+Verify could also cover. Don't ask which one, and don't scaffold Storybook into a repo that has none
+unless the user asked for Storybook.
+
+What each path captures:
+
+- **Storybook path** — each **story** is a snapshot.
+- **Playwright path** — **assembled real pages** (the app, staging, or prod), not isolated components.
+  Each test archives its final UI state for UI Verify to replay + diff.
+- **Bun path** — visual tests run on `bun test` with `@uiverify/bun`, drive the installed Chrome, and
+  archive each test's final page: real pages of the app (`run({ webServer })`) or components on a page
+  `serveBundle()` builds. No Node test runner or browser download needed.
+- **Vitest path** — component tests in **Vitest browser mode** (`@vitest/browser` with a Playwright
+  provider); each browser-mode test archives its final DOM. A repo with no browser-mode tests yet gets
+  visual tests in their own config next to its existing tests (Step 2).
 - **Screenshot-upload path** — the repo is **native / mobile / React Native** (or otherwise can't
   render in a browser) but already produces finished screenshots from its own harness (Detox, Maestro,
   native snapshot tests). Upload those PNGs directly with `--screenshots`; UI Verify diffs, judges, and
@@ -39,10 +70,10 @@ UI Verify captures UI five ways. Choose by what the repo already has:
   **iOS / Swift app with no screenshot harness yet:** use swift-snapshot-testing; the helper, test, run
   command and macOS CI job are in [`references/ios-swift-screenshots.md`](references/ios-swift-screenshots.md).
 
-If none exists and the repo is a browser app, scaffold Storybook (`npx storybook@latest init`) — it's
-the lower-friction path and gives you deterministic isolation for free (see `storybook-visual-testing`).
-
 ## Step 2 — install the client
+
+The commands below use npm. Install with the repo's own package manager instead (`pnpm add -D`,
+`yarn add -D`, `bun add -d`) and use the same one in CI's install step.
 
 **Storybook:**
 ```bash
@@ -58,7 +89,7 @@ npm i -D uiverify
 npm i -D @uiverify/playwright uiverify
 ```
 
-**Vitest** — add the plugin to `vitest.config.ts` so every browser-mode test archives its final DOM:
+**Vitest** — add the plugin to the browser-mode config so every browser-mode test archives its final DOM:
 ```ts
 import { playwright } from '@vitest/browser-playwright';
 import { uiverifyPlugin } from '@uiverify/vitest/plugin';
@@ -70,6 +101,22 @@ export default defineConfig({
 ```bash
 npm i -D @uiverify/vitest @vitest/browser-playwright uiverify
 ```
+When the repo has no Vitest browser-mode tests yet (no tests, tests in Node or jsdom, or tests in another
+runner such as Jest):
+
+- The user's existing tests keep passing with their existing command, and that setup is not changed
+  beyond excluding the new visual test files if its patterns would pick them up.
+- Install `vitest` itself too (the major `@vitest/browser-playwright` expects) and the browser renderer for
+  the app's framework (`vitest-browser-react` for React).
+- Name the visual tests `*.visual.test.tsx`. They get their own config with the plugin above, whose
+  `include` is only that pattern, carrying the app's Vite plugins and path aliases (a repo not built with
+  Vite adds its framework's plugin, such as `@vitejs/plugin-react`) but none of its unit-test settings. A
+  `test:visual` package script runs them; use it wherever this skill says `npx vitest run`.
+- Write a few visual tests so the first build has something to capture. Start with leaf components; for
+  whole pages, see "Testing whole pages" in `vitest-visual-testing`.
+- If installing the packages would need a different major version of the repo's existing `vitest`, stop and
+  ask the user before upgrading.
+- Then check that the existing test command still passes.
 
 **Bun** — define a suite, write `*.visual.ts` tests, and a runner that starts the app (full setup and the
 component-page variant: `bun-visual-testing`):
@@ -117,7 +164,7 @@ against, and they are what lets a PR render only the stories it touches. Without
 story as new, compares nothing, and renders (and bills) the whole suite. Keep `--auto-accept-changes` on
 the upload: the expression below adds it only on the push run, so each merge becomes the baseline without
 a second review while PRs still wait for one. Store the project's `UIVERIFY_API_KEY` (a `uv_proj_…` key
-from the dashboard) as a repo secret, then run the `uiverify` CLI (installed in Step 2). Change `[main]`
+from the project's settings, under API key) as a repo secret, then run the `uiverify` CLI (installed in Step 2). Change `[main]`
 to whatever your default branch is (`master`, `develop`) — a repo whose default isn't `main` gets a
 `push` trigger that never fires.
 
@@ -151,7 +198,8 @@ jobs:
           UIVERIFY_API_KEY: ${{ secrets.UIVERIFY_API_KEY }}
         # Whatever you capture, keep the --auto-accept-changes expression at the end of the upload line.
         # Playwright / Vitest instead (browsers aren't preinstalled on the runner): run
-        #   "npx playwright install --with-deps && npx playwright test"  (or "npx vitest run"), then
+        #   "npx playwright install --with-deps && npx playwright test"  (or "npx vitest run", or
+        #   "npm run test:visual" when Step 2 added it), then
         #   "npx uiverify upload --static-dir uiverify-archive". Playwright must support the runner's OS (below).
         # Bun instead: add oven-sh/setup-bun@v2, drop setup-node's "cache: npm" and replace "npm ci"
         #   with "bun install --frozen-lockfile" (a Bun repo has no package-lock.json), then run
@@ -165,9 +213,10 @@ jobs:
 Keep `--stats-json` on the build - it is the default, not a tuning step (see "Render only what the PR
 could have changed" below). Locally the same thing is:
 ```bash
-npm run build-storybook -- --stats-json && UIVERIFY_API_KEY=uv_proj_… npx uiverify upload --static-dir storybook-static
+npm run build-storybook -- --stats-json && npx uiverify upload --static-dir storybook-static   # signed in (Step 0)
 # Playwright:  npx playwright test && npx uiverify upload --static-dir uiverify-archive
 # Vitest:      npx playwright install --with-deps && npx vitest run && npx uiverify upload --static-dir uiverify-archive
+#              (npm run test:visual in place of npx vitest run when Step 2 added it)
 # Bun:         bun tests/visual/run.ts && npx uiverify upload --static-dir uiverify-archive
 ```
 
@@ -285,6 +334,10 @@ failure like a broken build or network error) turns the job red. Strict-by-defau
 silently dropped upload must not leave CI green. If the first few diffs are noisy, don't disable the
 check — loop back to the determinism skill (Step 3) to remove the flake at its source.
 
+A job that fails with **`Build … blocked`** rendered nothing: UI Verify paused it at the team's snapshot
+allowance or billing check. Tell the user what the log printed about it. Don't re-run the job until the
+user has resolved the block the way the log says: until then every re-run is paused too.
+
 ## Step 6 — connect your agent so it can see the diffs (MCP)
 
 The check gates the PR; the **MCP** is how your coding agent reviews it without leaving the terminal —
@@ -318,9 +371,13 @@ blast radius, prove it with a visual test), then add a one-line rule to **both**
 - Before changing any component, page, or styles, read the `making-ui-changes` skill and follow it:
   reuse before you create, add/update the story or capture in the same change, check the blast radius on
   shared components, and prove the change with a visual test before calling it done.
+- When you start or resume work on a branch, check UI Verify for open review comments on it (`list_comments`
+  with the branch over the UI Verify MCP) and address them before continuing.
 ```
 
-That turns a one-time wiring into a habit the agent follows on every change.
+That turns a one-time wiring into a habit the agent follows on every change. If either file already has the
+`## UI changes` block but not the review-comments line, add that line to it, so re-running setup updates an
+existing install.
 
 ## Done when
 

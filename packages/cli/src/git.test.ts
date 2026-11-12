@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -6,12 +6,17 @@ import { afterAll, beforeAll, describe, it, expect } from "vitest";
 import {
   branchFromEnv,
   ciWatchCommand,
+  collectGitMeta,
   confirmAncestors,
   deltaFor,
+  outputMayBePublic,
   workingTreeChanges,
   parseParents,
   parseRepoFromRemote,
+  prHeadShaFromEvent,
   prNumberFromEnv,
+  remoteRepos,
+  reportRemoteRepos,
   repoFullNameFromEnv,
 } from "./git";
 
@@ -24,6 +29,35 @@ function delta(
 ): ReturnType<typeof deltaFor> {
   return deltaFor(bases, head, cwd, workingTreeChanges(head, cwd, opts));
 }
+
+describe("outputMayBePublic", () => {
+  it.each([
+    { CI: "true" },
+    { TF_BUILD: "True" },
+    { JENKINS_URL: "https://ci" },
+    { TEAMCITY_VERSION: "2024.1" },
+    { GITHUB_ACTIONS: "true" },
+    { GITLAB_CI: "true" },
+    { BUILDKITE: "true" },
+    { CIRCLECI: "true" },
+    { BITBUCKET_BUILD_NUMBER: "12" },
+    { CODEBUILD_BUILD_ID: "proj:abc" },
+    { BUILD_ID: "b-1", PROJECT_ID: "my-project" },
+  ])("is true on a CI host (%o)", (env) => {
+    expect(outputMayBePublic(env)).toBe(true);
+  });
+
+  /** Would catch a container check creeping in, or Cloud Build's generic BUILD_ID matching alone (Jenkins and
+   *  plenty of local tools set it): both would withhold review text from the edit loop that needs it. */
+  it.each([
+    {},
+    { BUILD_ID: "b-1" },
+    { PROJECT_ID: "my-project" },
+    { REMOTE_CONTAINERS: "true", CODESPACES: "true", container: "docker", HOME: "/home/node" },
+  ])("is false for a local or devcontainer-like environment (%o)", (env) => {
+    expect(outputMayBePublic(env)).toBe(false);
+  });
+});
 
 describe("git", () => {
   it("parseParents splits the %P output and drops blanks", () => {
@@ -288,6 +322,16 @@ describe("deltaFor uncommitted edits (real git)", () => {
     },
   );
 
+  /** Would catch `isCi` widened to the hosts `outputMayBePublic` adds: skip-unchanged would then stop counting
+   *  untracked files on those hosts. */
+  it.each([{ GITHUB_ACTIONS: "true" }, { GITLAB_CI: "true" }, { BUILDKITE: "true" }, { CIRCLECI: "true" }])(
+    "still lists untracked files when only a host-specific variable is set (%o)",
+    (env) => {
+      const out = delta([base], head, dir, { exclude: path.join(dir, "storybook-static"), env });
+      expect(out[base]?.files).toContain("New.tsx");
+    },
+  );
+
   /** Re-uploading a commit whose stories are already verified at it. The server decides that group
    *  from an entry keyed by the head, so it must hold the uncommitted edits, and only those. */
   it("sends the uncommitted edits as an entry keyed by the head, ahead of the bases", () => {
@@ -389,6 +433,213 @@ describe("deltaFor without a checkout (real git)", () => {
       expect(delta([base], head, unstaged, { env: {} })[base]).toEqual({ files: [], truncated: true, reason: "git-error" });
     } finally {
       fs.rmSync(unstaged, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("prHeadShaFromEvent", () => {
+  const H = "a".repeat(40);
+  const M = "b".repeat(40);
+  const env = { GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "pull_request", GITHUB_SHA: M };
+  const event = { pull_request: { number: 7, head: { sha: H } } };
+
+  it("reads the payload only on a GitHub Actions pull_request or pull_request_target run", () => {
+    let reads = 0;
+    const read = (): unknown => {
+      reads += 1;
+      return event;
+    };
+    expect(prHeadShaFromEvent({ ...env, GITHUB_ACTIONS: undefined }, M, 7, read)).toBeNull();
+    expect(prHeadShaFromEvent({ ...env, GITHUB_EVENT_NAME: "push" }, M, 7, read)).toBeNull();
+    expect(prHeadShaFromEvent(env, M, null, read)).toBeNull();
+    expect(reads).toBe(0);
+    expect(prHeadShaFromEvent(env, M, 7, read)).toBe(H);
+  });
+
+  it("rejects a payload without a full lowercase head sha", () => {
+    const at = (sha: unknown): string | null =>
+      prHeadShaFromEvent(env, M, 7, () => ({ pull_request: { number: 7, head: { sha } } }));
+    expect(at(H.toUpperCase())).toBeNull();
+    expect(at(H.slice(0, 39))).toBeNull();
+    expect(at(42)).toBeNull();
+    expect(prHeadShaFromEvent(env, M, 7, () => ({ pull_request: { number: 7 } }))).toBeNull();
+    expect(prHeadShaFromEvent(env, M, 7, () => null)).toBeNull();
+  });
+});
+
+// The checkout shapes a real runner produces, over a real repo: B is the base tip, H the PR head, M
+// GitHub's test merge of H into B, N a commit pushed onto the PR after the event was written.
+describe("collectGitMeta prHeadSha (real git)", () => {
+  let dir: string;
+  let eventFile: string;
+  let B: string;
+  let H: string;
+  let M: string;
+  let N: string;
+  const g = (...args: string[]): string => execFileSync("git", args, { cwd: dir, encoding: "utf8" }).trim();
+  const at = (sha: string, env: NodeJS.ProcessEnv): string | null => {
+    g("checkout", "-q", "--detach", sha);
+    return collectGitMeta(dir, env).prHeadSha;
+  };
+  const pr = (over: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({
+    GITHUB_ACTIONS: "true",
+    GITHUB_EVENT_NAME: "pull_request",
+    GITHUB_REF: "refs/pull/7/merge",
+    GITHUB_SHA: M,
+    GITHUB_EVENT_PATH: eventFile,
+    ...over,
+  });
+
+  beforeAll(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "uiverify-prhead-"));
+    g("init", "-q", "-b", "main");
+    g("config", "user.email", "t@t.t");
+    g("config", "user.name", "t");
+    g("remote", "add", "origin", "https://github.com/acme/web.git");
+    g("commit", "--allow-empty", "-q", "-m", "fork point");
+    g("checkout", "-q", "-b", "feat");
+    g("commit", "--allow-empty", "-q", "-m", "pr head");
+    H = g("rev-parse", "HEAD");
+    g("checkout", "-q", "main");
+    g("commit", "--allow-empty", "-q", "-m", "base tip");
+    B = g("rev-parse", "HEAD");
+    g("merge", "-q", "--no-ff", "-m", "test merge", "feat");
+    M = g("rev-parse", "HEAD");
+    g("checkout", "-q", "feat");
+    g("commit", "--allow-empty", "-q", "-m", "pushed after the event");
+    N = g("rev-parse", "HEAD");
+    eventFile = path.join(dir, "..", `${path.basename(dir)}-event.json`);
+    fs.writeFileSync(eventFile, JSON.stringify({ pull_request: { number: 7, head: { sha: H } } }));
+  });
+  afterAll(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(eventFile, { force: true });
+  });
+
+  /** Would catch: the `HEAD === GITHUB_SHA` clause dropped, so the default pull_request checkout (the
+   *  event's own test merge) reports no head and its check lands on the merge commit. */
+  it("sends the head on the event's merge-ref checkout", () => {
+    expect(at(M, pr())).toBe(H);
+  });
+
+  /** Would catch: the `HEAD === head.sha` clause dropped (a workflow that checks out the PR head). */
+  it("sends the head on a head checkout", () => {
+    expect(at(H, pr())).toBe(H);
+    expect(at(H, pr({ COMMIT_SHA: H }))).toBe(H);
+  });
+
+  /** Would catch: the merge-commit clause applied to pull_request_target, whose GITHUB_SHA is the base tip
+   *  the default checkout renders, so the check would name a head that was never rendered. */
+  it("sends nothing on a pull_request_target base-tip checkout, even with PR_NUMBER set", () => {
+    const target = pr({ GITHUB_EVENT_NAME: "pull_request_target", GITHUB_REF: "refs/heads/main", GITHUB_SHA: B, PR_NUMBER: "7" });
+    expect(at(B, target)).toBeNull();
+  });
+
+  /** Would catch: the override clause dropped, or the commit match read from COMMIT_SHA instead of HEAD:
+   *  here COMMIT_SHA names H while the tree on disk is the merge commit. */
+  it("sends nothing when COMMIT_SHA differs from HEAD", () => {
+    expect(at(M, pr({ COMMIT_SHA: H }))).toBeNull();
+  });
+
+  /** Would catch: accepting the payload's head whatever is checked out, after the PR moved past it. */
+  it("sends nothing when the checkout is newer than the payload's head", () => {
+    expect(at(N, pr())).toBeNull();
+  });
+
+  it("sends nothing when a COMMIT_SHA override matches neither the head nor the merge commit", () => {
+    expect(at(N, pr({ COMMIT_SHA: N }))).toBeNull();
+  });
+
+  /** Would catch: the payload's PR number not compared with the PR the build reports. */
+  it("sends nothing when the payload is for another PR", () => {
+    expect(at(M, pr({ GITHUB_REF: "refs/pull/8/merge" }))).toBeNull();
+  });
+
+  it("sends nothing when the event file is missing or not JSON", () => {
+    expect(at(M, pr({ GITHUB_EVENT_PATH: path.join(dir, "missing.json") }))).toBeNull();
+    const bad = path.join(dir, "..", `${path.basename(dir)}-bad.json`);
+    fs.writeFileSync(bad, "{not json");
+    try {
+      expect(at(M, pr({ GITHUB_EVENT_PATH: bad }))).toBeNull();
+    } finally {
+      fs.rmSync(bad, { force: true });
+    }
+    expect(at(M, pr({ GITHUB_EVENT_PATH: undefined }))).toBeNull();
+  });
+
+  /** Would catch: the GITHUB_ACTIONS gate dropped, so any CI that exports a stray event path reports a head. */
+  it("sends nothing off GitHub Actions", () => {
+    expect(at(M, pr({ GITHUB_ACTIONS: undefined }))).toBeNull();
+  });
+});
+
+describe("collectGitMeta remotes (real git)", () => {
+  let dir: string;
+  const git = (...args: string[]): void => {
+    execFileSync("git", args, { cwd: dir, stdio: "ignore" });
+  };
+
+  beforeAll(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "uiverify-git-remotes-"));
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "t@t.t");
+    git("config", "user.name", "t");
+    git("commit", "--allow-empty", "-q", "-m", "c0");
+    git("remote", "add", "origin", "git@github.com:me/web.git");
+  });
+  afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  /** Would catch: a fork checkout never telling the server which repo it forked from. */
+  it("reports the upstream remote's repo beside origin's, and nothing when there is no upstream", () => {
+    expect(collectGitMeta(dir, {}).upstreamRepoFullName).toBeUndefined();
+    git("remote", "add", "upstream", "https://github.com/acme/web.git");
+    const meta = collectGitMeta(dir, {});
+    expect(meta.repoFullName).toBe("me/web");
+    expect(meta.upstreamRepoFullName).toBe("acme/web");
+    expect(reportRemoteRepos(dir, {})).toEqual({ repoFullName: "me/web", upstreamRepoFullName: "acme/web" });
+  });
+
+  /** Would catch: a failure report naming a different repository than register would have (the server would
+   *  then look for the wrong project). */
+  it("names the repository the way register does, CI env first, without asking git for origin then", () => {
+    const asked: string[][] = [];
+    const read = (args: string[]): string | null => {
+      asked.push(args);
+      return args[0] === "remote" ? "git@github.com:me/web.git" : null;
+    };
+    expect(remoteRepos({ GITHUB_REPOSITORY: "acme/web" }, read)).toEqual({ repoFullName: "acme/web", upstreamRepoFullName: undefined });
+    expect(asked).toEqual([["config", "--get", "remote.upstream.url"]]);
+    expect(remoteRepos({}, read).repoFullName).toBe("me/web");
+  });
+
+  /** Would catch: the report's git read losing its timeout (a hung git would hold the exit up without limit)
+   *  or its quiet stderr (git's own error printed into the user's output). */
+  it.skipIf(process.platform === "win32")("gives up on a hung git within its timeout, printing nothing", () => {
+    const bin = fs.mkdtempSync(path.join(os.tmpdir(), "uiverify-fake-git-"));
+    try {
+      fs.writeFileSync(path.join(bin, "git"), "#!/bin/sh\necho 'fatal: hung' >&2\nsleep 5\n", { mode: 0o755 });
+      const script = `import { reportRemoteRepos } from ${JSON.stringify(path.resolve(__dirname, "git.ts"))};
+process.stdout.write(JSON.stringify(reportRemoteRepos(process.argv[1], {})));`;
+      const started = Date.now();
+      const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script, bin], {
+        cwd: __dirname,
+        env: { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`, HOME: os.homedir() },
+        encoding: "utf8",
+      });
+      expect(Date.now() - started).toBeLessThan(4500);
+      expect(child.stderr).toBe("");
+      expect(JSON.parse(child.stdout)).toEqual({ repoFullName: "" });
+    } finally {
+      fs.rmSync(bin, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it("reads nothing outside a checkout, without throwing", () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "uiverify-no-git-"));
+    try {
+      expect(reportRemoteRepos(outside, {})).toEqual({ repoFullName: "", upstreamRepoFullName: undefined });
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
     }
   });
 });

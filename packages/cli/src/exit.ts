@@ -6,7 +6,7 @@
  * The status is the server's `gateStatus`, so an auto-accepted `changed` build already arrives as
  * `passed`. Cases:
  * - `passed`, or no status at all → 0.
- * - `failed` and `blocked` (shot-quota / payment hard-pause) ALWAYS gate → 1, regardless of the flag —
+ * - `failed` and `blocked` (paused at the snapshot allowance or billing check) ALWAYS gate → 1, regardless of the flag —
  *   neither is "just changes to review".
  * - `changed` (a genuine needs-review verdict) → 1 by default; `--exit-zero-on-changes` softens ONLY
  *   this one to 0, so changes stay pending review in the dashboard without turning the CI job red.
@@ -26,7 +26,7 @@ export function exitCodeFor(status: string | undefined, flags: GateFlags): numbe
  * is NOT a gate — it renders the agent's targets and reports what changed so the agent can review the
  * pixels over MCP and decide. A `changed` verdict is the expected, useful result (it worked and found a
  * diff), so it exits **0**; the changed-story list is on stdout for the agent to read. Only a build that
- * couldn't give a clean answer gates: `failed` (a story errored) / `blocked` (quota/payment) → 1.
+ * couldn't give a clean answer gates: `failed` (a story errored) / `blocked` (allowance/billing) → 1.
  * Operational failures (the check not running at all) are handled separately by `softFail`.
  */
 export function previewExitCodeFor(status: string | undefined): number {

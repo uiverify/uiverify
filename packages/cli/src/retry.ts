@@ -2,12 +2,16 @@ import { redact } from "./redact";
 
 /**
  * HTTP error carrying the response status, so retry logic can tell a retryable 5xx from a
- * deterministic 4xx.
+ * deterministic 4xx. `label` names the call and `serverError` is UI Verify's own `{ "error" }` text when the
+ * body was that envelope (null for any other body), so a failure report can name the call without
+ * repeating a proxy's or storage host's response body.
  */
 export class HttpStatusError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly label: string,
+    readonly serverError: string | null,
   ) {
     super(message);
   }

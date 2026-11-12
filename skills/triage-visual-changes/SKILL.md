@@ -59,7 +59,7 @@ Tools it exposes:
 | `list_pr_stories` | Page one bucket of the PR-vs-base changeset beyond `get_pr_changeset`'s first page | selector, `kind: new \| changed \| removed`, `cursor?`, `limit?` |
 | `review_diff` | Record a decision on one story. `accept` and `ignore` are **refused** while the story has an unresolved review comment; `deny` always works | `diffResultId`, `decision: accept \| deny \| ignore` |
 | `accept_build` | Accept **every** changed story in a build at once. **Refused, accepting nothing,** while any changed story has an unresolved review comment — the error names those stories | same selector |
-| `list_comments` | Read the review comments a designer/QA (or another agent) left on a build's diffs — every live comment across the build, each carrying its `diffResultId`, `authorType`, `body`, `side`, `parentId` (a reply's thread root), `anchor` (a point/region on the image), and `resolved`. This is the thing `get_build`/`get_diff`'s `comments` count points you to | one of `commitSha` / `prNumber` / `buildId` |
+| `list_comments` | Read the review comments a designer/QA (or another agent) left on a build's diffs — every live comment across the build, each carrying its `diffResultId`, `authorType`, `body`, `side`, `parentId` (a reply's thread root), `anchor` (a point/region on the image), and `resolved`. This is the thing `get_build`/`get_diff`'s `comments` count points you to. Notes follow their story to newer builds on the branch until someone resolves them, so a build's list includes the open ones left on earlier builds. With `branch` (and the `projectId` `uiverify check` prints) it returns every open note on that branch, whatever build it was left on | one of `commitSha` / `prNumber` / `buildId` / `branch` |
 | `post_comment` | Leave a comment (or a threaded reply) on one story's diff — e.g. reply to a reviewer's question, or flag a regression back to them. Authored as the **agent**; a new root comment is refused if a newer build exists on the branch (comment on the latest), but replies are always allowed | selector + `diffResultId`, `body`, `side?`, `anchor?`, `parentId?` (reply to a root's id) |
 | `resolve_comment` | Resolve (or reopen) a comment thread once its note is addressed | `commentId` (thread root), `resolved` |
 | `update_comment` / `delete_comment` | Edit or remove a comment — the agent may only touch **agent-authored** comments | `commentId` (+ `body` for update) |
@@ -85,8 +85,10 @@ before image, not in isolation:**
   `get_diff` story shows `comments`), a designer/QA or another agent has left a note on this build —
   `list_comments` reads them, each tied to its `diffResultId` so you can match a note to the story in your
   buckets. A comment is context the pixels don't carry ("this spacing is intentional, don't revert it" /
-  "the logo is wrong here"), so read it before you bucket the story. You can't accept over one anyway:
-  `accept_build` and `review_diff` accept/ignore refuse a story with an **unresolved** comment. The loop is
+  "the logo is wrong here"), so read it before you bucket the story. `uiverify check` and `upload` print the
+  branch's open notes at the top of their output, so you usually have read them already. You can't accept
+  over one anyway: `accept_build` and `review_diff` accept/ignore refuse a story with an **unresolved**
+  comment from a person, including one carried over from an earlier build of the branch. The loop is
   read the note → do what it asks (often a code change and a new push) → `resolve_comment` → accept.
   Never resolve a note just to unblock the accept; resolve it because you addressed it.
 
@@ -205,7 +207,9 @@ from the agent instead of making them chase you. Read the thread with `list_comm
   comment's `id` (a reply inherits the root's side and needs no anchor of its own). Use it to answer
   "why did this move?" with the diff you made, or to confirm "fixed in the next push."
 - **Flag a regression back** — `post_comment { diffResultId, body, anchor? }` as a new root, to point the
-  reviewer at a story you're leaving for them (pair it with the ⚠️ bucket from Recipe 1).
+  reviewer at a story you're leaving for them (pair it with the ⚠️ bucket from Recipe 1). Your flag stays
+  open for the reviewer: it doesn't come back to you as work until a person replies. After a reply, do what
+  the reply asks and resolve the thread.
 - **Resolve** — `resolve_comment { commentId, resolved: true }` once the note is addressed (you made the
   change it asked for, or answered the question). Resolve **before** you accept: an open thread makes
   `accept_build` / `review_diff` refuse that story. Only reach for this when the thread is genuinely done;
@@ -238,8 +242,13 @@ baseline" without opening the dashboard.
 - **Bulk-accept is a baseline change.** `accept_build` makes the candidate the new truth for every
   changed story — only reach for it when you've confirmed there's no real regression hiding in the list.
 - **An unresolved comment blocks the accept.** `get_build`'s `comments.unresolved > 0` means a human left
-  a note you haven't read — `list_comments` it and honor it before `review_diff` / `accept_build`. A
+  a note you haven't read (on this build, or on an earlier build of the branch and carried forward) —
+  `list_comments` it and honor it before `review_diff` / `accept_build`. A
   reviewer commenting "don't accept this" that an agent bulk-accepts anyway is exactly the failure this
   count exists to prevent.
+- **A `blocked` build has nothing to triage.** It was paused at the team's snapshot allowance or billing
+  check before rendering. Relay its `blocked.message` (or its `headline` and `nextSteps` when there is no
+  `message`) to the user and stop. Don't re-run the build until the user has resolved the block the way
+  it says: until then every re-run is paused too.
 - **Distinguish "new story" from "changed story."** A first-baseline story has nothing to diff; it's not
   a regression, just needs a baseline. Bucket it separately.

@@ -3,7 +3,7 @@
 A pnpm **monorepo** of the public, client-installed packages for **UI Verify** (visual testing),
 published as standalone open-source packages that talk to the UI Verify service **only over HTTP / MCP**:
 
-- **`packages/cli`** (`uiverify`) — the CI uploader (`uiverify upload`).
+- **`packages/cli`** (`uiverify`) — the uploader (`uiverify upload` in CI, `uiverify check` in an agent's edit loop), and `uiverify login` / `logout` / `whoami` for uploading from a person's machine without a key.
 - **`packages/playwright`** (`@uiverify/playwright`) — the Playwright capture SDK (swap `@playwright/test`
   for it; each test archives its final UI state for UI Verify to replay + diff). It writes an archive dir the CLI
   uploads; its archive-format types are a **local mirror** of the UI Verify service's wire contract, kept in
@@ -100,6 +100,15 @@ and the distinction is what keeps `--no-strict` honest:
   entirely — honouring it here would exit 0 having uploaded nothing, the exact outcome the funnel exists
   to prevent. The pre-allowlist parser silently ignored unknown flags and uploaded anyway, so swallowing
   this would be strictly worse than what it replaced.
+
+The funnel covers `upload` and `check`. The account commands (`login`, `logout`, `whoami`) are a deliberate
+exception with their own exit path (`[uiverify] ✗ …`, exit 1, no setup failure report): they have no `--no-strict`,
+and `login`'s normal path ("still waiting for approval", exit 1) must not count as a setup failure. Don't route them
+through `softFail()`. A `login` that ends without signing in (denied, expired, the account never ready, ...) sends
+its own short report to `/api/cli/login/failure` instead, from inside `runLogin` and only from the run whose own
+store write ended that code (or, for a start that never got a code, the run whose start failed), so each attempt
+is reported once; a run that ends "still waiting" never reports its own
+code.
 
 When adding a new **operational** failure path, route it through `softFail()` — do not `throw` past
 `main()`'s catch or call `process.exit(1)` directly. When adding a new **argv-validation** path, add it to
