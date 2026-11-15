@@ -7,7 +7,7 @@ description: Make @uiverify/playwright (archive-replay) captures deterministic s
 
 ## Mental model
 
-`@uiverify/playwright` captures each test's **final DOM + every resource the page loaded** into an
+`@uiverify/playwright` captures each test's **final DOM + every resource the page loaded** (of the built-in `page`) into an
 archive; UI Verify re-renders and pixel-diffs that archive server-side. So:
 
 > Whatever the page **was at the instant of capture** is baked into the archive forever. Your job is to
@@ -15,7 +15,7 @@ archive; UI Verify re-renders and pixel-diffs that archive server-side. So:
 > a live feed, or a piece of lazy content that never loaded.
 
 The snapshot fires automatically at the end of every test that passes or fails (a failed one too, so a broken
-page shows up as a visual change rather than vanishing from the build; a test that times out is skipped), so your `beforeEach` + navigation *is* the
+page shows up as a visual change rather than vanishing from the build; a test that times out is skipped, and so is one that never loads anything into the built-in `page`, for example a test that drives its own `browser.newContext()` page: the run prints one warning for all of them, so drive the built-in `page` (`test.use({ storageState })` logs it in) or call `uiVerify.disableAutoSnapshot()` for a test with no UI), so your `beforeEach` + navigation *is* the
 determinism surface. Integration is one import:
 
 ```diff

@@ -13,9 +13,12 @@ export interface GitMeta {
   prNumber: number | null;
   parentShas: string[];
   /** The repo's full name — `owner/repo` (GitHub) or `workspace/repo_slug` (Bitbucket) — learned from
-   *  CI env or the git remote. Host-agnostic: the remote parse works for any host. Empty only when it
+   *  CI env or the git remote. The remote parse works for any host; `repoHost` says which. Empty only when it
    *  can't be determined (no remote) — the server keeps whatever it already had. */
   repoFullName: string;
+  /** The git host `repoFullName` came from (`github.com`, `gitlab.com`, ...), taken from the same source as the
+   *  name. `null` when it can't be told. The server decides whether to treat the repo as GitHub's. */
+  repoHost: string | null;
   /** The PR head commit the checked-out tree was built from, when it can be proven (see
    *  {@link prHeadShaFromEvent}); the server posts the PR's check there. Null otherwise. */
   prHeadSha: string | null;
@@ -118,28 +121,110 @@ function repoFromCiEnv(env: NodeJS.ProcessEnv): string | undefined {
   return env.UIVERIFY_REPO || env.GITHUB_REPOSITORY || env.BITBUCKET_REPO_FULL_NAME || undefined;
 }
 
+const SSH_PROTOCOLS = new Set(["ssh:", "git+ssh:", "ssh+git:"]);
+const GITHUB_SSH_HOSTS = new Set(["github.com", "ssh.github.com"]);
+
+function bareHost(host: string): string | null {
+  const cleaned = host.trim().toLowerCase().replace(/^\[(.*)\]$/, "$1").replace(/\.$/, "");
+  return cleaned || null;
+}
+
+/**
+ * The hostname of a git remote URL, never anything else of it: the userinfo (`https://user:token@host/...`), port
+ * and path stay on the machine. Handles the URL forms and scp-like ssh (`git@host:owner/repo`); a local path or
+ * `file://` URL names no host (`null`). An ssh remote's host may be an alias from `~/.ssh/config`, so
+ * `resolveSshAlias` maps it to the real one, and isn't asked about GitHub's own ssh hosts.
+ */
+export function parseHostFromRemote(remoteUrl: string, resolveSshAlias: (host: string) => string = (h) => h): string | null {
+  const url = remoteUrl.trim();
+  const viaSsh = (host: string): string | null => {
+    const bare = bareHost(host);
+    return bare === null || GITHUB_SSH_HOSTS.has(bare) ? bare : bareHost(resolveSshAlias(bare));
+  };
+  if (url.includes("://")) {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === "file:") return null;
+      return SSH_PROTOCOLS.has(parsed.protocol) ? viaSsh(parsed.hostname) : bareHost(parsed.hostname);
+    } catch {
+      return null;
+    }
+  }
+  const scp = /^(?:[^@/:]*@)?([^@/:]+):/.exec(url);
+  // A single letter before the colon is a Windows drive (`C:\repo`), not a host.
+  return scp?.[1] && scp[1].length > 1 ? viaSsh(scp[1]) : null;
+}
+
+/** The host an `~/.ssh/config` alias really connects to (`ssh -G`'s `hostname`), or `host` itself when `ssh` is
+ *  missing, fails, or takes over a second. */
+export function resolveSshHostAlias(host: string): string {
+  if (host.startsWith("-")) return host;
+  try {
+    const out = execFileSync("ssh", ["-G", "--", host], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 1000 });
+    return /^hostname (\S+)/m.exec(out)?.[1] ?? host;
+  } catch {
+    return host;
+  }
+}
+
+/** The host CI env or the remote says `repoFullName` is on: GitHub Actions names its server, Bitbucket Pipelines is
+ *  Bitbucket Cloud, and an explicit `UIVERIFY_REPO` has no host of its own, so it takes the `origin` remote's when
+ *  that remote names the same repo. */
+function repoHostOf(
+  env: NodeJS.ProcessEnv,
+  repoFullName: string,
+  originUrl: string | null,
+  resolveSshAlias: (host: string) => string,
+): string | null {
+  if (!repoFullName) return null;
+  const fromOrigin = () => (originUrl ? parseHostFromRemote(originUrl, resolveSshAlias) : null);
+  if (env.UIVERIFY_REPO) {
+    const origin = originUrl ? parseRepoFromRemote(originUrl) : null;
+    return origin?.toLowerCase() === repoFullName.toLowerCase() ? fromOrigin() : null;
+  }
+  if (env.GITHUB_REPOSITORY) {
+    try {
+      return env.GITHUB_SERVER_URL ? bareHost(new URL(env.GITHUB_SERVER_URL).hostname) : "github.com";
+    } catch {
+      return null;
+    }
+  }
+  if (env.BITBUCKET_REPO_FULL_NAME) return "bitbucket.org";
+  return fromOrigin();
+}
+
 export type RemoteRepos = Pick<GitMeta, "repoFullName" | "upstreamRepoFullName">;
 
-/** The repository and its `upstream`, as register names them. `readGit` runs one git command, null on any
- *  failure; `origin` isn't asked when CI env already names the repository. */
-export function remoteRepos(env: NodeJS.ProcessEnv, readGit: (args: string[]) => string | null): RemoteRepos {
+/** The repository, its host and its `upstream`, as register names them. `readGit` runs one git command, null on
+ *  any failure; `origin` isn't asked when GitHub Actions or Bitbucket CI env already names the repository (an
+ *  explicit `UIVERIFY_REPO` still reads it, for the host). */
+export function remoteRepos(
+  env: NodeJS.ProcessEnv,
+  readGit: (args: string[]) => string | null,
+  resolveSshAlias: (host: string) => string = (h) => h,
+): RemoteRepos & Pick<GitMeta, "repoHost"> {
+  const ciNamesRepo = Boolean(env.GITHUB_REPOSITORY || env.BITBUCKET_REPO_FULL_NAME);
+  const originUrl = ciNamesRepo && !env.UIVERIFY_REPO ? null : readGit(["remote", "get-url", "origin"]);
+  const repoFullName = repoFullNameFromEnv(env, originUrl);
   return {
-    repoFullName: repoFullNameFromEnv(env, repoFromCiEnv(env) ? null : readGit(["remote", "get-url", "origin"])),
+    repoFullName,
+    repoHost: repoHostOf(env, repoFullName, originUrl, resolveSshAlias),
     // `config --get` exits 1 silently when there is no such remote, where `remote get-url` prints an error.
     upstreamRepoFullName: parseRepoFromRemote(readGit(["config", "--get", "remote.upstream.url"]) ?? "") ?? undefined,
   };
 }
 
 /** {@link remoteRepos} for a failure report, on the way to an exit: git's output never reaches the user, each
- *  call is cut off after 1 s, and nothing throws. */
+ *  call is cut off after 1 s, and nothing throws. The report names no host (the server only looks a project up). */
 export function reportRemoteRepos(cwd: string, env: NodeJS.ProcessEnv): RemoteRepos {
-  return remoteRepos(env, (args) => {
+  const { repoFullName, upstreamRepoFullName } = remoteRepos(env, (args) => {
     try {
       return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 1000 }).trim();
     } catch {
       return null;
     }
   });
+  return { repoFullName, upstreamRepoFullName };
 }
 
 function isShallowRepo(cwd: string): boolean {
@@ -460,6 +545,6 @@ export function collectGitMeta(cwd: string, env: NodeJS.ProcessEnv = process.env
     prNumber,
     parentShas: parseParents(git(["log", "-1", "--format=%P"], cwd)),
     prHeadSha: prHeadShaFromEvent(env, head, prNumber, () => readJsonFile(env.GITHUB_EVENT_PATH)),
-    ...remoteRepos(env, (args) => gitOrNull(args, cwd)),
+    ...remoteRepos(env, (args) => gitOrNull(args, cwd), resolveSshHostAlias),
   };
 }

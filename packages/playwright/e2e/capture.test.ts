@@ -14,6 +14,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 const packageDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixture = path.join(packageDir, "e2e/fixture");
 const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "uiverify-playwright-e2e-"));
+/** The runs' own temp dir, so a warning marker an earlier local run left under a reused pid can't silence one. */
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "uiverify-playwright-e2e-tmp-"));
+const missingArchiveDir = path.join(outDir, "not-created-yet");
+const firefoxDir = path.join(outDir, "firefox");
 
 /** The part of Playwright's JSON report read here. */
 interface ReportSuite {
@@ -33,23 +37,43 @@ let sourcePaths: Map<string, string>;
 let outcomes: Map<string, string>;
 let errors: Map<string, string>;
 let stderrs: Map<string, string>;
+let firefoxSnapshotIds: Set<string>;
 let durations: Map<string, number>;
 
-beforeAll(async () => {
-  await promisify(execFile)(path.join(packageDir, "node_modules/.bin/tsup"), [], { cwd: packageDir });
-  let report = "";
+/** Runs the fixture suite and returns Playwright's JSON report. Tests in it fail on purpose, so the run exits non-zero. */
+async function runFixture(archiveDir: string, args: string[] = [], env: Record<string, string> = {}): Promise<string> {
   try {
-    report = (
-      await promisify(execFile)(path.join(packageDir, "node_modules/.bin/playwright"), ["test"], {
+    return (
+      await promisify(execFile)(path.join(packageDir, "node_modules/.bin/playwright"), ["test", ...args], {
         cwd: fixture,
-        env: { ...process.env, UIVERIFY_ARCHIVE_DIR: outDir, PLAYWRIGHT_E2E_OUTPUT: path.join(outDir, "results") },
+        env: {
+          ...process.env,
+          ...env,
+          TMPDIR: tmpDir,
+          UIVERIFY_ARCHIVE_DIR: archiveDir,
+          PLAYWRIGHT_E2E_OUTPUT: path.join(outDir, "results"),
+        },
       })
     ).stdout;
   } catch (err) {
-    // Tests in the fixture fail on purpose, so the run exits non-zero.
     if (typeof err !== "object" || err === null || !("stdout" in err)) throw err;
-    report = String(err.stdout);
+    return String(err.stdout);
   }
+}
+
+function snapshotIdsIn(dir: string): string[] {
+  const snapshots = path.join(dir, "snapshots");
+  return fs.existsSync(snapshots)
+    ? fs.readdirSync(snapshots).map((file) => JSON.parse(fs.readFileSync(path.join(snapshots, file), "utf8")).id)
+    : [];
+}
+
+beforeAll(async () => {
+  await promisify(execFile)(path.join(packageDir, "node_modules/.bin/tsup"), [], { cwd: packageDir });
+  const report = await runFixture(outDir);
+  await runFixture(missingArchiveDir, ["--grep", "drives its own page$"]);
+  await runFixture(firefoxDir, ["--grep", "drives its own page$|sets empty content"], { PLAYWRIGHT_E2E_BROWSER: "firefox" });
+  firefoxSnapshotIds = new Set(snapshotIdsIn(firefoxDir));
   outcomes = new Map();
   errors = new Map();
   stderrs = new Map();
@@ -78,7 +102,10 @@ beforeAll(async () => {
   }
 }, 180_000);
 
-afterAll(() => fs.rmSync(outDir, { recursive: true, force: true }));
+afterAll(() => {
+  fs.rmSync(outDir, { recursive: true, force: true });
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
 
 describe("the automatic snapshot", () => {
   it("captures a passing test", () => {
@@ -194,5 +221,83 @@ describe("the stable frame", () => {
   it("keeps several snapshots of an endless animation within the test's timeout", () => {
     expect(outcomes.get("endless animation, several snapshots")).toBe("expected");
     expect(snapshotTexts.has("stable-frame.spec.ts > endless animation, several snapshots::five")).toBe(true);
+  });
+});
+
+describe("a page the test never used", () => {
+  const unused = [
+    "blank-page.spec.ts > drives its own page",
+    "blank-page.spec.ts > drives its own page and fails",
+    "blank-page.spec.ts > drives its own page again",
+  ];
+
+  /** Catches the automatic snapshot archiving the untouched `about:blank` tab of a test that drives its own
+   *  context, which uploads fine and then fails every shot on the worker as an empty document. */
+  it("is not snapshotted automatically", () => {
+    for (const id of unused) expect(snapshotTexts.has(id)).toBe(false);
+    expect(outcomes.get("drives its own page")).toBe("expected");
+    expect(outcomes.get("drives its own page and fails")).toBe("unexpected");
+    expect(outcomes.get("drives its own page again")).toBe("expected");
+  });
+
+  /** Catches a per-process flag alone: the failing test replaces the worker, so the next one would warn again. */
+  it("warns once for the whole run, on the first such test", () => {
+    const warned = [...stderrs].filter(([, text]) => text.includes("uiVerify.snapshot()")).map(([title]) => title);
+    expect(warned).toEqual(["drives its own page"]);
+  });
+
+  /** Catches a skip that left no archive dir, so a run where every test is skipped reached the CLI as a missing dir. */
+  it("still creates the archive dir", () => {
+    expect(fs.existsSync(missingArchiveDir)).toBe(true);
+    expect(snapshotIdsIn(missingArchiveDir)).toEqual([]);
+  });
+
+  /** Catches the skip not holding in Firefox, where the blank tab's own load events arrive late and can be
+   *  counted as the test's own load, and a page set to empty content being dropped there. */
+  it("is skipped on Firefox too, while a page set to empty content is kept", () => {
+    expect(firefoxSnapshotIds.has("blank-page.spec.ts > drives its own page")).toBe(false);
+    expect(firefoxSnapshotIds.has("blank-page.spec.ts > sets empty content")).toBe(true);
+  });
+
+  /** Catches the skip reaching a test that asked for a snapshot. */
+  it("leaves an explicit snapshot of a blank page alone", () => {
+    expect(snapshotTexts.has("blank-page.spec.ts > snapshots a blank page explicitly::blank")).toBe(true);
+  });
+
+  /** Catches a content-only check dropping a page the test built with evaluate, which fires no load event. */
+  it("keeps a page filled through a shadow root", () => {
+    expect(snapshotTexts.get("blank-page.spec.ts > fills page through a shadow root")).toContain("shadow");
+  });
+
+  /** Catches the empty-document check reading only the shadow root and stylesheets, so DOM built with evaluate
+   *  alone (no load event) was skipped. */
+  it("keeps a page filled through evaluate", () => {
+    expect(snapshotTexts.get("blank-page.spec.ts > fills page through evaluate")).toContain("evaluated");
+  });
+
+  /** Catches the check missing adopted stylesheets, which paint the page without changing its HTML. */
+  it("keeps a page styled through an adopted stylesheet", () => {
+    expect(snapshotTexts.has("blank-page.spec.ts > styles page through an adopted stylesheet")).toBe(true);
+  });
+
+  /** Catches the setup wait for the first blank document also waiting on a page already navigated, whose load
+   *  may never fire: the test then times out in fixture setup. */
+  it("does not wait on the load of a page navigated before the fixture", () => {
+    expect(outcomes.get("page navigated before the fixture, its load never comes")).toBe("expected");
+  });
+
+  /** Catches the fixture leaving its load and navigation listeners on a page that outlives the test, so every test added more. */
+  it("removes its listeners from a page that outlives the test", () => {
+    expect(outcomes.get("page shared across tests, second")).toBe("expected");
+  });
+
+  /** Catches a content-only check hiding a page the test deliberately loaded with nothing in it. */
+  it("keeps a page set to empty content", () => {
+    expect(snapshotTexts.has("blank-page.spec.ts > sets empty content")).toBe(true);
+  });
+
+  it("does not warn for the API test that opted out", () => {
+    expect(snapshotTexts.has("blank-page.spec.ts > API test opted out")).toBe(false);
+    expect(stderrs.get("API test opted out")).not.toContain("never loaded");
   });
 });

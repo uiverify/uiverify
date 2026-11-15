@@ -80,6 +80,7 @@ const meta: GitMeta = {
   prNumber: 9,
   parentShas: ["p0"],
   repoFullName: "acme/web",
+  repoHost: "github.com",
   prHeadSha: null,
 };
 
@@ -481,6 +482,26 @@ describe("runUpload", () => {
     const log: CallLog = { statusPolls: 0 };
     await runUpload({ staticDir: "/sb" }, deps(log, ["passed"]));
     expect(log.register?.repoFullName).toBe("acme/web");
+  });
+
+  /** Would catch: the host dropped from the register body, or an unknown host omitted instead of sent as null
+   *  (the server reads an absent host as an older CLI and checks GitHub as before). */
+  it.each<[string | null, string | null | undefined]>([
+    ["gitlab.com", "gitlab.com"],
+    [null, null],
+  ])("sends the repo's host %s beside its name", async (repoHost, sent) => {
+    const log: CallLog = { statusPolls: 0 };
+    const d = deps(log, ["passed"]);
+    await runUpload({ staticDir: "/sb" }, { ...d, gitMeta: () => ({ ...meta, repoHost }) });
+    expect(log.register?.repoHost).toBe(sent);
+    expect(log.register).toHaveProperty("repoHost");
+  });
+
+  it("sends no host when it has no repo name", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    const d = deps(log, ["passed"]);
+    await runUpload({ staticDir: "/sb" }, { ...d, gitMeta: () => ({ ...meta, repoFullName: "", repoHost: null }) });
+    expect(log.register?.repoHost).toBeUndefined();
   });
 
   it("forwards the bundle's capture-SDK producer as sdkName/sdkVersion in the register body", async () => {

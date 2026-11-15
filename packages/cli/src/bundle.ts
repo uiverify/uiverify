@@ -241,7 +241,7 @@ function hasManifestEntries(staticDir: string): boolean {
  *  build exists, since the server can't render a bundle with no entries. */
 function nothingToUploadMessage(staticDir: string): string {
   if (!fs.existsSync(staticDir)) return `--static-dir ${staticDir} does not exist`;
-  return `nothing to upload in ${staticDir}: no captures (index.json is missing or lists nothing). For Storybook, point --static-dir at your \`storybook build\` output. For Vitest or Playwright, check that your tests ran with the UI Verify capture SDK (@uiverify/vitest in browser mode, or @uiverify/playwright) and wrote their captures to this directory.`;
+  return `nothing to upload in ${staticDir}: no captures (index.json is missing or lists nothing). For Storybook, point --static-dir at your \`storybook build\` output. For Vitest or Playwright, check that your tests ran with the UI Verify capture SDK (@uiverify/vitest in browser mode, or @uiverify/playwright) and wrote their captures to this directory. A Playwright test that never loads anything into the built-in \`page\` (one that drives its own browser.newContext()) is not captured.`;
 }
 
 /** Create the bundle .tgz from a built static dir (files at the archive root). A Playwright archive dir

@@ -11,6 +11,7 @@ import {
   deltaFor,
   outputMayBePublic,
   workingTreeChanges,
+  parseHostFromRemote,
   parseParents,
   parseRepoFromRemote,
   prHeadShaFromEvent,
@@ -18,6 +19,7 @@ import {
   remoteRepos,
   reportRemoteRepos,
   repoFullNameFromEnv,
+  resolveSshHostAlias,
 } from "./git";
 
 /** The delta exactly as the upload computes it: the checkout's uncommitted list first, then the bases. */
@@ -599,6 +601,115 @@ describe("collectGitMeta remotes (real git)", () => {
     expect(reportRemoteRepos(dir, {})).toEqual({ repoFullName: "me/web", upstreamRepoFullName: "acme/web" });
   });
 
+  /** Would catch: the server treating a private GitLab or Bitbucket repo as GitHub's because the CLI sent no host,
+   *  or a remote's token / port / path leaking into the host. */
+  it.each<[string, string | null]>([
+    ["git@github.com:me/web.git", "github.com"],
+    ["ssh://git@ssh.github.com:443/me/web.git", "ssh.github.com"],
+    ["https://gitlab-ci-token:SECRET@gitlab.com/me/web.git", "gitlab.com"],
+    ["https://GitLab.com:8443/me/web", "gitlab.com"],
+    ["http://proxy@127.0.0.1:41234/git/me/web", "127.0.0.1"],
+    ["ssh://git@[::1]:2222/me/web.git", "::1"],
+    ["git@bitbucket.org:me/web.git", "bitbucket.org"],
+    ["/home/me/web", null],
+    ["file:///home/me/web", null],
+    ["file://127.0.0.1/srv/acme/web", null],
+    ["file://fileserver/repos/web", null],
+    ["C:\\src\\web", null],
+    ["", null],
+  ])("reads the host of the remote %s as %s", (remote, host) => {
+    expect(parseHostFromRemote(remote)).toBe(host);
+  });
+
+  /** Would catch: a GitHub maintainer's `Host github-work` ssh alias reading as a non-GitHub host (it would lose the
+   *  plan), or the resolver running for the common github.com remote or an https one. */
+  it("resolves an ssh alias, but not for GitHub's own hosts or an https remote", () => {
+    const asked: string[] = [];
+    const resolve = (h: string) => {
+      asked.push(h);
+      return h === "github-work" ? "github.com" : h;
+    };
+    expect(parseHostFromRemote("git@github-work:me/web.git", resolve)).toBe("github.com");
+    expect(parseHostFromRemote("ssh://git@github-work/me/web.git", resolve)).toBe("github.com");
+    expect(parseHostFromRemote("git@github.com:me/web.git", resolve)).toBe("github.com");
+    expect(parseHostFromRemote("https://gitlab.com/me/web.git", resolve)).toBe("gitlab.com");
+    expect(asked).toEqual(["github-work", "github-work"]);
+    expect(parseHostFromRemote("git@lab:me/web.git", (h) => h)).toBe("lab");
+  });
+
+  /** Runs `fn` with a stub `ssh` first on PATH, which maps `github-work` to github.com, fails for `broken`, and
+   *  answers any other host as `<host>.via-ssh`; `fn` gets the stub's path. */
+  function withStubSsh(fn: (ssh: string) => void): void {
+    const bin = fs.mkdtempSync(path.join(os.tmpdir(), "vt-ssh-"));
+    const ssh = path.join(bin, "ssh");
+    fs.writeFileSync(
+      ssh,
+      '#!/bin/sh\n[ "$3" = broken ] && exit 255\nh="$3.via-ssh"; [ "$3" = github-work ] && h=github.com\nprintf "user git\\nhostname %s\\nport 22\\n" "$h"\n',
+      { mode: 0o755 },
+    );
+    const savedPath = process.env.PATH;
+    process.env.PATH = `${bin}${path.delimiter}${savedPath ?? ""}`;
+    try {
+      fn(ssh);
+    } finally {
+      process.env.PATH = savedPath;
+      fs.rmSync(bin, { recursive: true, force: true });
+    }
+  }
+
+  /** Would catch: `ssh -G`'s `hostname` line misread, a missing or failing `ssh` throwing out of the upload instead of
+   *  falling back to the alias, or a host that reads as an ssh option reaching `ssh`. */
+  it("resolves an alias through ssh -G and falls back to it when ssh can't", () => {
+    withStubSsh((ssh) => {
+      expect(resolveSshHostAlias("github-work")).toBe("github.com");
+      expect(resolveSshHostAlias("broken")).toBe("broken");
+      expect(resolveSshHostAlias("-oProxyCommand=x")).toBe("-oProxyCommand=x");
+      fs.rmSync(ssh);
+      const savedPath = process.env.PATH;
+      process.env.PATH = path.dirname(ssh);
+      try {
+        expect(resolveSshHostAlias("github-work")).toBe("github-work");
+      } finally {
+        process.env.PATH = savedPath;
+      }
+    });
+  });
+
+  /** Would catch: the upload no longer resolving an ssh alias (a GitHub maintainer's `git@github-work:` remote would
+   *  then be sent as a non-GitHub host and lose the plan), or the failure report starting to send the host. */
+  it("resolves origin's ssh alias for the upload, and the failure report names no host", () => {
+    git("remote", "set-url", "origin", "git@github-work:me/web.git");
+    try {
+      withStubSsh(() => {
+        expect(collectGitMeta(dir, {})).toMatchObject({ repoFullName: "me/web", repoHost: "github.com" });
+        expect(reportRemoteRepos(dir, {})).not.toHaveProperty("repoHost");
+      });
+    } finally {
+      git("remote", "set-url", "origin", "git@github.com:me/web.git");
+    }
+  });
+
+  /** Would catch: the host coming from a different source than the repo name (a GitHub Actions run on GHES sent as
+   *  github.com, an explicit UIVERIFY_REPO taking a mismatched origin's host), or the CI-named repos reading origin. */
+  it("takes the host from the same source as the repo name", () => {
+    const origin = "git@gitlab.com:me/web.git";
+    const asked: string[][] = [];
+    const read = (args: string[]): string | null => {
+      asked.push(args);
+      return args[0] === "remote" ? origin : null;
+    };
+    const host = (env: NodeJS.ProcessEnv) => remoteRepos(env, read).repoHost;
+    expect(host({})).toBe("gitlab.com");
+    expect(host({ UIVERIFY_REPO: "ME/web" })).toBe("gitlab.com");
+    expect(host({ UIVERIFY_REPO: "other/repo" })).toBeNull();
+    asked.length = 0;
+    expect(host({ GITHUB_REPOSITORY: "acme/web" })).toBe("github.com");
+    expect(host({ GITHUB_REPOSITORY: "acme/web", GITHUB_SERVER_URL: "https://ghe.acme.com" })).toBe("ghe.acme.com");
+    expect(host({ BITBUCKET_REPO_FULL_NAME: "acme/web" })).toBe("bitbucket.org");
+    expect(asked.filter((a) => a[0] === "remote")).toEqual([]);
+    expect(remoteRepos({}, () => null)).toMatchObject({ repoFullName: "", repoHost: null });
+  });
+
   /** Would catch: a failure report naming a different repository than register would have (the server would
    *  then look for the wrong project). */
   it("names the repository the way register does, CI env first, without asking git for origin then", () => {
@@ -607,7 +718,7 @@ describe("collectGitMeta remotes (real git)", () => {
       asked.push(args);
       return args[0] === "remote" ? "git@github.com:me/web.git" : null;
     };
-    expect(remoteRepos({ GITHUB_REPOSITORY: "acme/web" }, read)).toEqual({ repoFullName: "acme/web", upstreamRepoFullName: undefined });
+    expect(remoteRepos({ GITHUB_REPOSITORY: "acme/web" }, read)).toMatchObject({ repoFullName: "acme/web", upstreamRepoFullName: undefined });
     expect(asked).toEqual([["config", "--get", "remote.upstream.url"]]);
     expect(remoteRepos({}, read).repoFullName).toBe("me/web");
   });

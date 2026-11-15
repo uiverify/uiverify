@@ -29,7 +29,7 @@ Catch unintended UI changes on every pull request. UI Verify renders your compon
 
 The UI Verify capture SDK for Playwright.
 
-Swap one import in your Playwright specs and every test also becomes a visual-regression test: the SDK archives each test's final UI state (the serialized DOM via [rrweb](https://github.com/rrweb-io/rrweb) plus the bytes of every resource the page loaded), and UI Verify replays that archive and pixel-diffs it, with an AI intended-vs-regression review. No extra setup: the archive is captured straight from the tests you already run.
+Swap one import in your Playwright specs and every test that uses the built-in `page` also becomes a visual-regression test: the SDK archives each test's final UI state (the serialized DOM via [rrweb](https://github.com/rrweb-io/rrweb) plus the bytes of every resource the page loaded), and UI Verify replays that archive and pixel-diffs it, with an AI intended-vs-regression review. No extra setup: the archive is captured straight from the tests you already run.
 
 ```ts
 // before
@@ -38,7 +38,7 @@ import { test, expect } from "@playwright/test";
 import { test, expect } from "@uiverify/playwright";
 ```
 
-That's it, each test auto-archives its final state. To capture intermediate/named states:
+That's it, each test auto-archives its final state. A test that never loads anything into the built-in `page` (it drives a page it opened itself with `browser.newContext()`) is skipped, and the run prints one warning: drive the built-in `page` instead (`test.use({ storageState })` logs it in), or call `uiVerify.disableAutoSnapshot()` for a test with no UI. To capture intermediate/named states:
 
 ```ts
 import { test, expect } from "@uiverify/playwright";

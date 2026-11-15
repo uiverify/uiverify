@@ -47,7 +47,7 @@ export async function installFiles(dir: string, maxBytes = MAX_BYTES): Promise<s
 /**
  * Read Chrome's files into the OS page cache, so each shard's first Chrome start finds them in memory. On a
  * fresh CI VM they are on a cold disk, and Chrome's own scattered reads of them have taken over a minute where
- * reading them in order takes seconds (igrlk/visual-testing#1282). Best effort: any error ends it quietly,
+ * reading them in order takes seconds. Best effort: any error ends it quietly,
  * and `stop()` ends it between reads. `done` resolves to the bytes read.
  */
 export function warmChrome(chrome: string | undefined): { done: Promise<number>; stop(): void } {

@@ -185,9 +185,12 @@ export interface RegisterBody {
    *  or exact ids. The server intersects them with the bundle to form the render set, REPLACING the
    *  dep-graph closure a CI build uses. Only meaningful with `preview: true`. */
   previewTargets?: string[];
-  /** GitHub `owner/repo`; the server binds it to the project so it knows where to post the check +
-   *  PR comment. Omitted when it can't be determined locally. */
+  /** The repo's `owner/repo` (GitHub) or `workspace/repo_slug` (Bitbucket); the server binds it to the project so
+   *  it knows where to post the check + PR comment. Omitted when it can't be determined locally. */
   repoFullName?: string;
+  /** The git host `repoFullName` came from, sent whenever `repoFullName` is: a hostname, or `null` when the CLI
+   *  couldn't tell. The server decides from it whether to ask GitHub if the repo is public (the open-source plan). */
+  repoHost?: string | null;
   /** `owner/repo` of the checkout's `upstream` remote, when it has one. */
   upstreamRepoFullName?: string;
   /** `--project` verbatim (`slug` or `team/slug`): which project a signed-in upload goes to. Sent with a key

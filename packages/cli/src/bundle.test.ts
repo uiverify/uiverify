@@ -345,6 +345,9 @@ describe("createBundle", () => {
     await expect(createBundle(dir, path.join(os.tmpdir(), "vt-empty.tgz"))).rejects.toThrow(
       /nothing to upload in .*@uiverify\/vitest in browser mode/,
     );
+    await expect(createBundle(dir, path.join(os.tmpdir(), "vt-empty.tgz"))).rejects.toThrow(
+      /Playwright test that never loads anything into the built-in `page`/,
+    );
   });
 
   it("refuses an archive whose snapshots dir holds no captures, leaving no stale manifest behind", async () => {

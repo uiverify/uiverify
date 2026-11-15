@@ -22,7 +22,7 @@ made one on the website.
 If `npx uiverify login` can't finish for any reason (it can't write its config folder, the keychain can't be
 reached, there is no browser and the user can't open the link, the approval never comes before the code
 expires, the CLI doesn't know a `login` command, or any other error), stop retrying it. Ask the user for a
-project key instead: it starts with `uv_proj_`, and their UI Verify project's settings show it under API key (no
+project key instead: it starts with `uv_proj_`, and their UI Verify project's settings show it under API keys (create one for CI there if none is listed; no
 project yet: they create one at uiverify.ai/onboarding, under "Create a project"). Then run the same upload
 with the key as `UIVERIFY_API_KEY`. In CI the key is always what authenticates the upload (Step 4).
 
@@ -53,7 +53,7 @@ What each path captures:
 
 - **Storybook path** — each **story** is a snapshot.
 - **Playwright path** — **assembled real pages** (the app, staging, or prod), not isolated components.
-  Each test archives its final UI state for UI Verify to replay + diff.
+  Each test that uses the built-in `page` archives its final UI state for UI Verify to replay + diff.
 - **Bun path** — visual tests run on `bun test` with `@uiverify/bun`, drive the installed Chrome, and
   archive each test's final page: real pages of the app (`run({ webServer })`) or components on a page
   `serveBundle()` builds. No Node test runner or browser download needed.
@@ -80,7 +80,7 @@ The commands below use npm. Install with the repo's own package manager instead 
 npm i -D uiverify
 ```
 
-**Playwright** — swap the import so every test also archives its UI state:
+**Playwright** — swap the import so every test that uses the built-in `page` also archives its UI state:
 ```diff
 - import { test, expect } from '@playwright/test';
 + import { test, expect } from '@uiverify/playwright';
@@ -164,7 +164,7 @@ against, and they are what lets a PR render only the stories it touches. Without
 story as new, compares nothing, and renders (and bills) the whole suite. Keep `--auto-accept-changes` on
 the upload: the expression below adds it only on the push run, so each merge becomes the baseline without
 a second review while PRs still wait for one. Store the project's `UIVERIFY_API_KEY` (a `uv_proj_…` key
-from the project's settings, under API key) as a repo secret, then run the `uiverify` CLI (installed in Step 2). Change `[main]`
+from the project's settings, under API keys: create one for CI there if none is listed) as a repo secret, then run the `uiverify` CLI (installed in Step 2). Change `[main]`
 to whatever your default branch is (`master`, `develop`) — a repo whose default isn't `main` gets a
 `push` trigger that never fires.
 

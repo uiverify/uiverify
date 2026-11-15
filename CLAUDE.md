@@ -5,7 +5,7 @@ published as standalone open-source packages that talk to the UI Verify service 
 
 - **`packages/cli`** (`uiverify`) — the uploader (`uiverify upload` in CI, `uiverify check` in an agent's edit loop), and `uiverify login` / `logout` / `whoami` for uploading from a person's machine without a key.
 - **`packages/playwright`** (`@uiverify/playwright`) — the Playwright capture SDK (swap `@playwright/test`
-  for it; each test archives its final UI state for UI Verify to replay + diff). It writes an archive dir the CLI
+  for it; each test that uses the built-in `page` archives its final UI state for UI Verify to replay + diff). It writes an archive dir the CLI
   uploads; its archive-format types are a **local mirror** of the UI Verify service's wire contract, kept in
   sync by hand. Build: `tsup` → ESM + d.ts, plus a browser IIFE page script (`src/page/main.ts` →
   `dist/page-script.js`) it installs in every document to wait for a stable frame before each snapshot.

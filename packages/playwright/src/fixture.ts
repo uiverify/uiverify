@@ -1,14 +1,17 @@
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { test as base } from "@playwright/test";
+import { test as base, type Frame, type Page } from "@playwright/test";
 import { resolveOutDir, UI_VERIFY_MARKER_SCRIPT, uiVerifyUserAgent } from "@uiverify/archive-core";
 import { PlaywrightArchiver, type SnapshotOptions } from "./archiver";
 import { pageScriptSource } from "./page-script";
 
 /**
  * The `uiVerify` test fixture. Swap `import { test, expect } from "@playwright/test"` for this module
- * and every test archives its final UI state automatically — a one-line import swap, no per-test
- * boilerplate. Tests that want to capture intermediate states (or name them) can request the `uiVerify`
- * fixture and call `uiVerify.snapshot("after login")`.
+ * and every test that uses the built-in `page` archives its final UI state automatically — a one-line
+ * import swap, no per-test boilerplate. A test that never loads anything into `page` (it drives a page it
+ * opened itself) gets no automatic snapshot. Tests that want to capture intermediate states (or name them)
+ * can request the `uiVerify` fixture and call `uiVerify.snapshot("after login")`.
  */
 export interface UiVerifyFixture {
   /** Archive the page's DOM as a snapshot, once its frame is stable. `name` distinguishes multiple snapshots
@@ -16,6 +19,46 @@ export interface UiVerifyFixture {
   snapshot: (name?: string, options?: SnapshotOptions) => Promise<string>;
   /** Turn off the automatic end-of-test snapshot for this test (e.g. when you snapshot manually). */
   disableAutoSnapshot: () => void;
+}
+
+const BLANK_DOCUMENT = "<html><head></head><body></body></html>";
+
+/** Whether `page` is the tab the test never used: nothing was loaded into it (`loaded`, set by the page's
+ *  load / domcontentloaded / main-frame navigation events since setup) and its document is still the empty
+ *  one every new tab opens with. Any error (a closed or crashed page) answers false, leaving that page to
+ *  the capture as before. */
+async function isUnusedBlankPage(page: Page, loaded: boolean): Promise<boolean> {
+  if (loaded || page.isClosed() || page.url() !== "about:blank") return false;
+  return page
+    .evaluate(
+      (blank) =>
+        document.documentElement?.outerHTML === blank &&
+        !document.body?.shadowRoot &&
+        document.adoptedStyleSheets.length === 0,
+      BLANK_DOCUMENT,
+    )
+    .catch(() => false);
+}
+
+let warnedBlankPage = false;
+
+/** Playwright replaces a worker process after every unexpected failure, so a flag in this process alone would
+ *  warn once per failing test. All workers of one run are forked by the same runner, so its pid names the
+ *  run, and the first worker to create the marker file is the one that warns. The marker lives in the OS temp
+ *  dir, not the archive dir, which is uploaded and not cleared between runs. */
+function claimBlankPageWarning(): boolean {
+  if (warnedBlankPage) return false;
+  warnedBlankPage = true;
+  try {
+    fs.writeFileSync(path.join(os.tmpdir(), `uiverify-playwright-blank-page-${process.ppid}`), "", { flag: "wx" });
+    return true;
+  } catch (err) {
+    return !(err instanceof Error && "code" in err && err.code === "EEXIST");
+  }
+}
+
+function blankPageWarning(id: string): string {
+  return `@uiverify/playwright: "${id}" never loaded anything into Playwright's built-in \`page\` (it is still a blank about:blank tab), so it has no automatic snapshot. If the test drives a page it opened itself (browser.newContext() / context.newPage()), drive the built-in \`page\` instead: UI Verify captures it, both automatically and with uiVerify.snapshot(), and for a test that logs in as one role, test.use({ storageState }) logs \`page\` in. If the test has no UI to capture (an API test), call uiVerify.disableAutoSnapshot() in it. Other tests in this run that end the same way are skipped without repeating this warning.`;
 }
 
 interface UiVerifyFixtures {
@@ -60,7 +103,7 @@ export const test = base.extend<UiVerifyFixtures, UiVerifyWorkerFixtures>({
   },
 
   // `auto: true` so the fixture runs for EVERY test even when it isn't referenced — that's what makes the
-  // import swap enough to get an end-of-test snapshot per test, with no per-test boilerplate.
+  // import swap enough to get an end-of-test snapshot of `page` per test, with no per-test boilerplate.
   uiVerify: [
     async ({ page }, use, testInfo) => {
       // Also flag every page via a `window` global at RECORD time, before the app's code runs, so
@@ -71,6 +114,20 @@ export const test = base.extend<UiVerifyFixtures, UiVerifyWorkerFixtures>({
       // The page script tracks the app's animation frames from before its first script runs, so a capture
       // can wait for a JS animation to finish.
       await page.addInitScript({ content: pageScriptSource() });
+      // The first `about:blank` document can still be settling when the fixture starts (Firefox fires its
+      // load events late), so wait it out before listening: otherwise its own events mark every untouched
+      // page as loaded. A page that already left `about:blank` is not waited on, since its load may never come.
+      if (page.url() === "about:blank") await page.waitForLoadState();
+      let loaded = false;
+      const markLoaded = () => {
+        loaded = true;
+      };
+      const markMainFrameLoaded = (frame: Frame) => {
+        if (frame === page.mainFrame()) markLoaded();
+      };
+      page.on("load", markLoaded);
+      page.on("domcontentloaded", markLoaded);
+      page.on("framenavigated", markMainFrameLoaded);
       const idBase = testInfo.titlePath.join(" > ");
       const title =
         testInfo.titlePath.length > 1 ? testInfo.titlePath.slice(0, -1).join(" > ") : (testInfo.titlePath[0] ?? "");
@@ -90,6 +147,10 @@ export const test = base.extend<UiVerifyFixtures, UiVerifyWorkerFixtures>({
           auto = false;
         },
       });
+      // A `page` fixture override can hand every test the same long-lived page (an Electron window).
+      page.off("load", markLoaded);
+      page.off("domcontentloaded", markLoaded);
+      page.off("framenavigated", markMainFrameLoaded);
 
       // Auto-snapshot the final state unless the test already snapshotted itself. A failed test is captured
       // too: its own report says it failed, while a snapshot that vanished from the build would hide that its
@@ -97,6 +158,13 @@ export const test = base.extend<UiVerifyFixtures, UiVerifyWorkerFixtures>({
       // that never returns would hold up the teardown. When a failed test leaves no page to capture (a
       // crash, a closed page), that capture error is left out of its report.
       if (auto && archiver.count === 0 && (testInfo.status === "passed" || testInfo.status === "failed")) {
+        if (await isUnusedBlankPage(page, loaded)) {
+          // Create the archive dir so a run where every test is skipped reaches the CLI's "nothing to upload"
+          // message rather than "--static-dir does not exist".
+          fs.mkdirSync(resolveOutDir(), { recursive: true });
+          if (claimBlankPageWarning()) console.warn(blankPageWarning(idBase));
+          return;
+        }
         try {
           await archiver.capture();
         } catch (err) {

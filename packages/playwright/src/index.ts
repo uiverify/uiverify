@@ -1,6 +1,7 @@
 /**
  * @uiverify/playwright — the client capture SDK. Swap `@playwright/test` for `@uiverify/playwright` in your specs
- * and each test archives its final UI state (serialized DOM + resource bytes) for UI Verify to replay + diff.
+ * and each test that uses the built-in `page` archives its final UI state (serialized DOM + resource bytes) for
+ * UI Verify to replay + diff.
  *
  *   import { test, expect } from "@uiverify/playwright";
  *

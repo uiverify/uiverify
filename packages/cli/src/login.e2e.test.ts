@@ -11,7 +11,7 @@ import { credentialStore, withEntry } from "./credentials";
  * `logout`, against one local server standing in for both UI Verify and AuthKit. On macOS and Windows the
  * spawned `login` would seal the store with the developer's real keychain or DPAPI, so there the test seeds
  * the login and skips that step; on Linux the spawned CLI gets no desktop session variables, so it never
- * seals, and vt-cli CI (Ubuntu) runs it whole.
+ * seals, and a Linux CI run covers it whole.
  */
 
 const BIN = path.resolve(__dirname, "../bin/uiverify.ts");

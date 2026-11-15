@@ -4,7 +4,7 @@ import { UI_VERIFY_GLOBAL, UI_VERIFY_MARKER_SCRIPT, UI_VERIFY_UA_MARKER, uiVerif
 describe("UI Verify record-time marker", () => {
   it("sets the exact global that the control plane's isUIVerify() reads", () => {
     // A typo in the global name or the script silently breaks capture detection (the app never learns it
-    // is being archived), so pin both against the value @vt/core checks, and prove the script sets it.
+    // is being archived), so pin both against the value the capturer checks, and prove the script sets it.
     expect(UI_VERIFY_GLOBAL).toBe("__UI_VERIFY__");
 
     const sandbox: Record<string, unknown> = {};
@@ -12,7 +12,7 @@ describe("UI Verify record-time marker", () => {
     expect(sandbox[UI_VERIFY_GLOBAL]).toBe(true);
   });
 
-  it("pins the user-agent marker @vt/core appends and isUIVerify() matches on", () => {
+  it("pins the user-agent marker the capturer appends and isUIVerify() matches on", () => {
     // The UA branch of isUIVerify() (advertised by /docs/is-ui-verify) matches on this exact token, so a
     // drift here silently breaks detection for the SDK that sets it at the browser context it owns.
     expect(UI_VERIFY_UA_MARKER).toBe("UIVerify");

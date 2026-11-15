@@ -177,6 +177,7 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
     preview: opts.preview ?? false,
     previewTargets: opts.preview ? (opts.previewTargets ?? []) : undefined,
     repoFullName: meta.repoFullName || undefined,
+    repoHost: meta.repoFullName ? meta.repoHost : undefined,
     upstreamRepoFullName: meta.upstreamRepoFullName,
     project: opts.project,
     confirmNew: opts.confirmNew,
