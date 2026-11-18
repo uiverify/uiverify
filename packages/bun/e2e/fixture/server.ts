@@ -13,6 +13,23 @@ const html = (body: string, head = "") =>
     headers: { "content-type": "text/html" },
   });
 
+const css = (text: string) => new Response(text, { headers: { "content-type": "text/css" } });
+
+/** A page that draws `family` text and, once it has loaded, appends stylesheet links, the way an app adds a
+ *  theme or a route's CSS after load. `body[data-sheets]` says the links are in. */
+const lateSheetPage = (family: string, ...sheets: string[]) =>
+  html(
+    `<p style="font-family: ${family}">Late text</p>
+     <script>
+       addEventListener("load", () => setTimeout(() => {
+         for (const href of ${JSON.stringify(sheets)}) {
+           document.head.append(Object.assign(document.createElement("link"), { rel: "stylesheet", href }));
+         }
+         document.body.dataset.sheets = "added";
+       }, 50));
+     </script>`,
+  );
+
 const pages: Record<string, () => Response | Promise<Response>> = {
   "/": () =>
     html(`<h1>Fixture home</h1><p data-ui-verify="${process.env.UI_VERIFY ?? ""}">served</p><p id="port">port ${port}</p>`),
@@ -211,6 +228,18 @@ const pages: Record<string, () => Response | Promise<Response>> = {
     await Bun.sleep(300);
     return new Response(".target:hover { color: rgb(255, 0, 0); }", { headers: { "content-type": "text/css" } });
   },
+  "/late-font": () => lateSheetPage("LateFont", `${other}/late.css`),
+  "/late-import-font": () => lateSheetPage("LateImportFont", "/importer.css"),
+  "/importer.css": () => css("@import url(/late-imported.css);"),
+  "/late-imported.css": async () => {
+    await Bun.sleep(1000);
+    return css(`@font-face { font-family: LateImportFont; src: url(/late-import-font.ttf) format("truetype"); }`);
+  },
+  "/late-import-font.ttf": () => new Response(asset("font.ttf"), { headers: { "content-type": "font/ttf" } }),
+  "/late-broken": () => lateSheetPage("Fixture", "/broken.css", "/never.css"),
+  "/failed-stylesheet": () => html(`<p>Failed sheet</p>`, `<link rel="stylesheet" href="/broken.css">`),
+  "/broken.css": () => new Response("nope", { status: 500 }),
+  "/never.css": () => new Promise<Response>(() => {}),
   "/concurrent": () =>
     html(`<button onclick="this.dataset.clicked = 'yes'">Concurrent button</button><input placeholder="Concurrent field">`),
   "/cors": () =>
@@ -254,7 +283,7 @@ const pages: Record<string, () => Response | Promise<Response>> = {
   "/error": () => html(`<h1>Error page</h1><script>throw new Error("the page broke");</script>`),
 };
 
-const otherPages: Record<string, () => Response> = {
+const otherPages: Record<string, () => Response | Promise<Response>> = {
   "/cross.png": () => new Response(asset("red.png"), { headers: { "content-type": "image/png" } }),
   "/redirect.png": () => Response.redirect(`http://127.0.0.1:${port + 1}/real.png`, 302),
   "/changing.png": () =>
@@ -265,6 +294,12 @@ const otherPages: Record<string, () => Response> = {
     new Response(asset("red.png"), { headers: { "content-type": "image/png", "cache-control": "no-store" } }),
   "/earlier.png": () => new Response(asset("red.png"), { headers: { "content-type": "image/png" } }),
   "/real.png": () => new Response(asset("blue.png"), { headers: { "content-type": "image/png" } }),
+  "/late.css": async () => {
+    await Bun.sleep(1000);
+    return css(`@font-face { font-family: LateFont; src: url(/late-font.ttf) format("truetype"); }`);
+  },
+  "/late-font.ttf": () =>
+    new Response(asset("cross-font.ttf"), { headers: { "content-type": "font/ttf", "access-control-allow-origin": "*" } }),
   "/cross.css": () =>
     new Response(`@font-face { font-family: "Cross Fixture"; src: url(/cross-font.ttf) format("truetype"); }`, {
       headers: { "content-type": "text/css" },

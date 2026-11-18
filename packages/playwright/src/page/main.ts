@@ -15,7 +15,7 @@ if (!Reflect.has(globalThis, PAGE_HELPERS_GLOBAL)) {
       // Wrap the page's requestAnimationFrame again if Playwright's clock replaced it since.
       installRafProbe();
       switched = [];
-      // A real page: wait only for the fonts it already uses, and load its below-the-fold `loading="lazy"`
+      // A real page: wait for its stylesheets still loading and the fonts it uses (no unused subsets), and load its below-the-fold `loading="lazy"`
       // images, which a test that never scrolls to them leaves unfetched and so out of the archive.
       const options: SettleOptions = { fonts: "used", lazyToEager: true, switched };
       if (stableFrame) return waitForStableFrame({ ...options, ...(budgetMs === null ? {} : { budgetMs }) });

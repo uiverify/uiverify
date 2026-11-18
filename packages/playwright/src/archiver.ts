@@ -38,7 +38,7 @@ const ARCHIVE_RESOURCE_TYPES = new Set(["image", "font", "stylesheet", "media", 
 const MAX_RESOURCE_BYTES = 10 * 1024 * 1024;
 
 /** Longer than the page script's own deadlines add up to (about 4 s for animation and 2 s more after the
- *  images, 3 s each for fonts and images, 1 s for layout), so it only fires when the page couldn't run them
+ *  images, 3 s each for stylesheets still loading, fonts and images, 1 s for layout), so it only fires when the page couldn't run them
  *  at all. */
 const SETTLE_TIMEOUT_MS = 20_000;
 

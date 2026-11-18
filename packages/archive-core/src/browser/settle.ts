@@ -53,8 +53,8 @@ export function allElements(root: ParentNode): Element[] {
  *  that has already mounted and measured wants `fonts: "used"`. */
 export interface SettleOptions {
   /** `"all"` (the default) loads every registered `@font-face` first, as {@link preloadFonts} does. `"used"`
-   *  only waits for the faces the page already requested: loading every declared face would request subsets a
-   *  real page never draws. */
+   *  waits for the stylesheets still arriving, then for the faces the page requests: loading every declared
+   *  face would request subsets a real page never draws. */
   fonts?: "all" | "used";
   /** Switch `loading="lazy"` images to eager (the default), so one below the viewport loads and is archived.
    *  Off when the browser already loads lazy images up front, where the rewrite would gain nothing. */
@@ -63,8 +63,101 @@ export interface SettleOptions {
   switched?: HTMLImageElement[];
 }
 
+/** Stylesheets given up on after the time box, with the `href` they had then, so one that never answers
+ *  costs a single time box per document, not one per snapshot, while a link whose `href` is rewritten later
+ *  is waited on again. */
+const givenUp = new WeakMap<Element, string>();
+
+type StylesheetOwner = HTMLLinkElement | HTMLStyleElement;
+
+/** A link Chrome actually fetches: a disabled one, or one with a non-CSS `type`, never loads. */
+function fetchesStylesheet(link: HTMLLinkElement): boolean {
+  const type = link.type.toLowerCase();
+  const cssType = type === "" || type === "text/css";
+  return link.relList.contains("stylesheet") && !!link.getAttribute("href") && !link.disabled && cssType;
+}
+
+/** `CSSImportRule.href` is the text as written (`"self.css"`), while a sheet's own `href` is absolute. */
+function resolved(href: string, parent: CSSStyleSheet): string {
+  try {
+    return new URL(href, parent.href ?? document.baseURI).href;
+  } catch {
+    return href;
+  }
+}
+
+/** Whether a leading `@import` of `sheet`, at any depth, is still loading. `styleSheet` is `null` only while
+ *  one is, except for an empty, self or cyclic import, which stays `null` for good (`path` holds the sheets
+ *  being walked), and a cross-origin sheet's rules can't be read. */
+function importPending(sheet: CSSStyleSheet, path: ReadonlySet<string>): boolean {
+  let rules: CSSRuleList;
+  try {
+    rules = sheet.cssRules;
+  } catch {
+    return false;
+  }
+  const here = sheet.href ? new Set([...path, sheet.href]) : path;
+  for (const rule of rules) {
+    if (typeof CSSLayerStatementRule !== "undefined" && rule instanceof CSSLayerStatementRule) continue;
+    if (!(rule instanceof CSSImportRule)) break;
+    if (rule.styleSheet) {
+      if (importPending(rule.styleSheet, here)) return true;
+    } else if (rule.href !== "" && !here.has(resolved(rule.href, sheet))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function ownerHref(owner: StylesheetOwner): string {
+  return owner instanceof HTMLLinkElement ? owner.href : "";
+}
+
+function isPending(owner: StylesheetOwner): boolean {
+  if (givenUp.get(owner) === ownerHref(owner)) return false;
+  const sheet = owner.sheet;
+  if (owner instanceof HTMLLinkElement) {
+    // Chrome gives a finished link, a failed one included, a sheet. A browser that leaves a failed one
+    // `null` costs one time box per document: no signal tells a finished link from one still loading.
+    if (sheet === null) return true;
+    // A link whose href was changed keeps its old sheet until the new one arrives.
+    if (sheet.href !== owner.href) return true;
+  }
+  return sheet !== null && importPending(sheet, new Set());
+}
+
+function stylesheetOwners(): StylesheetOwner[] {
+  return allElements(document).filter(
+    (el): el is StylesheetOwner =>
+      (el instanceof HTMLLinkElement && fetchesStylesheet(el)) || el instanceof HTMLStyleElement,
+  );
+}
+
+function whenLoaded(owner: StylesheetOwner): Promise<void> {
+  return new Promise<void>((resolve) => {
+    owner.addEventListener("load", () => resolve(), { once: true });
+    owner.addEventListener("error", () => resolve(), { once: true });
+  });
+}
+
+/** Wait until no stylesheet is still arriving. A finished sheet can start another (one inserted from a load
+ *  handler), so it looks again until a pass finds nothing. */
+async function waitForStylesheets(): Promise<void> {
+  const pendingOwners = () => stylesheetOwners().filter(isPending);
+  const settled = (async () => {
+    for (let pending = pendingOwners(); pending.length; pending = pendingOwners()) {
+      await Promise.all(pending.map(whenLoaded));
+    }
+  })();
+  await cap(settled);
+  for (const owner of stylesheetOwners()) if (isPending(owner)) givenUp.set(owner, ownerHref(owner));
+}
+
 async function waitForUsedFonts(): Promise<void> {
   if (typeof document === "undefined" || !document.fonts) return;
+  await waitForStylesheets();
+  // A face is only requested once layout uses it, and the stylesheet that declares it may just have applied.
+  document.documentElement.getBoundingClientRect();
   const used = document.fonts.ready.then(() =>
     Promise.all(
       Array.from(document.fonts)

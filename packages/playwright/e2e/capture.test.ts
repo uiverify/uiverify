@@ -136,6 +136,33 @@ it("records each snapshot's spec file, relative to the Playwright config", () =>
   expect(sourcePaths.get("capture.spec.ts > passes")).toBe("tests/capture.spec.ts");
 });
 
+describe("a stylesheet that arrives late", () => {
+  const fontUrls = (title: string) => (resourceUrls.get(`late-stylesheet.spec.ts > ${title}`) ?? []).filter((url) => url.endsWith(".ttf"));
+
+  /** Catches a capture taken while a late stylesheet is in flight: its `@font-face` isn't registered and
+   *  nothing has asked for the font, so the archive has no copy and replay draws the fallback. */
+  it("archives the font of a cross-origin stylesheet added after load", () => {
+    expect(fontUrls("cross-origin stylesheet added after load")).toEqual(["https://fonts.test/late.ttf"]);
+  });
+
+  it("archives the font of a stylesheet reached through an @import", () => {
+    expect(fontUrls("stylesheet whose import arrives late")).toEqual(["https://app.test/late-import.ttf"]);
+  });
+
+  /** Catches a theme switch (a link's href rewritten) being taken for a finished sheet: the link keeps its
+   *  old sheet until the new one arrives. */
+  it("archives the font of a link whose href was changed after load", () => {
+    expect(fontUrls("link whose href is changed after load")).toEqual(["https://fonts.test/dark.ttf"]);
+  });
+
+  /** Catches a sheet that fails or never answers holding every snapshot: the cap is paid once, and a failed
+   *  sheet is not waited on at all. */
+  it("waits out a sheet that never answers once, and not at all for a failed one", () => {
+    expect(outcomes.get("failed and never-answering stylesheets cost the cap once")).toBe("expected");
+    expect(outcomes.get("failed stylesheet costs no wait")).toBe("expected");
+  });
+});
+
 describe("the stable frame", () => {
   /** Catches a below-the-fold `loading="lazy"` image the test never scrolled to being left out of the
    *  archive, so it replays as a broken image. */

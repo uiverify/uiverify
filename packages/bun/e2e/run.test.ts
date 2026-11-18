@@ -506,6 +506,33 @@ describe("a test named like a repeat of another", () => {
   }, E2E_TIMEOUT_MS);
 });
 
+describe("a stylesheet that arrives late", () => {
+  let run: Run;
+  beforeAll(async () => {
+    run = await runFixture("late-stylesheet.visual.ts");
+  }, E2E_TIMEOUT_MS);
+
+  test("every test passed, so a sheet that never answered or failed didn't hold a capture past the cap", () => {
+    expect(run.output).not.toContain("(fail)");
+    expect(run.code).toBe(0);
+  });
+
+  /** Catches a capture taken while a late stylesheet is still in flight: its `@font-face` isn't registered and
+   *  nothing has asked for the font, so the archive has no copy and replay draws the fallback. */
+  test("archives the font of a stylesheet added after load, and of one reached through an @import", () => {
+    const fontUrls = (id: string) =>
+      Object.keys(run.snapshots.get(id)?.resources ?? {})
+        .map((url) => new URL(url).pathname)
+        .filter((path) => path.endsWith(".ttf"));
+    expect(fontUrls("late-stylesheet.visual.ts > Late stylesheets > a cross-origin stylesheet added after load, held back 1 s")).toEqual([
+      "/late-font.ttf",
+    ]);
+    expect(fontUrls("late-stylesheet.visual.ts > Late stylesheets > a same-origin stylesheet whose @import is held back 1 s")).toEqual([
+      "/late-import-font.ttf",
+    ]);
+  });
+});
+
 describe("a run that captures nothing", () => {
   /** Catches a visual file with no suite passing as a run to upload. */
   test("fails, saying why", () => {

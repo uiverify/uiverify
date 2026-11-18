@@ -71,7 +71,7 @@ scripts run:
   reduce` is **emulated**, and `prefers-color-scheme` is the suite's `colorScheme` (default `light`);
 - `loading="lazy"` images load up front, and scrollbars are hidden.
 
-Before each snapshot it **waits** up to 3 s for the fonts in use, up to 3 s for every image and CSS
+Before each snapshot it **waits** up to 3 s for stylesheets still loading, up to 3 s for the fonts in use, up to 3 s for every image and CSS
 background, then until nothing on the page moves. Each test starts on a blank page with no routes or init
 scripts, the storage of every origin the previous test touched cleared, no cookies and no history. An
 uncaught page error, an unhandled rejection or a route handler that throws fails the test, so a broken page

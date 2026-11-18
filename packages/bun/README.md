@@ -102,7 +102,7 @@ fixtures must not import modules that need a loader or `define` registered there
 The page clock starts at the suite's `now` (default `2026-01-01T00:00:00Z`, read as UTC unless it names an
 offset) and runs until `page.pauseClock()`; `Math.random` is seeded; animations and transitions finish
 instantly; the timezone is UTC, the locale en-US, motion reduced, and the colour scheme the suite's
-`colorScheme`. Before a snapshot it waits up to 3 s for the fonts in use, then up to 3 s for every image and CSS
+`colorScheme`. Before a snapshot it waits up to 3 s for stylesheets still loading and up to 3 s for the fonts in use, then up to 3 s for every image and CSS
 background to load, then for the page to stop moving: a page whose elements keep moving (a `requestAnimationFrame` loop,
 a Lottie) fails after 10 s. A canvas that keeps redrawing in place isn't detected and is captured mid-frame.
 Stop either while UI Verify captures, by checking an `isUIVerify()` helper you write yourself. The SDK's page

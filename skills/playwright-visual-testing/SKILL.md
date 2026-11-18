@@ -25,7 +25,7 @@ determinism surface. Integration is one import:
 
 **What UI Verify handles (don't hand-fix these):** before each snapshot, `@uiverify/playwright` waits for
 the next stable frame: finite `requestAnimationFrame` animations (a chart's line-draw) reach their last
-frame, fonts and images load (`loading="lazy"` images below the fold included), and the page size stops
+frame, stylesheets still loading and their fonts and images load (`loading="lazy"` images below the fold included), and the page size stops
 changing. Then UI Verify re-renders the archived DOM with `prefers-reduced-motion` emulated. So
 pixel-level settling — waiting on `document.fonts.ready`, a finite entry animation, image decode — is
 **not** your job. Your job is narrower: make sure the **content and state** the archive records is the
