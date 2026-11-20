@@ -7,14 +7,15 @@ import {
   branchFromEnv,
   ciWatchCommand,
   collectGitMeta,
-  confirmAncestors,
   deltaFor,
+  forkRunFromCi,
   outputMayBePublic,
   workingTreeChanges,
+  parseCommitParents,
   parseHostFromRemote,
   parseParents,
   parseRepoFromRemote,
-  prHeadShaFromEvent,
+  prHeadShaFromCi,
   prNumberFromEnv,
   remoteRepos,
   reportRemoteRepos,
@@ -127,44 +128,7 @@ describe("git", () => {
   });
 });
 
-// confirmAncestors talks to a real local git repo (it IS the git seam — no point faking git here).
-describe("confirmAncestors (real git)", () => {
-  let dir: string;
-  const sha = (rev: string): string => execFileSync("git", ["rev-parse", rev], { cwd: dir, encoding: "utf8" }).trim();
-  const git = (...args: string[]): void => {
-    execFileSync("git", args, { cwd: dir, stdio: "ignore" });
-  };
-
-  beforeAll(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), "uiverify-git-test-"));
-    git("init", "-q", "-b", "main");
-    git("config", "user.email", "t@t.t");
-    git("config", "user.name", "t");
-    git("commit", "--allow-empty", "-q", "-m", "c0"); // fork base
-    git("checkout", "-q", "-b", "feat");
-    git("commit", "--allow-empty", "-q", "-m", "feat1"); // feature head (behind main below)
-    // main advances past the fork point with a commit the feature branch does NOT contain.
-    git("checkout", "-q", "main");
-    git("commit", "--allow-empty", "-q", "-m", "main-drift");
-    git("checkout", "-q", "feat");
-  });
-  afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
-
-  it("keeps candidates in the head's ancestry, drops commits the head doesn't contain", () => {
-    const base = sha("main~1"); // c0 — the fork point, an ancestor of feat
-    const featHead = sha("feat");
-    const drift = sha("main"); // main-drift — NOT in feat's ancestry
-    const got = confirmAncestors([base, drift, "0".repeat(40)], featHead, dir);
-    expect(got).toContain(base); // fork point: a true ancestor
-    expect(got).not.toContain(drift); // default-branch drift: rejected
-    expect(got).not.toContain("0".repeat(40)); // unknown commit: rejected
-  });
-
-  it("returns [] for empty candidates without touching git", () => {
-    expect(confirmAncestors([], sha("feat"), dir)).toEqual([]);
-  });
-});
-
+// deltaFor talks to a real local git repo (it IS the git seam — no point faking git here).
 describe("deltaFor (real git)", () => {
   let dir: string;
   let base: string;
@@ -439,11 +403,13 @@ describe("deltaFor without a checkout (real git)", () => {
   });
 });
 
-describe("prHeadShaFromEvent", () => {
+describe("prHeadShaFromCi on GitHub Actions", () => {
   const H = "a".repeat(40);
   const M = "b".repeat(40);
   const env = { GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "pull_request", GITHUB_SHA: M };
   const event = { pull_request: { number: 7, head: { sha: H } } };
+  const prHeadShaFromEvent = (e: NodeJS.ProcessEnv, head: string, pr: number | null, read: () => unknown): string | null =>
+    prHeadShaFromCi(e, head, [], pr, read);
 
   it("reads the payload only on a GitHub Actions pull_request or pull_request_target run", () => {
     let reads = 0;
@@ -466,6 +432,114 @@ describe("prHeadShaFromEvent", () => {
     expect(at(42)).toBeNull();
     expect(prHeadShaFromEvent(env, M, 7, () => ({ pull_request: { number: 7 } }))).toBeNull();
     expect(prHeadShaFromEvent(env, M, 7, () => null)).toBeNull();
+  });
+});
+
+describe("forkRunFromCi", () => {
+  const env = { GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "workflow_run" };
+  const created = "2026-11-20T10:00:00Z";
+  const payload = (run: Record<string, unknown> = {}, repository: unknown = { full_name: "acme/web" }) => ({
+    workflow_run: { event: "pull_request", created_at: created, head_repository: { full_name: "someone/web" }, ...run },
+    repository,
+  });
+
+  /** Would catch: the merge ref read for a `workflow_run` upload whose capture didn't render GitHub's test merge
+   *  (a same-repo run, a `pull_request_target` run, a push), lending its build a base it never rendered. */
+  it("names a fork's pull_request run, and nothing else", () => {
+    expect(forkRunFromCi(env, 7, () => payload())).toEqual({ pr: 7, createdAt: new Date(created) });
+    expect(forkRunFromCi(env, 7, () => payload({ head_repository: { full_name: "acme/web" } }))).toBeNull();
+    expect(forkRunFromCi(env, 7, () => payload({ event: "pull_request_target" }))).toBeNull();
+    expect(forkRunFromCi(env, 7, () => payload({ event: "push" }))).toBeNull();
+    expect(forkRunFromCi(env, 7, () => payload({ head_repository: null }))).toBeNull();
+    expect(forkRunFromCi(env, 7, () => payload({}, null))).toBeNull();
+  });
+
+  /** Would catch: a missing or unreadable run time taken as "now", which would pass any merge GitHub remade. */
+  it("names nothing without the run's creation time", () => {
+    expect(forkRunFromCi(env, 7, () => payload({ created_at: undefined }))).toBeNull();
+    expect(forkRunFromCi(env, 7, () => payload({ created_at: "yesterday" }))).toBeNull();
+    expect(forkRunFromCi(env, 7, () => payload({ created_at: 1_800_000_000 }))).toBeNull();
+  });
+
+  it("reads the payload only on a workflow_run upload for a pull request", () => {
+    let reads = 0;
+    const read = (): unknown => {
+      reads += 1;
+      return payload();
+    };
+    expect(forkRunFromCi({ ...env, GITHUB_EVENT_NAME: "pull_request" }, 7, read)).toBeNull();
+    expect(forkRunFromCi(env, null, read)).toBeNull();
+    expect(reads).toBe(0);
+    expect(forkRunFromCi(env, 7, () => null)).toBeNull();
+  });
+});
+
+describe("prHeadShaFromCi on Bitbucket and GitLab", () => {
+  const C = "c".repeat(40);
+  const T = "d".repeat(40);
+  const MERGE = "e".repeat(40);
+  const CHILD = "f".repeat(40);
+  const bitbucket = { BITBUCKET_PR_ID: "12", BITBUCKET_COMMIT: C };
+  const gitlab = { GITLAB_CI: "true", CI_MERGE_REQUEST_EVENT_TYPE: "merged_result", CI_MERGE_REQUEST_SOURCE_BRANCH_SHA: C };
+  const never = (): unknown => {
+    throw new Error("only GitHub Actions has an event payload");
+  };
+
+  /** Would catch: the proof dropped (any env-named commit sent), a single-parent child of C accepted as proof
+   *  (a job that commits on top renders code C never had), or the COMMIT_SHA override check skipped. */
+  it.each([
+    { name: "Bitbucket, HEAD is the PR commit", env: bitbucket, head: C, parents: [T], want: C },
+    { name: "Bitbucket, HEAD is a merge of it", env: bitbucket, head: MERGE, parents: [T, C], want: C },
+    { name: "Bitbucket, HEAD is a plain child of it", env: bitbucket, head: CHILD, parents: [C], want: null },
+    { name: "Bitbucket, a merge without it", env: bitbucket, head: MERGE, parents: [T, CHILD], want: null },
+    { name: "Bitbucket off a PR", env: { BITBUCKET_COMMIT: C }, head: C, parents: [T], want: null },
+    { name: "GitLab merged result", env: gitlab, head: MERGE, parents: [T, C], want: C },
+    { name: "GitLab merge train", env: { ...gitlab, CI_MERGE_REQUEST_EVENT_TYPE: "merge_train" }, head: MERGE, parents: [T, C], want: C },
+    { name: "GitLab detached MR pipeline", env: { ...gitlab, CI_MERGE_REQUEST_EVENT_TYPE: "detached" }, head: C, parents: [T], want: null },
+    { name: "GitLab, a plain child", env: gitlab, head: CHILD, parents: [C], want: null },
+    { name: "GitLab vars outside GitLab CI", env: { ...gitlab, GITLAB_CI: undefined }, head: C, parents: [T], want: null },
+    { name: "a COMMIT_SHA override that isn't HEAD", env: { ...bitbucket, COMMIT_SHA: C }, head: MERGE, parents: [T, C], want: null },
+    { name: "a short commit", env: { ...bitbucket, BITBUCKET_COMMIT: "c".repeat(12) }, head: "c".repeat(12), parents: [], want: null },
+    { name: "no HEAD", env: bitbucket, head: null, parents: [], want: null },
+  ])("$name", ({ env, head, parents, want }) => {
+    expect(prHeadShaFromCi(env, head, parents, 12, never)).toBe(want);
+  });
+
+  it("parseCommitParents reads the parent lines of the header only", () => {
+    const object = `tree ${T}\nparent ${C}\nparent ${MERGE}\nauthor a <a> 1 +0000\n\nparent ${CHILD} in the message\n`;
+    expect(parseCommitParents(object)).toEqual([C, MERGE]);
+    expect(parseCommitParents(`tree ${T}\nauthor a <a> 1 +0000\n\nroot`)).toEqual([]);
+  });
+});
+
+/** Would catch: the parents read with `git log --format=%P`, which a depth-1 checkout leaves empty, so a
+ *  CI merge on a shallow Bitbucket checkout could never prove its PR head. */
+describe("collectGitMeta prHeadSha on a depth-1 merge checkout (real git)", () => {
+  let root: string;
+  beforeAll(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "uiverify-bbmerge-"));
+    const g = (cwd: string, ...args: string[]): string => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+    fs.mkdirSync(path.join(root, "src"));
+    const src = path.join(root, "src");
+    g(src, "init", "-q", "-b", "main");
+    g(src, "config", "user.email", "t@t.t");
+    g(src, "config", "user.name", "t");
+    g(src, "commit", "--allow-empty", "-q", "-m", "base");
+    g(src, "checkout", "-q", "-b", "feat");
+    g(src, "commit", "--allow-empty", "-q", "-m", "pr head");
+    g(src, "checkout", "-q", "main");
+    g(src, "commit", "--allow-empty", "-q", "-m", "target");
+    g(src, "merge", "-q", "--no-ff", "-m", "ci merge", "feat");
+    g(root, "clone", "-q", "--depth=1", `file://${src}`, "co");
+  });
+  afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  it("proves the PR head from the merge's own commit object", () => {
+    const co = path.join(root, "co");
+    const head = execFileSync("git", ["rev-parse", "feat"], { cwd: path.join(root, "src"), encoding: "utf8" }).trim();
+    const meta = collectGitMeta(co, { BITBUCKET_PR_ID: "3", BITBUCKET_COMMIT: head, BITBUCKET_BRANCH: "feat" });
+    expect(meta.parentShas).toEqual([]);
+    expect(meta.prHeadSha).toBe(head);
   });
 });
 

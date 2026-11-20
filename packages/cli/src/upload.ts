@@ -1,9 +1,10 @@
 import os from "node:os";
 import path from "node:path";
 import type { ArchiveProducer } from "./bundle";
-import type { CaptureShape, IngestClient, RegisteredProject } from "./client";
+import type { CaptureShape, IngestClient, RegisteredProject, UploadedBody } from "./client";
 import type { UploadProgress } from "./failure-report";
-import { type ClientDeltaEntry, type GitMeta, outputMayBePublic } from "./git";
+import { type ClientDeltaEntry, type ForkRunFacts, type GitMeta, outputMayBePublic } from "./git";
+import { type ForkRun, type ForkRunMissed, type HistoryOutcome, type HistoryStepInput, fitUploadedBody } from "./history";
 import { type BundleGraph, type SkipMode, planSkip } from "./skip";
 import { formatOpenComments, formatVerdictSummary } from "./summary";
 
@@ -55,11 +56,14 @@ export interface UploadOptions {
 export interface UploadDeps {
   client: IngestClient;
   gitMeta: () => GitMeta;
-  /** Filter the server's candidate baseline commits to the head's true local git ancestors —
+  /** Read the build commit's git history against the server's offered baseline commits (`historyStep`) —
    *  injected so the upload flow is unit-tested without a real repo. */
-  confirmAncestors: (candidates: string[], headSha: string) => string[];
+  history: (input: HistoryStepInput) => Promise<HistoryOutcome>;
+  /** The test merge a fork run's PR names now, or why it names none (`forkRunMerge`), read before register reads
+   *  the PR. */
+  forkRunMerge: (run: ForkRunFacts) => Promise<ForkRun | ForkRunMissed>;
   /** The files where the checkout differs from the head commit (`workingTreeChanges`), null when git can't
-   *  say. Injected like `confirmAncestors` so the upload flow is unit-tested without a real repo. */
+   *  say. Injected like `history` so the upload flow is unit-tested without a real repo. */
   workingTreeChanges: (headSha: string) => string[] | null;
   /** Compute the skip-unchanged changed-file delta for the server's offered `deltaBases` with local git,
    *  given the checkout's uncommitted list. */
@@ -161,8 +165,13 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
     }
   }
 
+  // Before register: its read of the PR can make GitHub remake the PR's test merge on the base's current tip.
+  const forkRun = meta.forkRun && !opts.preview ? await deps.forkRunMerge(meta.forkRun) : null;
+
   deps.log("Registering build…");
   progress.stage = "register";
+  // A preview never becomes a push's record of the branch.
+  const push = opts.preview ? undefined : meta.push;
   const reg = await deps.client.register({
     commitSha: meta.commitSha,
     branch: meta.branch,
@@ -186,6 +195,7 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
     sdkVersion: producer?.version,
     bundleContentHash,
     ci: outputMayBePublic(process.env),
+    push,
   });
 
   // The server skipped the rebuild of an already-passed commit: this exact commit already has a green
@@ -199,7 +209,7 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
     deps.log(`Skipping rebuild of already-passed build #${reg.buildNumber} (same commit, nothing changed): ${buildUrl}`);
     return { buildId: reg.buildId, status: "passed" };
   }
-  const { buildId, uploadUrl, baselineCommits, deltaBases, warnings, project } = reg;
+  const { buildId, uploadUrl, baselineCommits, fetchHistory, deltaBases, warnings, project } = reg;
   if (project) {
     progress.project = `${project.team}/${project.slug}`;
     deps.log(projectLine(project));
@@ -210,10 +220,17 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
   // Printed before anything renders, so an agent starting work on the branch reads its open notes first.
   for (const line of formatOpenComments(reg.openComments)) deps.log(line);
 
-  // Confirm which candidate baselines are true git ancestors of this head, locally — so a branch
-  // behind the default branch doesn't inherit the default branch's drifted baseline. Empty for a
-  // shallow checkout; the server then resolves the legacy way (and CI should use fetch-depth: 0).
-  const ancestorShas = deps.confirmAncestors(baselineCommits, meta.commitSha);
+  // Which candidate baselines this commit contains, so a branch behind the default branch doesn't inherit
+  // the default branch's drifted baseline. `ancestorShas` stays empty for a shallow checkout (the server then
+  // resolves the legacy way, and CI should use fetch-depth: 0); a history fetched for it is sent apart.
+  const history = await deps.history({
+    offered: baselineCommits,
+    commit: meta.commitSha,
+    fetchHistory,
+    pushBefore: push && push.forced === null ? push.before : null,
+    forkRun,
+  });
+  const { ancestorShas } = history;
   if (baselineCommits.length > 0) {
     deps.log(`Confirmed ${ancestorShas.length} / ${baselineCommits.length} baseline commits in git ancestry`);
   }
@@ -238,7 +255,15 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
   deps.log(`Registered build ${buildId} — uploading bundle…`);
   progress.stage = "upload";
   await deps.client.upload(uploadUrl, tgz);
-  await deps.client.markUploaded(buildId, ancestorShas, changedFiles);
+  const body = fitUploadedBody({
+    ancestorShas,
+    ...(changedFiles ? { changedFiles } : {}),
+    ...(history.history ? { history: history.history } : {}),
+    ...(history.historyRead ? { historyRead: history.historyRead } : {}),
+    ...(history.pushForced !== undefined ? { push: { forced: history.pushForced } } : {}),
+  });
+  for (const line of historyLines(body, history)) deps.log(line);
+  await deps.client.markUploaded(buildId, body);
   progress.stage = "done";
   const buildUrl = opts.appUrl ? `${opts.appUrl.replace(/\/$/, "")}/builds/${buildId}` : buildId;
   deps.log(`Build uploaded: ${buildUrl}`);
@@ -292,6 +317,27 @@ export async function runUpload(opts: UploadOptions, deps: UploadDeps): Promise<
     await sleep(POLL_INTERVAL_MS);
   }
   throw new Error(`timed out waiting for build ${buildId}`);
+}
+
+/** What the log says about the history read beyond the confirmed count, which is what today's resolver uses. */
+export function historyLines(body: UploadedBody, outcome: HistoryOutcome): string[] {
+  const sent = body.history;
+  if (!sent) return [];
+  if ("unavailable" in sent) {
+    const advice = outcome.shallow ? " Set `fetch-depth: 0` on your checkout so baselines follow your branch's commits." : "";
+    return [`Couldn't record this build's git history for baseline matching (${sent.unavailable}).${advice}`];
+  }
+  if (outcome.runBase && "missed" in outcome.runBase) {
+    return [
+      `Couldn't tell which base this fork pull request's capture was built on (${outcome.runBase.missed}), so its baselines are picked from its head's history`,
+    ];
+  }
+  if (outcome.runBase && outcome.fetchedCommits !== undefined) {
+    return [`Recorded ${outcome.fetchedCommits} commits of git history for baseline matching, with the base this fork pull request's capture was built on`];
+  }
+  if (outcome.fetchedCommits === undefined) return [];
+  const how = sent.truncated ? "fetched the newest part into a temporary repository" : "fetched into a temporary repository";
+  return [`Recorded ${outcome.fetchedCommits} commits of git history for baseline matching (shallow checkout: ${how})`];
 }
 
 /** What to print for a blocked build. The server's `message` is already worded for the user and ends by

@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import type { PushFacts } from "./client";
+import { localPushForced, pushFactsFromCi } from "./push";
 
 /**
  * Git metadata for a build. The parsing helpers are pure (unit-tested); `collectGitMeta` runs git +
@@ -20,23 +22,33 @@ export interface GitMeta {
    *  name. `null` when it can't be told. The server decides whether to treat the repo as GitHub's. */
   repoHost: string | null;
   /** The PR head commit the checked-out tree was built from, when it can be proven (see
-   *  {@link prHeadShaFromEvent}); the server posts the PR's check there. Null otherwise. */
+   *  {@link prHeadShaFromCi}); the server posts the PR's check there. Null otherwise. */
   prHeadSha: string | null;
+  /** The facts of the CI push this build is the tip of, when CI env proves them (`pushFactsFromCi`). */
+  push?: PushFacts;
+  /** The fork pull request run whose capture this `workflow_run` upload carries (`forkRunFromCi`). */
+  forkRun?: ForkRunFacts;
   /** `owner/repo` of the `upstream` remote, when the checkout has one (a fork's checkout names the repo it
    *  forked from there). Only the remote, never CI env: the server tries it for a login upload when
    *  `repoFullName` matches no project. */
   upstreamRepoFullName?: string;
 }
 
+/** The environment of every git command run in the customer's checkout. On a partial clone git would
+ *  otherwise fetch a missing object on demand, writing a pack into their `.git` (and spending the network). */
+export function checkoutGitEnv(): NodeJS.ProcessEnv {
+  return { ...process.env, GIT_NO_LAZY_FETCH: "1" };
+}
+
 function git(args: string[], cwd: string): string {
-  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  return execFileSync("git", args, { cwd, encoding: "utf8", env: checkoutGitEnv() }).trim();
 }
 
 /** The repository's top-level directory, or null outside a git checkout. Quiet: git's own error never
  *  reaches the user's output. */
 export function repoRoot(cwd: string): string | null {
   try {
-    return execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env: checkoutGitEnv() }).trim();
   } catch {
     return null;
   }
@@ -219,7 +231,7 @@ export function remoteRepos(
 export function reportRemoteRepos(cwd: string, env: NodeJS.ProcessEnv): RemoteRepos {
   const { repoFullName, upstreamRepoFullName } = remoteRepos(env, (args) => {
     try {
-      return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 1000 }).trim();
+      return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 1000, env: checkoutGitEnv() }).trim();
     } catch {
       return null;
     }
@@ -227,29 +239,18 @@ export function reportRemoteRepos(cwd: string, env: NodeJS.ProcessEnv): RemoteRe
   return { repoFullName, upstreamRepoFullName };
 }
 
-function isShallowRepo(cwd: string): boolean {
+export function isShallowRepo(cwd: string): boolean {
   return gitOrNull(["rev-parse", "--is-shallow-repository"], cwd) === "true";
 }
 
-/**
- * The true git ancestors of `headSha` among `candidates`, computed from the LOCAL repo — a
- * client-side baseline model. The server returns the (sparse) commits a baseline could come from;
- * here we keep only those the head actually descends from, so a branch that is merely *behind*
- * the default branch never inherits a baseline blessed on a commit it doesn't contain.
- *
- * Returns `[]` for a **shallow** checkout — `git rev-list` can't see history there, so reporting "no
- * confirmed ancestors" would wrongly reject every real ancestor; the server instead falls back to its
- * unconditional inheritance (the safe pre-gate behaviour). Run CI with full history (`fetch-depth: 0`)
- * to get the gated, over-flag-free resolution. A candidate not present locally is simply absent from
- * `rev-list`, so it's treated as a non-ancestor — correct (it can't be an ancestor if it's not here).
- */
-export function confirmAncestors(candidates: string[], headSha: string, cwd: string): string[] {
-  if (candidates.length === 0) return [];
-  if (isShallowRepo(cwd)) return [];
-  const out = gitOrNull(["rev-list", headSha], cwd);
-  if (out === null) return [];
-  const reachable = new Set(out.split("\n").map((s) => s.trim()).filter(Boolean));
-  return candidates.filter((c) => reachable.has(c));
+/** The parents a commit object lists (`git cat-file -p` output), which a depth-1 checkout still has where
+ *  `git log --format=%P` shows none. */
+export function parseCommitParents(commitObject: string): string[] {
+  const header = commitObject.split("\n\n", 1)[0] ?? "";
+  return header
+    .split("\n")
+    .map((line) => /^parent ([0-9a-f]{40,64})$/.exec(line)?.[1])
+    .filter((sha): sha is string => sha !== undefined);
 }
 
 /** One base commit's changed-file delta against the head, as sent on the uploaded call. A
@@ -284,7 +285,7 @@ function gitDeltaOrNull(args: string[], cwd: string, timeoutMs: number): string 
       encoding: "utf8",
       timeout: Math.max(1, timeoutMs),
       maxBuffer: DELTA_MAXBUFFER,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_NO_LAZY_FETCH: "1" },
+      env: { ...checkoutGitEnv(), GIT_TERMINAL_PROMPT: "0" },
     });
   } catch {
     return null;
@@ -488,28 +489,57 @@ export function deltaFor(
   return out;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
 }
 
-const FULL_SHA = /^[0-9a-f]{40}$/;
+export const FULL_SHA = /^[0-9a-f]{40}$/;
 
 /**
- * The PR head commit (`pull_request.head.sha` of the GitHub Actions event payload), but only when the
- * checkout at `head` (the real `git rev-parse HEAD`) is provably built from it: `head` is the PR head
- * itself, or, on `pull_request`, the event's own test merge commit (`GITHUB_SHA`), which GitHub built
- * from that head when it wrote the payload. Anything else is null, because naming a head the tree wasn't
- * built from would put this build's verdict on code it never rendered: a `pull_request_target` default
- * checkout (the base tip), a ref checked out by name that has since moved past the payload, a
- * `COMMIT_SHA` override that is not the checked-out commit, or a payload for another PR. `readEvent` is only called once the env qualifies.
+ * The PR head commit the checkout at `head` (the real `git rev-parse HEAD`) was provably built from, from
+ * whichever CI names one. Naming a head the tree wasn't built from would put this build's verdict on code it
+ * never rendered, so anything unproven is null, as is a `COMMIT_SHA` override that is not the checked-out
+ * commit. `readEvent` is only called once the env qualifies.
+ *
+ * GitHub Actions: see {@link githubPrHead}. Bitbucket PR pipelines name the source commit
+ * (`BITBUCKET_COMMIT`), GitLab merged-results and merge-train pipelines `CI_MERGE_REQUEST_SOURCE_BRANCH_SHA`;
+ * that commit C is proven when HEAD is C, or HEAD is a merge (two or more `headParents`) with C among its
+ * parents: the CI's merge of C with its target. A single-parent child of C is not proof, since a job that
+ * commits on top before uploading renders code C never had.
  */
-export function prHeadShaFromEvent(
+export function prHeadShaFromCi(
+  env: NodeJS.ProcessEnv,
+  head: string | null,
+  headParents: string[],
+  prNumber: number | null,
+  readEvent: () => unknown,
+): string | null {
+  if (env.GITHUB_ACTIONS === "true") return githubPrHead(env, head, prNumber, readEvent);
+  if (head === null) return null;
+  if (env.COMMIT_SHA && env.COMMIT_SHA !== head) return null;
+  const candidate = env.BITBUCKET_PR_ID
+    ? env.BITBUCKET_COMMIT
+    : env.GITLAB_CI === "true" &&
+        (env.CI_MERGE_REQUEST_EVENT_TYPE === "merged_result" || env.CI_MERGE_REQUEST_EVENT_TYPE === "merge_train")
+      ? env.CI_MERGE_REQUEST_SOURCE_BRANCH_SHA
+      : undefined;
+  if (!candidate || !FULL_SHA.test(candidate)) return null;
+  const proven = head === candidate || (headParents.length >= 2 && headParents.includes(candidate));
+  return proven ? candidate : null;
+}
+
+/**
+ * `pull_request.head.sha` of the GitHub Actions event payload, when `head` is the PR head itself, or, on
+ * `pull_request`, the event's own test merge commit (`GITHUB_SHA`), which GitHub built from that head when
+ * it wrote the payload. Not a `pull_request_target` default checkout (the base tip), a ref checked out by
+ * name that has since moved past the payload, or a payload for another PR.
+ */
+function githubPrHead(
   env: NodeJS.ProcessEnv,
   head: string | null,
   prNumber: number | null,
   readEvent: () => unknown,
 ): string | null {
-  if (env.GITHUB_ACTIONS !== "true") return null;
   const eventName = env.GITHUB_EVENT_NAME;
   if (eventName !== "pull_request" && eventName !== "pull_request_target") return null;
   if (head === null || prNumber === null) return null;
@@ -522,6 +552,31 @@ export function prHeadShaFromEvent(
   if (head === sha) return sha;
   if (eventName === "pull_request" && head === env.GITHUB_SHA) return sha;
   return null;
+}
+
+/** A fork pull request's `pull_request` run, as the `workflow_run` upload that carries its capture sees it. */
+export interface ForkRunFacts {
+  pr: number;
+  /** When GitHub created the run (`workflow_run.created_at`), which it keeps on a re-run. */
+  createdAt: Date;
+}
+
+/**
+ * The run a `workflow_run` upload's capture came from, when it is a fork's `pull_request` run (the /docs fork
+ * recipe): that run rendered GitHub's test merge of the PR, not the head the upload is for. Null for any other
+ * upload, or when the payload doesn't say.
+ */
+export function forkRunFromCi(env: NodeJS.ProcessEnv, prNumber: number | null, readEvent: () => unknown): ForkRunFacts | null {
+  if (env.GITHUB_EVENT_NAME !== "workflow_run" || prNumber === null) return null;
+  const event = readEvent();
+  const run = isRecord(event) ? event.workflow_run : null;
+  const repository = isRecord(event) ? event.repository : null;
+  if (!isRecord(run) || !isRecord(repository) || run.event !== "pull_request") return null;
+  const head = isRecord(run.head_repository) ? run.head_repository.full_name : null;
+  if (typeof head !== "string" || typeof repository.full_name !== "string" || head === repository.full_name) return null;
+  const createdAt = typeof run.created_at === "string" ? new Date(run.created_at) : null;
+  if (createdAt === null || Number.isNaN(createdAt.getTime())) return null;
+  return { pr: prNumber, createdAt };
 }
 
 function readJsonFile(file: string | undefined): unknown {
@@ -539,12 +594,19 @@ export function collectGitMeta(cwd: string, env: NodeJS.ProcessEnv = process.env
   const head = env.COMMIT_SHA ? gitOrNull(["rev-parse", "HEAD"], cwd) : commitSha;
   const headBranch = git(["rev-parse", "--abbrev-ref", "HEAD"], cwd);
   const prNumber = prNumberFromEnv(env);
+  const branch = branchFromEnv(env, headBranch);
+  const headParents = head === null ? [] : parseCommitParents(gitOrNull(["cat-file", "-p", head], cwd) ?? "");
+  const readEvent = (): unknown => readJsonFile(env.GITHUB_EVENT_PATH);
+  const push = pushFactsFromCi(env, { branch, commitSha, head }, readEvent, (before) => localPushForced(cwd, before, commitSha));
+  const forkRun = forkRunFromCi(env, prNumber, readEvent);
   return {
     commitSha,
-    branch: branchFromEnv(env, headBranch),
+    branch,
     prNumber,
     parentShas: parseParents(git(["log", "-1", "--format=%P"], cwd)),
-    prHeadSha: prHeadShaFromEvent(env, head, prNumber, () => readJsonFile(env.GITHUB_EVENT_PATH)),
+    prHeadSha: prHeadShaFromCi(env, head, headParents, prNumber, readEvent),
+    ...(push ? { push } : {}),
+    ...(forkRun ? { forkRun } : {}),
     ...remoteRepos(env, (args) => gitOrNull(args, cwd), resolveSshHostAlias),
   };
 }

@@ -40,6 +40,7 @@ describe("httpIngestClient retries", () => {
       buildId: "b1",
       uploadUrl: "http://s3/b1",
       baselineCommits: [],
+      fetchHistory: false,
       deltaBases: [],
       warnings: [],
     });
@@ -68,6 +69,49 @@ describe("httpIngestClient retries", () => {
     const client = httpIngestClient("http://cp", keyCredential("key"));
     await expect(client.register(body)).rejects.toThrow("422");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("httpIngestClient history fields", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const A = "a".repeat(40);
+  const B = "b".repeat(40);
+
+  /** Would catch: `fetchHistory` dropped by the response schema, so a shallow checkout the server asked to
+   *  fetch never does; or an unreadable value failing the whole register. */
+  it("reads fetchHistory, false when absent or unreadable, and keeps the offer's order", async () => {
+    const at = async (extra: Record<string, unknown>) => {
+      stubFetch([ok({ buildId: "b1", uploadUrl: "u", baselineCommits: [B, A], ...extra })]);
+      return httpIngestClient("http://cp", keyCredential("key")).register(body);
+    };
+    const asked = await at({ fetchHistory: true });
+    expect(asked.outcome === "upload" && asked.fetchHistory).toBe(true);
+    expect(asked.outcome === "upload" && asked.baselineCommits).toEqual([B, A]);
+    const absent = await at({});
+    expect(absent.outcome === "upload" && absent.fetchHistory).toBe(false);
+    const garbled = await at({ fetchHistory: "yes" });
+    expect(garbled.outcome === "upload" && garbled.fetchHistory).toBe(false);
+  });
+
+  /** Would catch: the uploaded call rebuilding its body from `ancestorShas` + `changedFiles` and dropping the
+   *  history fields, or the register body losing `push`. */
+  it("sends push at register and the history fields at upload as given", async () => {
+    const fetchMock = stubFetch([ok({ buildId: "b1", uploadUrl: "u" }), ok({})]);
+    const client = httpIngestClient("http://cp", keyCredential("key"));
+    await client.register({ ...body, push: { before: A, forced: null, created: false } });
+    const uploaded = {
+      ancestorShas: [A],
+      history: { shas: [B, A], links: [[1], []], truncated: false },
+      historyRead: { mode: "local" as const, ms: 12, fetchedBytes: null },
+      push: { forced: true },
+    };
+    await client.markUploaded("b1", uploaded);
+    const sent = (i: number): unknown => {
+      const init = fetchMock.mock.calls[i]?.[1];
+      return JSON.parse(String(init !== null && typeof init === "object" && "body" in init ? init.body : ""));
+    };
+    expect(sent(0)).toMatchObject({ push: { before: A, forced: null, created: false } });
+    expect(sent(1)).toEqual(uploaded);
   });
 });
 
@@ -308,7 +352,7 @@ describe("httpIngestClient credentials", () => {
     const { credential, calls } = fakeLogin(["t1", "t2", "t3", "t4"]);
     const client = httpIngestClient("http://cp", credential);
     await client.register(body);
-    await client.markUploaded("b1", []);
+    await client.markUploaded("b1", { ancestorShas: [] });
     await client.getStatus("b1");
     await client.getStatus("b1");
     expect(calls.token).toBe(4);

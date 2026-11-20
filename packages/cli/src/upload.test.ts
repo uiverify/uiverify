@@ -1,9 +1,11 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
-import type { BuildStatus, IngestClient, OpenComments, RegisterBody } from "./client";
+import type { BuildStatus, IngestClient, OpenComments, RegisterBody, UploadedBody } from "./client";
+import type { HistoryOutcome, HistoryStepInput } from "./history";
 import type { ClientDeltaEntry, GitMeta } from "./git";
 import type { BundleGraph } from "./skip";
 import type { UploadProgress } from "./failure-report";
-import { projectLine, runUpload, type UploadDeps, type UploadOptions } from "./upload";
+import { MAX_HISTORY_LINKS } from "./history";
+import { historyLines, projectLine, runUpload, type UploadDeps, type UploadOptions } from "./upload";
 
 interface CallLog {
   register?: RegisterBody;
@@ -11,6 +13,8 @@ interface CallLog {
   marked?: string;
   markedAncestors?: string[];
   markedChangedFiles?: Record<string, ClientDeltaEntry>;
+  markedBody?: UploadedBody;
+  historyInput?: HistoryStepInput;
   deltaForBases?: string[];
   deltaForUncommitted?: string[] | null;
   statusPolls: number;
@@ -38,6 +42,7 @@ function fakeClient(
   deltaBases: string[] = [],
   skippedBuildNumber?: number,
   openComments?: OpenComments,
+  fetchHistory = false,
 ): IngestClient {
   let i = 0;
   return {
@@ -52,6 +57,7 @@ function fakeClient(
         buildId: "b1",
         uploadUrl: "http://cp/api/storage/bundles/b1.tgz",
         baselineCommits,
+        fetchHistory,
         deltaBases,
         warnings,
         openComments,
@@ -60,10 +66,11 @@ function fakeClient(
     async upload(url, tgz) {
       log.uploaded = { url, tgz };
     },
-    async markUploaded(buildId, ancestorShas, changedFiles) {
+    async markUploaded(buildId, body) {
       log.marked = buildId;
-      log.markedAncestors = ancestorShas;
-      log.markedChangedFiles = changedFiles;
+      log.markedBody = body;
+      log.markedAncestors = body.ancestorShas;
+      log.markedChangedFiles = body.changedFiles;
     },
     async getStatus() {
       log.statusPolls++;
@@ -92,6 +99,10 @@ function deps(
     baselineCommits?: string[];
     warnings?: string[];
     confirm?: (c: string[], head: string) => string[];
+    /** The history step's outcome. Default: today's confirmation through `confirm`, nothing else. */
+    history?: (input: HistoryStepInput) => HistoryOutcome;
+    /** The register response's `fetchHistory`. */
+    fetchHistory?: boolean;
     producer?: { name: string; version: string } | null;
     deltaBases?: string[];
     delta?: (bases: string[], head: string) => Record<string, ClientDeltaEntry>;
@@ -107,6 +118,8 @@ function deps(
     hashThrows?: boolean;
     /** Whether the static dir reads as a built Storybook (default true); false for a capture archive. */
     storybook?: boolean;
+    /** Overrides on the git metadata (e.g. the CI push facts). */
+    meta?: Partial<GitMeta>;
   } = {},
 ): UploadDeps {
   return {
@@ -118,10 +131,16 @@ function deps(
       opts.deltaBases ?? [],
       opts.skippedBuildNumber,
       opts.openComments,
+      opts.fetchHistory,
     ),
-    gitMeta: () => meta,
-    // Default: every candidate is a confirmed ancestor; tests that care override `confirm`.
-    confirmAncestors: opts.confirm ?? ((candidates) => candidates),
+    gitMeta: () => ({ ...meta, ...opts.meta }),
+    // Default: every candidate is a confirmed ancestor; tests that care override `confirm` or `history`.
+    history: async (input) => {
+      log.historyInput = input;
+      if (opts.history) return opts.history(input);
+      return { ancestorShas: (opts.confirm ?? ((c) => c))(input.offered, input.commit), shallow: false };
+    },
+    forkRunMerge: async () => ({ missed: "not a fork run" }),
     workingTreeChanges: () => (opts.uncommitted === undefined ? [] : opts.uncommitted),
     deltaFor: (bases, head, uncommitted) => {
       log.deltaForBases = bases;
@@ -694,6 +713,147 @@ describe("runUpload", () => {
   });
 });
 
+describe("runUpload history and push", () => {
+  const before = "b".repeat(40);
+  const sha = (i: number): string => i.toString(16).padStart(40, "0");
+
+  /** Would catch: a preview check sending the CI push facts, which would record a preview as the push's
+   *  rewrite of the branch. */
+  it("sends the push facts at register, except on a preview check", async () => {
+    const push = { before, forced: false, created: false };
+    const ci: CallLog = { statusPolls: 0 };
+    await runUpload({ staticDir: "/sb" }, deps(ci, ["passed"], undefined, { meta: { push } }));
+    expect(ci.register?.push).toEqual(push);
+    const preview: CallLog = { statusPolls: 0 };
+    await runUpload({ staticDir: "/sb", preview: true, previewTargets: ["*"] }, deps(preview, ["passed"], undefined, { meta: { push } }));
+    expect(preview.register?.push).toBeUndefined();
+  });
+
+  /** Would catch: the register response's `fetchHistory` not reaching the history step (a shallow checkout
+   *  would then never fetch, or fetch unasked), or the step reading something other than the offer. */
+  it("hands the history step the offer, the commit and the server's fetchHistory", async () => {
+    for (const fetchHistory of [true, false]) {
+      const log: CallLog = { statusPolls: 0 };
+      await runUpload({ staticDir: "/sb" }, deps(log, ["passed"], undefined, { baselineCommits: [sha(1)], fetchHistory }));
+      expect(log.historyInput).toEqual({ offered: [sha(1)], commit: meta.commitSha, fetchHistory, pushBefore: null, forkRun: null });
+    }
+  });
+
+  /** Would catch: the fork run's merge ref read after register (whose read of the PR can make GitHub remake it on
+   *  the base's newest tip), not handed to the history step, or read for a preview check. */
+  it("reads a fork run's merge ref before register and hands it to the history step", async () => {
+    const forkRun = { pr: 9, createdAt: new Date("2026-11-20T10:00:00Z") };
+    const merged = { mergeSha: sha(7), createdAt: forkRun.createdAt };
+    for (const preview of [false, true]) {
+      const log: CallLog = { statusPolls: 0 };
+      const order: string[] = [];
+      const d = deps(log, ["passed"], undefined, { baselineCommits: [sha(1)], fetchHistory: true, meta: { forkRun } });
+      const register = d.client.register.bind(d.client);
+      d.client = { ...d.client, register: async (body) => (order.push("register"), register(body)) };
+      d.forkRunMerge = async (run) => (order.push(`merge ${run.pr}`), merged);
+      const opts: UploadOptions = preview ? { staticDir: "/sb", preview: true, previewTargets: ["*"] } : { staticDir: "/sb" };
+      await runUpload(opts, d);
+      expect(order).toEqual(preview ? ["register"] : ["merge 9", "register"]);
+      expect(log.historyInput?.forkRun).toEqual(preview ? null : merged);
+    }
+  });
+
+  /** Would catch: asking the history step to decide a push's `forced` that register already decided, or for
+   *  a preview, which sends no push at all. */
+  it("asks the history step about the replaced tip only when register left forced undecided", async () => {
+    const pushBefore = async (forced: boolean | null, preview = false): Promise<string | null | undefined> => {
+      const log: CallLog = { statusPolls: 0 };
+      await runUpload(
+        { staticDir: "/sb", preview, previewTargets: preview ? ["*"] : undefined },
+        deps(log, ["passed"], undefined, { meta: { push: { before, forced, created: false } } }),
+      );
+      return log.historyInput?.pushBefore;
+    };
+    expect(await pushBefore(null)).toBe(before);
+    expect(await pushBefore(false)).toBeNull();
+    expect(await pushBefore(true)).toBeNull();
+    expect(await pushBefore(null, true)).toBeNull();
+  });
+
+  /** Would catch: the history, its read stats or a decided `forced` dropped on the way to markUploaded. */
+  it("sends the read history, its stats and a decided forced with the upload", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    const history = { shas: [sha(1)], links: [[]], truncated: false };
+    const historyRead = { mode: "local" as const, ms: 12, fetchedBytes: null };
+    await runUpload(
+      { staticDir: "/sb" },
+      deps(log, ["passed"], undefined, {
+        baselineCommits: [sha(1)],
+        history: () => ({ ancestorShas: [sha(1)], history, historyRead, pushForced: true, shallow: false }),
+      }),
+    );
+    expect(log.markedBody).toEqual({ ancestorShas: [sha(1)], history, historyRead, push: { forced: true } });
+  });
+
+  it("sends only the ancestry when the history step read nothing", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    await runUpload({ staticDir: "/sb" }, deps(log, ["passed"]));
+    expect(log.markedBody).toEqual({ ancestorShas: [] });
+  });
+
+  /** Would catch: an oversized history sent as is, which the server's body limit would refuse with a 413 that
+   *  fails the whole upload. */
+  it("replaces a history too large to send with a reason, and says so", async () => {
+    const log: CallLog = { statusPolls: 0 };
+    const lines: string[] = [];
+    const n = MAX_HISTORY_LINKS + 1;
+    const history = { shas: [sha(1), sha(2)], links: [Array.from({ length: n }, () => 1), []], truncated: false };
+    await runUpload(
+      { staticDir: "/sb" },
+      deps(log, ["passed"], lines, { history: () => ({ ancestorShas: [], history, shallow: false }) }),
+    );
+    expect(log.markedBody?.history).toEqual({ unavailable: `history too large to send (2 commits, ${n} links)` });
+    expect(lines).toContain(`Couldn't record this build's git history for baseline matching (history too large to send (2 commits, ${n} links)).`);
+  });
+
+  /** Would catch: the confirmed count reading the fetched history instead of `ancestorShas` (a shallow
+   *  checkout confirms none, since today's resolver reads only its own history), or the fetch going unlogged. */
+  it("logs the confirmed ancestry and the commits a shallow checkout fetched", async () => {
+    const lines: string[] = [];
+    await runUpload(
+      { staticDir: "/sb" },
+      deps({ statusPolls: 0 }, ["passed"], lines, {
+        baselineCommits: [sha(1), sha(2)],
+        history: () => ({
+          ancestorShas: [],
+          history: { shas: [sha(1)], links: [[]], truncated: true },
+          historyRead: { mode: "fallback", ms: 900, fetchedBytes: 2048 },
+          shallow: true,
+          fetchedCommits: 5000,
+        }),
+      }),
+    );
+    expect(lines).toContain("Confirmed 0 / 2 baseline commits in git ancestry");
+    expect(lines).toContain(
+      "Recorded 5000 commits of git history for baseline matching (shallow checkout: fetched the newest part into a temporary repository)",
+    );
+  });
+
+  it("advises fetch-depth: 0 when a shallow checkout's history couldn't be read, and only then", async () => {
+    const reason = "this git host doesn't support partial fetches";
+    const linesFor = async (shallow: boolean): Promise<string[]> => {
+      const lines: string[] = [];
+      await runUpload(
+        { staticDir: "/sb" },
+        deps({ statusPolls: 0 }, ["passed"], lines, {
+          baselineCommits: [sha(1)],
+          history: () => ({ ancestorShas: [], history: { unavailable: reason }, shallow }),
+        }),
+      );
+      return lines.filter((l) => l.startsWith("Couldn't record"));
+    };
+    expect(await linesFor(true)).toEqual([
+      `Couldn't record this build's git history for baseline matching (${reason}). Set \`fetch-depth: 0\` on your checkout so baselines follow your branch's commits.`,
+    ]);
+    expect(await linesFor(false)).toEqual([`Couldn't record this build's git history for baseline matching (${reason}).`]);
+  });
+});
+
 describe("runUpload progress", () => {
   const opts: UploadOptions = { staticDir: "storybook-static" };
 
@@ -814,5 +974,34 @@ describe("runUpload signed in", () => {
     );
     expect(keyLines).toContain("  Endpoint: https://uiverify.example.com/api/mcp (authenticate with your project API key)");
     expect(keyLines).toContain('  1. get_build { "prNumber": 9 } - the changed-story list, each with a diffResultId.');
+  });
+});
+
+describe("historyLines", () => {
+  const sha = (i: number): string => i.toString(16).padStart(40, "0");
+  const read = (truncated: boolean): UploadedBody => ({ ancestorShas: [], history: { shas: [sha(1)], links: [[]], truncated } });
+
+  /** Would catch: the two fetched wordings swapped, or a line logged for a full clone's own walk, which the
+   *  confirmed count already describes. */
+  it("names a fetched history, whole or newest part, and says nothing of a local walk", () => {
+    expect(historyLines(read(false), { ancestorShas: [], shallow: true, fetchedCommits: 60 })).toEqual([
+      "Recorded 60 commits of git history for baseline matching (shallow checkout: fetched into a temporary repository)",
+    ]);
+    expect(historyLines(read(true), { ancestorShas: [], shallow: true, fetchedCommits: 5000 })).toEqual([
+      "Recorded 5000 commits of git history for baseline matching (shallow checkout: fetched the newest part into a temporary repository)",
+    ]);
+    expect(historyLines(read(false), { ancestorShas: [sha(1)], shallow: false })).toEqual([]);
+    expect(historyLines({ ancestorShas: [] }, { ancestorShas: [], shallow: true })).toEqual([]);
+  });
+
+  /** Would catch: a fork build that fell back to its head's history saying nothing (its changes then include
+   *  the base's since the fork point, unexplained), or one that read its base described as a plain fetch. */
+  it("says whether a fork run's base joined the history", () => {
+    expect(historyLines(read(false), { ancestorShas: [], shallow: false, fetchedCommits: 13, runBase: { added: true } })).toEqual([
+      "Recorded 13 commits of git history for baseline matching, with the base this fork pull request's capture was built on",
+    ]);
+    expect(historyLines(read(false), { ancestorShas: [], shallow: false, runBase: { missed: "git fetch failed" } })).toEqual([
+      "Couldn't tell which base this fork pull request's capture was built on (git fetch failed), so its baselines are picked from its head's history",
+    ]);
   });
 });

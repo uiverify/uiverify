@@ -40,14 +40,17 @@ const openComments = z
 
 export type OpenComments = NonNullable<z.output<typeof openComments>>;
 
-// `baselineCommits` are the (sparse) commits a baseline could come from; the CLI intersects them
-// against the head's true local git ancestry and uploads the confirmed subset at markUploaded. An
-// older server omits the field, so it defaults to empty (it then resolves the legacy way) — the
+// `baselineCommits` are the (sparse) commits a baseline could come from, the most needed first; the CLI
+// intersects them against the build commit's git history and uploads the contained subset at markUploaded.
+// An older server omits the field, so it defaults to empty (it then resolves the legacy way) — the
 // client must never break on its absence.
 const registerResponse = z.object({
   buildId: z.string(),
   uploadUrl: z.string(),
   baselineCommits: z.array(z.string()).default([]),
+  // Whether a shallow checkout should fetch its missing history into a temporary repository. An older server
+  // never sends it, and a value this client can't read counts as no.
+  fetchHistory: z.boolean().default(false).catch(false),
   // The base commits skip-unchanged should diff against, named by the server. The CLI computes the
   // changed-file delta over these with local git (`deltaFor`) and sends it with the upload. An older
   // server omits the field ⇒ empty (no git work). Sanitized in `register` before use.
@@ -92,6 +95,7 @@ export type RegisterResult =
       buildId: string;
       uploadUrl: string;
       baselineCommits: string[];
+      fetchHistory: boolean;
       deltaBases: string[];
       warnings: string[];
       openComments?: OpenComments;
@@ -213,6 +217,38 @@ export interface RegisterBody {
   /** This run's output may be read by people outside the team (`outputMayBePublic`): the server then
    *  withholds review-comment text from the response. Absent from an older CLI, which gets none either. */
   ci?: boolean;
+  /** The facts of the CI push this build is the tip of, sent only when the CI env proves they describe this
+   *  commit on the reported branch (`pushFactsFromCi`). */
+  push?: PushFacts;
+}
+
+export interface PushFacts {
+  /** The tip the push replaced; null when the push created the branch. */
+  before: string | null;
+  /** Null when it couldn't be decided at register (refined at upload by `UploadedBody.push`). */
+  forced: boolean | null;
+  created: boolean;
+}
+
+/** The offered commits the build's commit contains, newest first in topological order; `links[i]` indexes
+ *  (all > i) entry i's nearest contained offered ancestors. Or why no history could be read. */
+export type UploadedHistory = { shas: string[]; links: number[][]; truncated: boolean } | { unavailable: string };
+
+export interface HistoryReadStats {
+  mode: "local" | "fetched" | "fallback" | "failed";
+  ms: number;
+  /** Bytes the temporary repositories received (a fork run's merge read has its own); null when nothing was fetched. */
+  fetchedBytes: number | null;
+}
+
+export interface UploadedBody {
+  /** The offered commits the checkout's own history contains, in offer order; empty on a shallow checkout. */
+  ancestorShas: string[];
+  changedFiles?: Record<string, ClientDeltaEntry>;
+  history?: UploadedHistory;
+  historyRead?: HistoryReadStats;
+  /** Decides a register-time `forced: null`, sent only from a complete history read. */
+  push?: { forced: boolean };
 }
 
 export type CaptureShape = "storybook" | "archive" | "screenshots";
@@ -220,11 +256,9 @@ export type CaptureShape = "storybook" | "archive" | "screenshots";
 export interface IngestClient {
   register(body: RegisterBody): Promise<RegisterResult>;
   upload(uploadUrl: string, tgzPath: string): Promise<void>;
-  /** `ancestorShas`: the confirmed-ancestor subset of the register response's `baselineCommits`, used
-   *  to gate baseline inheritance against true git ancestry. Empty when the checkout was shallow.
-   *  `changedFiles`: the skip-unchanged delta (`deltaFor`), the server's only source of changed files;
+  /** `changedFiles` is the skip-unchanged delta (`deltaFor`), the server's only source of changed files;
    *  omitted when there is none, and then nothing is carried from an earlier commit. */
-  markUploaded(buildId: string, ancestorShas: string[], changedFiles?: Record<string, ClientDeltaEntry>): Promise<void>;
+  markUploaded(buildId: string, body: UploadedBody): Promise<void>;
   getStatus(buildId: string): Promise<BuildStatus>;
 }
 
@@ -331,8 +365,7 @@ export function httpIngestClient(apiUrl: string, credential: Credential): Ingest
         if (!res.ok) throw httpError("bundle upload", res.status, await res.text(), false);
       });
     },
-    async markUploaded(buildId, ancestorShas, changedFiles) {
-      const body = changedFiles ? { ancestorShas, changedFiles } : { ancestorShas };
+    async markUploaded(buildId, body) {
       await authorized("markUploaded", (headers, signal) =>
         postJson(`/api/ingest/build/${buildId}/uploaded`, body, headers, signal),
       );

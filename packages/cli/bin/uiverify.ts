@@ -35,13 +35,13 @@ import {
 import {
   ciWatchCommand,
   collectGitMeta,
-  confirmAncestors,
   deltaFor,
   isCi,
   reportRemoteRepos,
   repoRoot,
   workingTreeChanges,
 } from "../src/git";
+import { forkRunMerge, historyStep } from "../src/history";
 import { type AuthDeps, runLogin, runLogout, runWhoami, shouldOpenBrowser } from "../src/login";
 import { holdSecret, redact } from "../src/redact";
 import { resolveStrict } from "../src/strict";
@@ -428,7 +428,8 @@ function uploadDepsFor(ctx: CommonContext): UploadDeps {
   return {
     client: httpIngestClient(ctx.apiUrl, ctx.credential),
     gitMeta: () => collectGitMeta(ctx.cwd),
-    confirmAncestors: (candidates, headSha) => confirmAncestors(candidates, headSha, ctx.cwd),
+    history: (input) => historyStep(ctx.cwd, input),
+    forkRunMerge: (run) => forkRunMerge(ctx.cwd, run),
     workingTreeChanges: (headSha) => workingTreeChanges(headSha, ctx.cwd, { exclude: ctx.staticDir }),
     deltaFor: (bases, headSha, uncommitted) => deltaFor(bases, headSha, ctx.cwd, uncommitted),
     createBundle: ctx.isScreenshots ? createScreenshotBundle : createBundle,
